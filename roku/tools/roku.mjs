@@ -1,7 +1,8 @@
-// The device scripts (M12 L1): `npm run deploy | test | console`, and `npm run test:local`, which needs no device.
+// The device scripts (M12 L1): `npm run deploy | test | console`, and `npm run test:local` and
+// `npm run build:release`, which need no device.
 // The Roku's address and developer password come only from roku/.env (gitignored).
 // Never print the password.
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,7 +43,8 @@ function run(command, args, extraEnv = {}) {
 
 async function deploy() {
     const { host, password } = loadDevice();
-    if (run(bin('bsc'), ['--project', 'bsconfig.json']) !== 0) {
+    if (run(process.execPath, [join('tools', 'probe-assets.mjs')]) !== 0
+        || run(bin('bsc'), ['--project', 'bsconfig.json']) !== 0) {
         fail('The build failed; nothing was deployed.');
     }
     const { rokuDeploy } = await import('roku-deploy');
@@ -137,9 +139,62 @@ function testLocal() {
     }
 }
 
-const commands = { deploy, test, console: console8085, 'test-local': testLocal };
+// The release build (M12 step 3): bsconfig.release.json leaves out components/probes and the probe assets and
+// compiles with bs_const DEBUG=false (bsc removes every #if DEBUG block). The staged manifest's bs_const line is
+// set to DEBUG=false too, then the staging folder is checked (no probes folder, no file or text naming a probe)
+// before it is zipped to out/mmtvl-live-tv-release.zip. Signed packaging is a later step.
+async function buildRelease() {
+    const staging = join(root, 'out', 'release-staging');
+    rmSync(staging, { recursive: true, force: true });
+    if (run(bin('bsc'), ['--project', 'bsconfig.release.json']) !== 0) {
+        fail('build:release: the build failed.');
+    }
+    const manifestPath = join(staging, 'manifest');
+    const manifest = readFileSync(manifestPath, 'utf8');
+    if (!/^bs_const=.*$/m.test(manifest)) {
+        fail('build:release: the manifest has no bs_const line.');
+    }
+    writeFileSync(manifestPath, manifest.replace(/^bs_const=.*$/m, 'bs_const=DEBUG=false'));
+
+    const files = [];
+    const collect = (dir, prefix) => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+            const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+            if (entry.isDirectory()) {
+                collect(join(dir, entry.name), relative);
+            } else {
+                files.push(relative);
+            }
+        }
+    };
+    collect(staging, '');
+    // Probe code is the probes folder and assets, and everything that names their components or fields. The one
+    // allowed mention is main's deletion of the probe registry section (security L-6), taken out before the check.
+    const probeCode = /ProbesScreen|ProbeTask|ProbeKit|ProbeSynthetic|probeLaunch|mmtvl-probe|\[PROBE\]|pkg:\/probes/;
+    const allowedProbeText = /CreateObject\("roRegistry"\)\.Delete\("mmtvl-probe"\)/g;
+    const problems = files.filter((file) => /probe/i.test(file));
+    for (const file of files.filter((name) => /\.(brs|xml)$|^manifest$/.test(name))) {
+        const text = readFileSync(join(staging, file), 'utf8').replace(allowedProbeText, '');
+        if (probeCode.test(text)) {
+            problems.push(`${file} names probe code`);
+        }
+        if (/DEBUG\s*=\s*true/i.test(text)) {
+            problems.push(`${file} has DEBUG=true`);
+        }
+    }
+    if (problems.length > 0) {
+        fail(`build:release: probe code in the release build:\n  ${problems.join('\n  ')}`);
+    }
+    const { rokuDeploy } = await import('roku-deploy');
+    const zipPath = join(root, 'out', 'mmtvl-live-tv-release.zip');
+    rmSync(zipPath, { force: true });
+    await rokuDeploy.zipFolder(staging, zipPath);
+    console.log(`Release build: ${files.length} files, no probe code; out/mmtvl-live-tv-release.zip`);
+}
+
+const commands = { deploy, test, console: console8085, 'test-local': testLocal, 'build-release': buildRelease };
 const command = commands[process.argv[2]];
 if (!command) {
-    fail('Usage: node tools/roku.mjs deploy | test | console | test-local');
+    fail('Usage: node tools/roku.mjs deploy | test | console | test-local | build-release');
 }
 await command();

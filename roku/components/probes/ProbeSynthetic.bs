@@ -1,0 +1,176 @@
+' Probe e's synthetic guide (M12 step 3, DEBUG builds only): an XMLTV file the size of the provider's largest
+' guide (US2: about 77 MB, 769 channels, about 80,500 programmes), written in pieces of 256 programmes so it never
+' is in memory whole. Fake ids and names (ch<N>.example); the field mix follows a real guide: title, sub-title
+' (60 %), a long desc, credits (30 %), two categories, an icon, dd_progid, xmltv_ns and onscreen episode numbers
+' (50 % each), new or previously-shown, a rating. Programmes start 6 h before now and run about 58 h.
+namespace ProbeSynthetic
+
+    const channelCount = 769
+    const programmeCount = 80500
+    const programmesPerWrite = 256
+
+    ' Writes the guide to path. observer.tick(bytesWritten) after each write; false stops.
+    ' Returns { ok, stopped, bytes, held, programmes, channels, error }: held is whether the file's size on
+    ' disk matches what was written.
+    function write(path as string, now as dynamic, observer as object) as object
+        fs = CreateObject("roFileSystem")
+        fs.Delete(path)
+        random = { state: 20261118&, next: function(n as integer) as integer
+                m.state = (m.state * 1103515245& + 12345&) mod 2147483648&
+                return ((m.state \ 65536) mod n)
+            end function }
+        pool = ProbeSynthetic.makePool(random)
+        q = Chr(34)
+        out = { path: path, pieces: [], bytes: 0, started: false, failed: false }
+
+        out.pieces.Push("<?xml version=" + q + "1.0" + q + " encoding=" + q + "UTF-8" + q + "?>" + Chr(10))
+        out.pieces.Push("<!DOCTYPE tv SYSTEM " + q + "xmltv.dtd" + q + ">" + Chr(10))
+        out.pieces.Push("<tv source-info-name=" + q + "Synthetic" + q + " generator-info-name=" + q + "mmtvl-probe" + q + ">" + Chr(10))
+        for c = 1 to channelCount
+            id = "ch" + c.ToStr() + ".example"
+            out.pieces.Push("  <channel id=" + q + id + q + ">" + Chr(10))
+            out.pieces.Push("    <display-name>" + pool.channelNames[c mod pool.channelNames.Count()] + " " + c.ToStr() + "</display-name>" + Chr(10))
+            out.pieces.Push("    <display-name>" + c.ToStr() + "</display-name>" + Chr(10))
+            out.pieces.Push("    <display-name>" + c.ToStr() + " " + UCase(Left(pool.channelNames[c mod pool.channelNames.Count()], 4)) + "</display-name>" + Chr(10))
+            out.pieces.Push("    <icon src=" + q + "https://img.example/logos/" + c.ToStr() + ".png" + q + " />" + Chr(10))
+            out.pieces.Push("  </channel>" + Chr(10))
+        end for
+        if not ProbeSynthetic.flush(out, observer) then return ProbeSynthetic.result(out, 0, false)
+
+        base = now - 6 * 3600
+        base = base - (base mod 900)
+        durations = [1800, 1800, 1800, 3600, 3600, 900, 5400, 7200]
+        times = {}
+        written = 0
+        sinceWrite = 0
+        extra = programmeCount - channelCount * (programmeCount \ channelCount)
+        for c = 1 to channelCount
+            id = "ch" + c.ToStr() + ".example"
+            count = programmeCount \ channelCount
+            if c <= extra then count++
+            start = base
+            for p = 1 to count
+                stopTime = start + durations[random.next(8)]
+                out.pieces.Push("  <programme start=" + q + ProbeSynthetic.time(times, start) + q + " stop=" + q + ProbeSynthetic.time(times, stopTime) + q + " channel=" + q + id + q + ">" + Chr(10))
+                out.pieces.Push("    <title lang=" + q + "en" + q + ">" + pool.titles[random.next(pool.titles.Count())] + "</title>" + Chr(10))
+                if random.next(10) < 6 then out.pieces.Push("    <sub-title lang=" + q + "en" + q + ">" + pool.titles[random.next(pool.titles.Count())] + "</sub-title>" + Chr(10))
+                out.pieces.Push("    <desc lang=" + q + "en" + q + ">" + pool.descs[random.next(pool.descs.Count())] + "</desc>" + Chr(10))
+                if random.next(10) < 3
+                    out.pieces.Push("    <credits><director>" + pool.people[random.next(pool.people.Count())] + "</director><actor>" + pool.people[random.next(pool.people.Count())] + "</actor><actor>" + pool.people[random.next(pool.people.Count())] + "</actor></credits>" + Chr(10))
+                end if
+                out.pieces.Push("    <category lang=" + q + "en" + q + ">" + pool.categories[random.next(pool.categories.Count())] + "</category>" + Chr(10))
+                out.pieces.Push("    <category lang=" + q + "en" + q + ">" + pool.categories[random.next(pool.categories.Count())] + "</category>" + Chr(10))
+                out.pieces.Push("    <icon src=" + q + "https://img.example/p/" + c.ToStr() + "/" + p.ToStr() + ".jpg" + q + " />" + Chr(10))
+                out.pieces.Push("    <episode-num system=" + q + "dd_progid" + q + ">EP" + (10000000 + c * 1000 + p).ToStr() + ".0012</episode-num>" + Chr(10))
+                if random.next(2) = 0 then out.pieces.Push("    <episode-num system=" + q + "xmltv_ns" + q + ">" + random.next(9).ToStr() + "." + random.next(22).ToStr() + ".</episode-num>" + Chr(10))
+                if random.next(2) = 0 then out.pieces.Push("    <episode-num system=" + q + "onscreen" + q + ">S" + (1 + random.next(9)).ToStr() + " E" + (1 + random.next(22)).ToStr() + "</episode-num>" + Chr(10))
+                if random.next(10) < 3 then out.pieces.Push("    <new />" + Chr(10)) else out.pieces.Push("    <previously-shown />" + Chr(10))
+                out.pieces.Push("    <rating system=" + q + "VCHIP" + q + "><value>TV-PG</value></rating>" + Chr(10))
+                out.pieces.Push("  </programme>" + Chr(10))
+                start = stopTime
+                written++
+                sinceWrite++
+                if sinceWrite >= programmesPerWrite
+                    sinceWrite = 0
+                    if not ProbeSynthetic.flush(out, observer) then return ProbeSynthetic.result(out, written, false)
+                end if
+            end for
+        end for
+        out.pieces.Push("</tv>" + Chr(10))
+        if not ProbeSynthetic.flush(out, observer) then return ProbeSynthetic.result(out, written, false)
+        return ProbeSynthetic.result(out, written, true)
+    end function
+
+    function result(out as object, programmes as integer, finished as boolean) as object
+        info = CreateObject("roFileSystem").Stat(out.path)
+        size = 0
+        if info <> invalid and info.size <> invalid then size = info.size
+        errorText = ""
+        if out.failed then errorText = "A write failed at " + ProbeKit.megabytes(out.bytes) + " MB"
+        return {
+            ok: finished and not out.failed,
+            stopped: not finished and not out.failed,
+            bytes: out.bytes,
+            held: size = out.bytes and not out.failed,
+            programmes: programmes,
+            channels: channelCount,
+            error: errorText
+        }
+    end function
+
+    ' Writes the pieces so far; false when a write failed or the observer says stop.
+    function flush(out as object, observer as object) as boolean
+        bytes = CreateObject("roByteArray")
+        bytes.FromAsciiString(out.pieces.Join(""))
+        out.pieces = []
+        if out.started
+            ok = bytes.AppendFile(out.path)
+        else
+            ok = bytes.WriteFile(out.path)
+            out.started = true
+        end if
+        if not ok
+            out.failed = true
+            return false
+        end if
+        out.bytes += bytes.Count()
+        return observer.tick(out.bytes)
+    end function
+
+    ' "20261118120000 +0000", cached (programme times repeat across channels).
+    function time(cache as object, seconds as dynamic) as string
+        key = seconds.ToStr()
+        text = cache[key]
+        if text <> invalid then return text
+        date = CreateObject("roDateTime")
+        date.FromSeconds(seconds)
+        text = date.GetYear().ToStr() + ProbeSynthetic.two(date.GetMonth()) + ProbeSynthetic.two(date.GetDayOfMonth()) + ProbeSynthetic.two(date.GetHours()) + ProbeSynthetic.two(date.GetMinutes()) + "00 +0000"
+        cache[key] = text
+        return text
+    end function
+
+    function two(value as integer) as string
+        if value < 10 then return "0" + value.ToStr()
+        return value.ToStr()
+    end function
+
+    ' Word pools, so writing a programme is mostly joining strings. Descs average about 370 characters, which
+    ' with the other fields gives about 955 bytes a programme, as in US2 (77 MB / 80,531).
+    function makePool(random as object) as object
+        words = "news sports live game night show report weather world local city county state team season final round match cup league home away special classic best week today morning evening late update analysis preview review highlights college football basketball hockey baseball soccer golf tennis racing studio talk magazine documentary series drama comedy family kids movie history science nature travel food cooking garden house market money business politics election".Split(" ")
+        phrase = function(random as object, words as object, count as integer, capital as boolean) as string
+            parts = []
+            for i = 1 to count
+                word = words[random.next(words.Count())]
+                if capital then word = UCase(Left(word, 1)) + Mid(word, 2)
+                parts.Push(word)
+            end for
+            return parts.Join(" ")
+        end function
+        titles = []
+        for i = 1 to 200
+            titles.Push(phrase(random, words, 2 + random.next(3), true))
+        end for
+        descs = []
+        for i = 1 to 400
+            sentence = phrase(random, words, 26 + random.next(41), false)
+            descs.Push(UCase(Left(sentence, 1)) + Mid(sentence, 2) + " &amp; " + phrase(random, words, 4, false) + ".")
+        end for
+        people = []
+        for i = 1 to 100
+            people.Push(phrase(random, words, 2, true))
+        end for
+        channelNames = []
+        for i = 1 to 50
+            channelNames.Push(phrase(random, words, 1, true) + " Network")
+        end for
+        return {
+            titles: titles,
+            descs: descs,
+            people: people,
+            channelNames: channelNames,
+            categories: ["Sports", "Series", "News", "Movie", "Talk", "Reality", "Documentary", "Kids", "Sports event", "Sports non-event", "Comedy", "Drama"]
+        }
+    end function
+
+end namespace

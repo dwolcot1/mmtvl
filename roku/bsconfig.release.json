@@ -1,0 +1,18 @@
+{
+  "extends": "bsconfig.json",
+  "files": [
+    "manifest",
+    "source/**/*",
+    "components/**/*",
+    "!components/probes/**/*",
+    "images/**/*"
+  ],
+  "stagingDir": "out/release-staging",
+  "createPackage": false,
+  "manifest": {
+    "bs_const": {
+      "DEBUG": false
+    }
+  },
+  "plugins": []
+}

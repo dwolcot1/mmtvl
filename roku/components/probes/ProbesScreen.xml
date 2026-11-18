@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The Probes screen (M12 step 3, DEBUG builds only; L8, Deviations 2026-11-18): a tester types the inputs,
+     runs each probe or "Run all", then photographs the results table and the summary code. Nothing on it shows a
+     URL, host, stream name or tuner address. -->
+<component name="ProbesScreen" extends="Group">
+    <interface>
+        <!-- Set to true when the screen wants to close (Back with nothing running). -->
+        <field id="closed" type="boolean" alwaysNotify="true" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
+    <script type="text/brighterscript" uri="pkg:/components/probes/ProbeKit.bs" />
+    <children>
+        <Rectangle id="background" width="1920" height="1080" color="0x101012FF" />
+        <Video id="video" width="1920" height="1080" visible="false" enableUI="false" />
+        <Group id="panel">
+            <Label id="title" text="Probes" font="font:MediumBoldSystemFont" color="0xFFFFFFFF" translation="[60, 30]" />
+            <Label id="subtitle" font="font:SmallestSystemFont" color="0xFFFFFFAA" width="1800" translation="[60, 82]" />
+            <LabelList
+                id="menu"
+                translation="[60, 130]"
+                itemSize="[560, 42]"
+                numRows="15"
+                vertFocusAnimationStyle="floatingFocus"
+                font="font:SmallSystemFont"
+                focusedFont="font:SmallBoldSystemFont"
+                color="0xFFFFFFDD"
+                focusedColor="0x101012FF" />
+            <Label id="status" font="font:SmallestSystemFont" color="0xFFFFFFCC" width="560" wrap="true" maxLines="4" translation="[60, 790]" />
+            <Group id="rows" translation="[680, 130]" />
+            <Label
+                id="codeTitle"
+                text="Summary code: photograph this screen and the details page (or type these lines back)"
+                font="font:SmallestSystemFont"
+                color="0xFFFFFFAA"
+                translation="[680, 540]" />
+            <Label
+                id="code"
+                font="font:SmallBoldSystemFont"
+                color="0xFFFFFFFF"
+                width="1180"
+                height="480"
+                wrap="true"
+                lineSpacing="4"
+                translation="[680, 580]" />
+        </Group>
+        <Group id="details" visible="false">
+            <Label id="detailsTitle" text="Probe details (Back returns)" font="font:MediumBoldSystemFont" color="0xFFFFFFFF" translation="[60, 30]" />
+            <Group id="detailRows" translation="[60, 100]" />
+        </Group>
+        <Group id="overlay" visible="false">
+            <Rectangle width="1920" height="170" color="0x000000CC" />
+            <Label
+                id="overlayText"
+                font="font:MediumSystemFont"
+                color="0xFFFFFFFF"
+                width="1760"
+                wrap="true"
+                maxLines="3"
+                translation="[80, 30]" />
+        </Group>
+        <Timer id="watchdog" repeat="false" />
+        <Timer id="stepTimer" repeat="false" />
+        <Timer id="attemptTimer" repeat="false" />
+    </children>
+</component>

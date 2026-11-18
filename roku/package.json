@@ -5,7 +5,8 @@
   "description": "MMTVL Live TV for Roku (sideloaded in developer mode)",
   "license": "MIT",
   "scripts": {
-    "build": "bsc --project bsconfig.json",
+    "build": "node tools/probe-assets.mjs && bsc --project bsconfig.json",
+    "build:release": "node tools/roku.mjs build-release",
     "lint": "bslint --project bsconfig.json && bslint --project bsconfig.test.json && bslint --project bsconfig.local.json",
     "test:local": "node tools/roku.mjs test-local",
     "deploy": "node tools/roku.mjs deploy",

@@ -15,4 +15,5 @@ supports_input_launch=1
 pause_aware=1
 
 # DEBUG builds print info logs and (from M12 step 3) show the Probes screen (L6, L8).
+# `npm run build:release` sets DEBUG=false in its staged copy and leaves the probes out.
 bs_const=DEBUG=true
