@@ -10,7 +10,7 @@
 ## Next session starts here
 
 - **Phase 0 (PR #1)** and **phase 1 (PR #2, stacked on PR #1)** are done off-device. Steps 1, 4 and every device check wait for the remote tester's Roku. The probe build is `cd roku && npm run build` → `roku/out/mmtvl-live-tv.zip`. **Ask the user before sending it.**
-- **Next: Phase 2 (UI).** Step 10 is `[designer]` in the user's pen.dev, and the user picks a frame for each screen before steps 11–13. Phase 3's step 14 (migration) needs no device until step 15.
+- **Phase 2 (UI) in progress** on branch `m12-phase2` (cut from `m12-phase1` at 32c27f9; PR stacked on PR #2). Step 10's design is `design/roku-live-tv.pen` (new; MMTVL had no `.pen` before). The pure key and URL-display logic of steps 11–13 is built first on `m12-phase2-logic` (worktree `.claude/worktrees/phase2-logic`) and merged in; the screens wait for the user's pick of the step 10 frames. Phase 3's step 14 (migration) needs no device until step 15.
 - Gates for every Roku step: `cd roku && npm run build && npm run lint && npm run test:local` (264 passed at the end of phase 1), plus `npm run build:release`. No simulator runs with network access. Use a separate git worktree for parallel steps (`git worktree add -b m12-stepN .claude/worktrees/stepN <commit>`); the built-in isolation started from the wrong commit.
 
 ## Goal
@@ -574,3 +574,4 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
     - how `Len`/`Asc` treat non-BMP text;
     - the copy cost of reading `guideData`;
     - the watchdogs and back-offs in the log.
+- **2026-11-18, phase 2 start (orchestrator).** No device yet (the remote tester's model is still unknown), so phase 2 is built off-device and every "with a device" check moves to step 15. Order within the phase: step 10's frames and step 11–13's pure logic run in parallel (the logic as `lib` namespaces with `test:local` suites: `PlayerKeys`, `GuideKeys`, `URLDisplay`), then the screens after the user picks the frames. The design file is new: `design/roku-live-tv.pen`, committed like the code.
