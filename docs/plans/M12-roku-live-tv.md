@@ -225,7 +225,7 @@ scripts/roku-export-settings.py   one-time migration (L2), python3 -I, standard 
 - **L3, guide grid:** Roku's `TimeGrid`, with a `LabelList` group column on its left (Search, Favorites, My Teams, Antenna, All Channels, then the playlist's groups, looping like MMTVL's), and the channel menu as an overlay list.
   - *Why:* native performance on sticks, channel keys on Roku TVs, lazy loading. Custom styling is limited to what TimeGrid exposes, which the step 10 design accounts for.
 - **L4, keys:** D49 carries over: **Back never leaves Live TV**, and Roku's Home is the only way out.
-  - **Player:** Up/Down zap (direction from `channelUpMovesUpList`); OK toggles the banner (or retries on the error panel); `*` opens the channel menu; **Replay** goes to the previous channel; Play/Pause pauses (Roku pause buffer); Rewind/Fast Forward skip 10 s within the live window (clamped 30 s from the edge); Back hides the overlays, else opens the guide.
+  - **Player:** Up/Down zap up/down the list, as MMTVL (`channelUpMovesUpList` flips only Channel Up/Down, on Rokus that send them; user, 2026-11-18); Left/Right do nothing; OK toggles the banner (or retries on the error panel); `*` opens the channel menu; **Replay** goes to the previous channel; Play/Pause pauses (Roku pause buffer); Rewind/Fast Forward skip 10 s within the live window (clamped 30 s from the edge); Back hides the overlays, else opens the guide.
   - **Guide:** OK plays; `*` opens the channel menu; Rewind/Fast Forward page by 6 rows (MMTVL's Channel Up/Down); Back closes the groups, then returns to the playing channel, and does nothing with nothing playing.
   - The `Video` node never has focus (so `*` reaches the app).
 - **L5, storage:**
@@ -575,3 +575,11 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
     - the copy cost of reading `guideData`;
     - the watchdogs and back-offs in the log.
 - **2026-11-18, phase 2 start (orchestrator).** No device yet (the remote tester's model is still unknown), so phase 2 is built off-device and every "with a device" check moves to step 15. Order within the phase: step 10's frames and step 11–13's pure logic run in parallel (the logic as `lib` namespaces with `test:local` suites: `PlayerKeys`, `GuideKeys`, `URLDisplay`), then the screens after the user picks the frames. The design file is new: `design/roku-live-tv.pen`, committed like the code.
+- **2026-11-18, steps 11–13 logic (QA PASS; user decisions).** `PlayerKeys.bs`, `GuideKeys.bs` and `URLDisplay.bs` with `test:local` suites (29, 34 and 11 tests; 338 in all), ported from LiveTVModel, GuideModel and GuideSource and their tests. The user decided where MMTVL and L4 disagreed:
+  - **Zap:** as MMTVL. Up is always up the list, and `channelUpMovesUpList` flips only Channel Up/Down. L4 is amended.
+  - **Skips:** as L4. Rewind/Fast Forward skip 10 s, clamped 30 s from the live edge. Left/Right do nothing in the player (MMTVL's 10/30 split isn't used; the 40 s window would clamp 30 s skips).
+  - **Replay** (L4 only) goes to the most recent other channel, so A→B→Replay→Replay alternates.
+  - In the guide, Rewind/Fast Forward and Roku's channelup/channeldown page by 6 rows (the group column by 7, as MMTVL).
+  - `URLDisplay` is stricter than MMTVL (only printable-ASCII escapes are decoded, hosts are lowercased, a refused host shows "?" alone). Accepted.
+  - Left for later: `setLineup` (keep group and row across a refresh) at step 12, and My Teams' upcoming rows at step 18.
+  - **Device checks:** that Back from the player and guide never reaches the scene; whether channelup/channeldown reach a non-TimeGrid node; what `pauseBufferStart/End/Position` hold before the clamp is trusted; that `Chr(183)` shows as a middle dot.
