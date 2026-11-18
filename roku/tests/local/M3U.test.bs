@@ -1,0 +1,538 @@
+' M3U (M12 step 6): the golden file MMTVL's own code wrote (tests/fixtures/channels.golden.json), MMTVL's
+' M3UParserTests (12) and ChannelListTests (6), and the edges the port adds (BOM bytes, Unicode lowercasing,
+' URL rules checked against Swift's URL on 2026-11-18). Runs off-device: npm run test:local.
+namespace M3UTests
+
+    ' MARK: the golden file
+
+    sub test_reproducesTheChannelsGolden(t as object)
+        text = M3U.readFile("pkg:/fixtures/playlist.m3u")
+        golden = ParseJson(ReadAsciiFile("pkg:/fixtures/channels.golden.json"))
+        if text = "" or golden = invalid
+            t.fail("couldn't read the fixtures from pkg:/fixtures")
+            return
+        end if
+        playlist = M3U.parse(text)
+        t.assertInvalid(playlist.error, "no parse error")
+        t.assertEqual(playlist.guideURLs, golden.guideURLs, "guideURLs")
+        t.assertEqual(M3UTests.firstDifference(playlist.entries, golden.entries, "entry", ["name", "group", "url", "attributes"]), "")
+
+        actualFeeds = []
+        for each entry in playlist.entries
+            actualFeeds.Push({ input: entry.name, output: M3U.feedName(entry.name) })
+        end for
+        t.assertEqual(M3UTests.firstDifference(actualFeeds, golden.feedNames, "feed name", ["input", "output"]), "")
+
+        channels = M3U.makeChannels(playlist.entries)
+        fields = ["id", "number", "name", "group", "url", "tvgID", "tvgName", "logo"]
+        t.assertEqual(M3UTests.firstDifference(channels, golden.channels, "channel", fields), "")
+    end sub
+
+    sub test_fixtureStartsWithAUTF8BOMThatReadingTurnsIntoUFEFF(t as object)
+        bytes = CreateObject("roByteArray")
+        t.assertTrue(bytes.ReadFile("pkg:/fixtures/playlist.m3u"), "read as bytes")
+        t.assertEqual([bytes[0], bytes[1], bytes[2]], [239, 187, 191], "BOM bytes")
+        text = M3U.readFile("pkg:/fixtures/playlist.m3u")
+        t.assertEqual(Asc(Left(text, 1)), 65279, "U+FEFF first")
+        t.assertTrue(Instr(1, text, Chr(13) + Chr(10)) > 0, "has CRLF lines")
+    end sub
+
+    ' MARK: M3UParserTests
+
+    sub test_parsesUserShapedPlaylist(t as object)
+        text = M3UTests.joinLines([
+            "#EXTM3U",
+            "#EXTINF:0 tvg-id=`nbatv.us` tvg-logo=`https://x/y.png` tvg-name=`NBA TV` group-title=`Live Channels`,NBA TV",
+            "https://cdn.example/abc/channel/1/chunks.m3u8",
+            "#EXTINF:0 tvg-type=`movie` tvg-id=`Philadelphia @ Tampa Bay-A` group-title=`NHL Games`,Philadelphia @ Tampa Bay",
+            "https://cdn.example/abc/perdias/2/chunks.m3u8",
+            "#EXTINF:0 tvg-id=`` tvg-name=`Red Zone2` group-title=`Live Channels`,Red Zone2",
+            "https://cdn.example/abc/channel/3/chunks.m3u8"
+        ])
+        playlist = M3U.parse(text)
+        t.assertEqual(playlist.guideURLs, [])
+        t.assertEqual(playlist.entries.Count(), 3)
+
+        nba = playlist.entries[0]
+        t.assertEqual(nba.name, "NBA TV")
+        t.assertEqual(M3U.attribute(nba, "tvg-id"), "nbatv.us")
+        t.assertEqual(M3U.attribute(nba, "tvg-name"), "NBA TV")
+        t.assertEqual(M3U.attribute(nba, "tvg-logo"), "https://x/y.png")
+        t.assertEqual(nba.group, "Live Channels")
+        t.assertEqual(nba.url, "https://cdn.example/abc/channel/1/chunks.m3u8")
+
+        game = playlist.entries[1]
+        t.assertEqual(game.name, "Philadelphia @ Tampa Bay")
+        t.assertEqual(game.attributes["tvg-type"], "movie")
+        t.assertEqual(M3U.attribute(game, "tvg-id"), "Philadelphia @ Tampa Bay-A")
+        t.assertEqual(game.group, "NHL Games")
+
+        redZone = playlist.entries[2]
+        t.assertInvalid(M3U.attribute(redZone, "tvg-id"))
+        t.assertEqual(redZone.attributes["tvg-id"], "")
+        t.assertEqual(redZone.name, "Red Zone2")
+    end sub
+
+    sub test_nameMayContainCommas(t as object)
+        playlist = M3U.parse(M3UTests.joinLines(["#EXTM3U", "#EXTINF:-1 tvg-id=`a`,News, Weather", "http://a/1"]))
+        t.assertEqual(playlist.entries[0].name, "News, Weather")
+    end sub
+
+    sub test_commaInsideQuotedAttribute(t as object)
+        playlist = M3U.parse(M3UTests.joinLines(["#EXTM3U", "#EXTINF:-1 tvg-name=`A, B` group-title=`G`,Name", "http://a/1"]))
+        entry = playlist.entries[0]
+        t.assertEqual(M3U.attribute(entry, "tvg-name"), "A, B")
+        t.assertEqual(entry.name, "Name")
+        t.assertEqual(entry.group, "G")
+    end sub
+
+    sub test_crlfAndBOM(t as object)
+        crlf = Chr(13) + Chr(10)
+        text = Chr(65279) + "#EXTM3U" + crlf + "#EXTINF:-1 tvg-id=" + Chr(34) + "x" + Chr(34) + ",Channel X" + crlf + "http://a/x.m3u8" + crlf
+        playlist = M3U.parse(text)
+        t.assertEqual(playlist.entries, [{ name: "Channel X", attributes: { "tvg-id": "x" }, group: invalid, url: "http://a/x.m3u8" }])
+    end sub
+
+    sub test_extgrpAppliesUntilChangedAndGroupTitleWins(t as object)
+        playlist = M3U.parse(M3UTests.joinLines([
+            "#EXTM3U",
+            "#EXTGRP:Sports",
+            "#EXTINF:-1,One",
+            "http://a/1",
+            "#EXTINF:-1 group-title=`News`,Two",
+            "http://a/2",
+            "#EXTINF:-1,Three",
+            "http://a/3",
+            "#EXTGRP:Movies",
+            "#EXTINF:-1,Four",
+            "http://a/4"
+        ]))
+        groups = []
+        for each entry in playlist.entries
+            groups.Push(entry.group)
+        end for
+        t.assertEqual(groups, ["Sports", "News", "Sports", "Movies"])
+    end sub
+
+    sub test_headerGuideURLs(t as object)
+        urlTvg = M3U.parse(M3UTests.joinLines(["#EXTM3U url-tvg=`https://a/x.xml.gz,https://b/y.xml`"]))
+        t.assertEqual(urlTvg.guideURLs, ["https://a/x.xml.gz", "https://b/y.xml"])
+        xTvg = M3U.parse(M3UTests.joinLines(["#EXTM3U x-tvg-url=`http://c/z.xml`"]))
+        t.assertEqual(xTvg.guideURLs, ["http://c/z.xml"])
+    end sub
+
+    sub test_skipsExtvlcoptBetweenEntryAndURL(t as object)
+        playlist = M3U.parse(M3UTests.joinLines(["#EXTM3U", "#EXTINF:-1,One", "#EXTVLCOPT:http-user-agent=Foo", "http://a/1"]))
+        t.assertEqual(M3UTests.entryURLs(playlist), ["http://a/1"])
+    end sub
+
+    sub test_urlWithoutExtinfIsIgnored(t as object)
+        playlist = M3U.parse(M3UTests.joinLines(["#EXTM3U", "http://a/orphan", "#EXTINF:-1,One", "http://a/1", "http://a/another-orphan"]))
+        t.assertEqual(M3UTests.entryURLs(playlist), ["http://a/1"])
+    end sub
+
+    sub test_htmlIsNotAPlaylist(t as object)
+        result = M3U.parse("<!DOCTYPE html><html><body>Not found</body></html>")
+        t.assertEqual(result.error, "notAPlaylist")
+        t.assertInvalid(result.entries, "no entries")
+    end sub
+
+    ' MARK: M3UParserAttributeTests
+
+    sub test_entriesAreAsBefore(t as object)
+        playlist = M3U.parse(M3UTests.manyAttributes())
+        t.assertEqual(playlist.guideURLs, ["https://a/x.xml.gz", "https://b/y.xml"])
+        q = Chr(34)
+        expected = [
+            { name: "Duplicate Keys", attributes: { "tvg-id": "Upper.us", "group-title": "Mixed Case" }, group: "Mixed Case", url: "http://s/1" },
+            { name: "Underscore, Digits & Empty", attributes: { "tvg_id2": "a_b", "tvg-logo": "https://l/x.png?a=1&b=2=3", "tvg-name": "", "group-title": "" }, group: invalid, url: "http://s/2" },
+            { name: "", attributes: {}, group: invalid, url: "http://s/3" },
+            { name: "Adjacent " + q + "Quoted" + q + " Name", attributes: { "a": "1", "b": "2", "tvg-country": "US", "lang": "en" }, group: invalid, url: "http://s/4" },
+            { name: "Café " + q + "Name" + q + ", With Comma", attributes: { "tvg-name": "Café 🇺🇸 Ünïcode", "group-title": "Sports, Live" }, group: "Sports, Live", url: "http://s/5" },
+            { name: "Escaped Quotes", attributes: { "tvg-name": "A \", "catchup": "default", "catchup-days": "7" }, group: invalid, url: "http://s/6" },
+            { name: "tvg-id=" + q + "in-name" + q + " Comma Then Attribute", attributes: { "tvg-id": "g" }, group: "From EXTGRP", url: "http://s/7" },
+            { name: "", attributes: { "group-title": "Explicit", "tvg-id": "MiXeD" }, group: "Explicit", url: "http://s/8" },
+            { name: "Padded Name", attributes: { "tvg-id": "  padded  " }, group: "From EXTGRP", url: "http://s/9" },
+            { name: "", attributes: { "tvg-name": "x" + q + Chr(769) + " group-title=" }, group: "From EXTGRP", url: "http://s/10" }
+        ]
+        t.assertEqual(M3UTests.firstDifference(playlist.entries, expected, "entry", ["name", "attributes", "group", "url"]), "")
+        t.assertEqual(M3U.attribute(playlist.entries[8], "tvg-id"), "padded")
+    end sub
+
+    ' Swift compares with the regex parsing as it was before M7n step 4b; here: every #EXTINF line's
+    ' attributes are parseAttributes of that line, one entry per line, and a second parse is equal.
+    sub test_attributesMatchTheReferenceParsing(t as object)
+        text = M3UTests.manyAttributes()
+        playlist = M3U.parse(text)
+        lines = []
+        for each line in text.Split(Chr(10))
+            trimmed = Unicode.trim(line)
+            if Left(trimmed, 8) = "#EXTINF:" then lines.Push(trimmed)
+        end for
+        t.assertEqual(playlist.entries.Count(), lines.Count(), "one entry per #EXTINF")
+        for i = 0 to lines.Count() - 1
+            t.assertEqual(playlist.entries[i].attributes, M3U.parseAttributes(lines[i]), "entry " + i.ToStr())
+        end for
+        t.assertEqual(M3U.parse(text), playlist, "parsing twice")
+    end sub
+
+    ' Swift parses from 8 tasks at once; the port keeps no state between calls, so 8 parses agree.
+    sub test_repeatedParsesAgree(t as object)
+        expected = M3U.parse(M3UTests.manyAttributes())
+        for i = 1 to 8
+            t.assertEqual(M3U.parse(M3UTests.manyAttributes()), expected, "parse " + i.ToStr())
+        end for
+    end sub
+
+    ' MARK: ChannelListTests
+
+    sub test_ids(t as object)
+        result = M3U.makeChannels([
+            M3UTests.makeEntry("NBA TV", { tvgID: "NBATV.us" }),
+            M3UTests.makeEntry("Red Zone2", { tvgID: "" }),
+            M3UTests.makeEntry("NBA TV East", { tvgID: "nbatv.us" }),
+            M3UTests.makeEntry("NBA TV West", { tvgID: "nbatv.us" })
+        ])
+        t.assertEqual(M3UTests.pluck(result, "id"), ["id:nbatv.us", "name:red zone2", "id:nbatv.us#2", "id:nbatv.us#3"])
+    end sub
+
+    sub test_numberingAndNames(t as object)
+        result = M3U.makeChannels([
+            M3UTests.makeEntry("One", {}),
+            M3UTests.makeEntry("", { tvgName: "Two by tvg-name" }),
+            M3UTests.makeEntry("", {})
+        ])
+        t.assertEqual(M3UTests.pluck(result, "number"), [1, 2, 3])
+        t.assertEqual(M3UTests.pluck(result, "name"), ["One", "Two by tvg-name", "Channel 3"])
+    end sub
+
+    sub test_dropsVODButKeepsMovieTypedLiveStreams(t as object)
+        result = M3U.makeChannels([
+            M3UTests.makeEntry("Film", { url: "http://host/movie/u/p/1.mkv" }),
+            M3UTests.makeEntry("Show", { url: "http://host/series/u/p/2.ts" }),
+            M3UTests.makeEntry("Clip", { url: "http://host/clip.mp4" }),
+            M3UTests.makeEntry("Game", { url: "https://cdn/perdias/9/chunks.m3u8", extra: { "tvg-type": "movie" } }),
+            M3UTests.makeEntry("RTMP", { url: "rtmp://host/live" })
+        ])
+        t.assertEqual(M3UTests.pluck(result, "name"), ["Game"])
+        t.assertEqual(result[0].number, 1)
+    end sub
+
+    sub test_missingGroupIsOther(t as object)
+        result = M3U.makeChannels([M3UTests.makeEntry("A", { group: invalid })])
+        t.assertEqual(result[0].group, "Other")
+    end sub
+
+    ' Swift also checks guideGroups and channels(in:); those are the lineup's (step 8, Lineup.bs).
+    sub test_groupsInFirstAppearanceOrder(t as object)
+        result = M3U.makeChannels([
+            M3UTests.makeEntry("a", { group: "Live" }), M3UTests.makeEntry("b", { group: "NBA" }),
+            M3UTests.makeEntry("c", { group: "Live" }), M3UTests.makeEntry("d", { group: "NHL" })
+        ])
+        t.assertEqual(M3U.groups(result), ["Live", "NBA", "NHL"])
+        t.assertEqual(M3UTests.pluck(result, "group"), ["Live", "NBA", "Live", "NHL"])
+    end sub
+
+    ' Swift checks that one group has no All Channels (guideGroups, step 8); here the group list itself.
+    sub test_singleGroupHasNoAllChannels(t as object)
+        result = M3U.makeChannels([M3UTests.makeEntry("a", { group: "Live" }), M3UTests.makeEntry("b", { group: "Live" })])
+        t.assertEqual(M3U.groups(result), ["Live"])
+    end sub
+
+    ' MARK: the port's own edges
+
+    sub test_aBOMReadFromBytesIsDropped(t as object)
+        bytes = CreateObject("roByteArray")
+        bytes.FromAsciiString("#EXTM3U" + Chr(13) + Chr(10) + "#EXTINF:-1,Chaîne" + Chr(13) + Chr(10) + "http://a/x" + Chr(13) + Chr(10))
+        withBOM = CreateObject("roByteArray")
+        withBOM.Push(239)
+        withBOM.Push(187)
+        withBOM.Push(191)
+        withBOM.Append(bytes)
+        t.assertTrue(withBOM.WriteFile("tmp:/m3u-bom.m3u"), "wrote the file")
+        playlist = M3U.parse(M3U.readFile("tmp:/m3u-bom.m3u"))
+        t.assertEqual(playlist.entries.Count(), 1)
+        t.assertEqual(playlist.entries[0].name, "Chaîne", "UTF-8 decoded")
+        t.assertEqual(M3U.makeChannels(playlist.entries)[0].id, "name:chaîne")
+    end sub
+
+    sub test_onlyALeadingBOMIsDroppedAndTrimKeepsUFEFF(t as object)
+        ' A U+FEFF after the BOM isn't whitespace to Foundation, so that header line isn't "#EXTM3U".
+        text = Chr(65279) + Chr(65279) + "#EXTM3U url-tvg=" + Chr(34) + "http://g/x.xml" + Chr(34)
+        t.assertEqual(M3U.parse(text).error, "notAPlaylist")
+        t.assertEqual(Unicode.trim(Chr(65279) + " a "), Chr(65279) + " a")
+        t.assertEqual(Unicode.trim(Chr(160) + Chr(12288) + "a" + Chr(8201) + Chr(9)), "a")
+        t.assertEqual(Unicode.trim(Chr(13) + "a" + Chr(10)), Chr(13) + "a" + Chr(10), "newlines kept without the flag")
+        t.assertEqual(Unicode.trim(Chr(13) + "a" + Chr(133) + Chr(8232), true), "a")
+    end sub
+
+    ' Swift lowercases with full Unicode. The table path must lower these without LCase's help, so this
+    ' fails on an ASCII-only LCase if the table is wrong or missing.
+    sub test_unicodeTableLowersLatinGreekAndCyrillic(t as object)
+        upper = [192, 201, 206, 213, 220, 221, 222, 256, 286, 321, 376, 381, 902, 908, 911, 913, 931, 937, 1012, 1025, 1046, 1071, 1120, 1216, 1217, 1232, 1326]
+        lower = [224, 233, 238, 245, 252, 253, 254, 257, 287, 322, 255, 382, 940, 972, 974, 945, 963, 969, 952, 1105, 1078, 1103, 1121, 1231, 1218, 1233, 1327]
+        upperText = ""
+        lowerText = ""
+        for i = 0 to upper.Count() - 1
+            upperText += Chr(upper[i])
+            lowerText += Chr(lower[i])
+        end for
+        t.assertEqual(Unicode.mapLower(upperText + "ABC"), lowerText + "ABC", "the table only, ASCII left to LCase")
+        t.assertEqual(Unicode.mapLower(Chr(304)), "i" + Chr(775), "dotted capital I, as Swift")
+        ' Not uppercase: ×, ß, ŉ, ſ, final sigma, ӏ stay.
+        unchanged = Chr(215) + Chr(223) + Chr(329) + Chr(383) + Chr(962) + Chr(1231)
+        t.assertEqual(Unicode.mapLower(unchanged), unchanged)
+        t.assertEqual(Unicode.lower("CAFÉ TÉLÉ FHD"), "café télé fhd")
+        t.assertEqual(Unicode.lower("Sports.One.US"), "sports.one.us")
+    end sub
+
+    sub test_unicodeTableMatchesSwiftFromUC0ToU52F(t as object)
+        parts = []
+        for code = 192 to 1327
+            parts.Push(Chr(code))
+        end for
+        actual = Unicode.mapLower(parts.Join(""))
+        expected = M3UTests.swiftLowercasedTableRange()
+        t.assertEqual(Len(actual), Len(expected), "length")
+        for i = 1 to Len(expected)
+            if Mid(actual, i, 1) <> Mid(expected, i, 1)
+                t.fail("first difference at character " + i.ToStr() + ": expected U+" + StrI(Asc(Mid(expected, i, 1)), 16) + ", got U+" + StrI(Asc(Mid(actual, i, 1)), 16))
+                exit for
+            end if
+        end for
+    end sub
+
+    sub test_unicodeTableLowersLatinExtendedB(t as object)
+        ' ȘȚǍ, then the digraphs Ǆ ǅ ǈ ǋ ǲ, all without LCase.
+        input = Chr(536) + Chr(538) + Chr(461) + Chr(452) + Chr(453) + Chr(456) + Chr(459) + Chr(498)
+        t.assertEqual(Unicode.mapLower(input), Chr(537) + Chr(539) + Chr(462) + Chr(454) + Chr(454) + Chr(457) + Chr(460) + Chr(499))
+    end sub
+
+    ' Swift's URL decides which entries are live (checked against Swift on 2026-11-18).
+    sub test_liveStreamRulesFollowSwiftsURL(t as object)
+        live = ["http://a/movie/", "http://a/..mp4", "http://a?x.mp4", "http://a/x.mp4;p", "HTTP://A/x", "http://a/x?y=/movie/", "http://a/b.", "http://a/movie", "http://a:80/x.ts"]
+        for each url in live
+            t.assertTrue(M3U.isLiveStream(url), url)
+        end for
+        vod = ["http://a/%6Dovie/x", "http://a/x.mp4//", "http://a/x.mp4?", "http://a/b%2Emp4", "https:movie/x.mp4", "http://a/x.MKV#f", "http://a/y/movie%2fz", "http://a/SERIES/1"]
+        for each url in vod
+            t.assertFalse(M3U.isLiveStream(url), url)
+        end for
+        refused = ["http://exa mple.com/x", "http://a:8x/x", "http://[::1/x", "http://a|b/x", "h ttp://a/x", "1http://a", "", "//a/x", "ftp://a/x"]
+        for each url in refused
+            t.assertFalse(M3U.isLiveStream(url), url)
+        end for
+        t.assertTrue(M3U.isLiveStream("http://[::1]:5004/x"), "IPv6 literal")
+    end sub
+
+    ' Security L-2 (carried): the parser keeps every http(s) entry, as MMTVL's does, whatever its host. The
+    ' URL policy belongs to the fetch (step 8) and the player.
+    sub test_keepsHTTPEntriesWhateverTheirHost(t as object)
+        result = M3U.makeChannels([
+            M3UTests.makeEntry("Loopback", { url: "http://127.0.0.1:8080/x.m3u8" }),
+            M3UTests.makeEntry("Tuner", { url: "http://tuner.local:5004/auto/v5.1" }),
+            M3UTests.makeEntry("Doc", { url: "http://192.0.2.10/live/1.ts" })
+        ])
+        t.assertEqual(M3UTests.pluck(result, "url"), ["http://127.0.0.1:8080/x.m3u8", "http://tuner.local:5004/auto/v5.1", "http://192.0.2.10/live/1.ts"])
+    end sub
+
+    sub test_aLogoSwiftsURLRefusesIsDropped(t as object)
+        result = M3U.makeChannels([
+            M3UTests.makeEntry("A", { extra: { "tvg-logo": " http://l b/x.png " } }),
+            M3UTests.makeEntry("B", { extra: { "tvg-logo": " logos/b.png " } })
+        ])
+        t.assertInvalid(result[0].logo, "space in the host")
+        t.assertEqual(result[1].logo, "logos/b.png", "relative, trimmed")
+    end sub
+
+    ' The regex fast paths (ASCII lines, plain URLs) give what the character-by-character paths give.
+    sub test_fastAndSlowPathsAgree(t as object)
+        fast = M3U.newMatchers()
+        slow = M3U.newMatchers()
+        slow.nonASCII = CreateObject("roRegex", "^", "") ' every line takes the slow path
+        slow.plainWebURL = CreateObject("roRegex", "(?!)", "") ' no URL is plain
+        lines = M3UTests.joinLines([
+            M3UTests.manyAttributes(),
+            ReadAsciiFile("pkg:/fixtures/playlist.m3u"),
+            "#EXTINF:-1 a=`x` ,`b`,c=`unclosed",
+            "#EXTINF:-1 `,` x=`1`,`,`, name",
+            "#EXTINF:-1 =`v` -=`w` _a-B9=`z`,",
+            "#EXTINF:-1 k=``,`quoted, name`"
+        ]).Split(Chr(10))
+        checked = 0
+        for each line in lines
+            line = Unicode.trim(line, true)
+            if Left(line, 1) = "#" and not fast.nonASCII.IsMatch(line)
+                t.assertEqual(M3U.parseAttributes(line, fast), M3U.parseAttributes(line, slow), "attributes of " + line)
+                t.assertEqual(M3U.displayName(line, fast), M3U.displayName(line, slow), "name of " + line)
+                checked++
+            end if
+        end for
+        t.assertTrue(checked > 60, "checked " + checked.ToStr() + " lines")
+        urls = ["http://a/movie/", "https://a.example:8080/live/x.m3u8", "http://a?x.mp4", "HTTPS://A/x.MKV#f", "http://a/x.mp4//", "http://a", "http://a/b%2Emp4", "http://user@a/movie/x", "http://a:/x.ts", "http://a/../series/x"]
+        for each url in urls
+            t.assertEqual(M3U.isLiveStream(url, fast), M3U.isLiveStream(url, slow), url)
+        end for
+    end sub
+
+    ' Off-device timing only (no threshold): a generated 5,000-entry playlist.
+    sub test_parsesAFiveThousandEntryPlaylist(t as object)
+        q = Chr(34)
+        parts = ["#EXTM3U url-tvg=" + q + "https://epg.example/a.xml.gz" + q]
+        for i = 1 to 5000
+            parts.Push("#EXTINF:-1 tvg-id=" + q + "Chan" + i.ToStr() + ".us" + q + " tvg-name=" + q + "Channel " + i.ToStr() + q + " tvg-logo=" + q + "https://logo.example/" + i.ToStr() + ".png" + q + " group-title=" + q + "Group " + (i mod 25).ToStr() + q + ",Channel " + i.ToStr() + " HD")
+            parts.Push("https://stream.example/live/u/p/" + i.ToStr() + ".m3u8")
+        end for
+        text = parts.Join(Chr(13) + Chr(10))
+        clock = CreateObject("roTimespan")
+        playlist = M3U.parse(text)
+        parsed = clock.TotalMilliseconds()
+        channels = M3U.makeChannels(playlist.entries)
+        made = clock.TotalMilliseconds() - parsed
+        print "  M3U 5000 entries (" + Len(text).ToStr() + " characters): parse " + parsed.ToStr() + " ms, channels " + made.ToStr() + " ms (brs-node)"
+        t.assertEqual(playlist.entries.Count(), 5000)
+        t.assertEqual(channels.Count(), 5000)
+        t.assertEqual(channels[4999].id, "id:chan5000.us")
+        t.assertEqual(channels[4999].group, "Group 0")
+    end sub
+
+    ' MARK: helpers
+
+    ' Swift's lowercased() of U+00C0 to U+052F, one code point after another, as 4 hex digits each (İ gives
+    ' two: i and U+0307). Generated from Swift on 2026-11-18; Python's str.lower() agrees on every one.
+    function swiftLowercasedTableRange() as string
+        hex = "00E000E100E200E300E400E500E600E700E800E900EA00EB00EC00ED00EE00EF00F000F100F200F300F400F500F600D7"
+        hex += "00F800F900FA00FB00FC00FD00FE00DF00E000E100E200E300E400E500E600E700E800E900EA00EB00EC00ED00EE00EF"
+        hex += "00F000F100F200F300F400F500F600F700F800F900FA00FB00FC00FD00FE00FF01010101010301030105010501070107"
+        hex += "01090109010B010B010D010D010F010F0111011101130113011501150117011701190119011B011B011D011D011F011F"
+        hex += "0121012101230123012501250127012701290129012B012B012D012D012F012F00690307013101330133013501350137"
+        hex += "01370138013A013A013C013C013E013E01400140014201420144014401460146014801480149014B014B014D014D014F"
+        hex += "014F0151015101530153015501550157015701590159015B015B015D015D015F015F0161016101630163016501650167"
+        hex += "016701690169016B016B016D016D016F016F0171017101730173017501750177017700FF017A017A017C017C017E017E"
+        hex += "017F01800253018301830185018502540188018802560257018C018C018D01DD0259025B019201920260026301950269"
+        hex += "026801990199019A019B026F0272019E027501A101A101A301A301A501A5028001A801A8028301AA01AB01AD01AD0288"
+        hex += "01B001B0028A028B01B401B401B601B6029201B901B901BA01BB01BD01BD01BE01BF01C001C101C201C301C601C601C6"
+        hex += "01C901C901C901CC01CC01CC01CE01CE01D001D001D201D201D401D401D601D601D801D801DA01DA01DC01DC01DD01DF"
+        hex += "01DF01E101E101E301E301E501E501E701E701E901E901EB01EB01ED01ED01EF01EF01F001F301F301F301F501F50195"
+        hex += "01BF01F901F901FB01FB01FD01FD01FF01FF0201020102030203020502050207020702090209020B020B020D020D020F"
+        hex += "020F0211021102130213021502150217021702190219021B021B021D021D021F021F019E022102230223022502250227"
+        hex += "022702290229022B022B022D022D022F022F02310231023302330234023502360237023802392C65023C023C019A2C66"
+        hex += "023F02400242024201800289028C0247024702490249024B024B024D024D024F024F0250025102520253025402550256"
+        hex += "025702580259025A025B025C025D025E025F0260026102620263026402650266026702680269026A026B026C026D026E"
+        hex += "026F0270027102720273027402750276027702780279027A027B027C027D027E027F0280028102820283028402850286"
+        hex += "028702880289028A028B028C028D028E028F0290029102920293029402950296029702980299029A029B029C029D029E"
+        hex += "029F02A002A102A202A302A402A502A602A702A802A902AA02AB02AC02AD02AE02AF02B002B102B202B302B402B502B6"
+        hex += "02B702B802B902BA02BB02BC02BD02BE02BF02C002C102C202C302C402C502C602C702C802C902CA02CB02CC02CD02CE"
+        hex += "02CF02D002D102D202D302D402D502D602D702D802D902DA02DB02DC02DD02DE02DF02E002E102E202E302E402E502E6"
+        hex += "02E702E802E902EA02EB02EC02ED02EE02EF02F002F102F202F302F402F502F602F702F802F902FA02FB02FC02FD02FE"
+        hex += "02FF0300030103020303030403050306030703080309030A030B030C030D030E030F0310031103120313031403150316"
+        hex += "031703180319031A031B031C031D031E031F0320032103220323032403250326032703280329032A032B032C032D032E"
+        hex += "032F0330033103320333033403350336033703380339033A033B033C033D033E033F0340034103420343034403450346"
+        hex += "034703480349034A034B034C034D034E034F0350035103520353035403550356035703580359035A035B035C035D035E"
+        hex += "035F0360036103620363036403650366036703680369036A036B036C036D036E036F0371037103730373037403750377"
+        hex += "037703780379037A037B037C037D037E03F303800381038203830384038503AC038703AD03AE03AF038B03CC038D03CD"
+        hex += "03CE039003B103B203B303B403B503B603B703B803B903BA03BB03BC03BD03BE03BF03C003C103A203C303C403C503C6"
+        hex += "03C703C803C903CA03CB03AC03AD03AE03AF03B003B103B203B303B403B503B603B703B803B903BA03BB03BC03BD03BE"
+        hex += "03BF03C003C103C203C303C403C503C603C703C803C903CA03CB03CC03CD03CE03D703D003D103D203D303D403D503D6"
+        hex += "03D703D903D903DB03DB03DD03DD03DF03DF03E103E103E303E303E503E503E703E703E903E903EB03EB03ED03ED03EF"
+        hex += "03EF03F003F103F203F303B803F503F603F803F803F203FB03FB03FC037B037C037D0450045104520453045404550456"
+        hex += "045704580459045A045B045C045D045E045F0430043104320433043404350436043704380439043A043B043C043D043E"
+        hex += "043F0440044104420443044404450446044704480449044A044B044C044D044E044F0430043104320433043404350436"
+        hex += "043704380439043A043B043C043D043E043F0440044104420443044404450446044704480449044A044B044C044D044E"
+        hex += "044F0450045104520453045404550456045704580459045A045B045C045D045E045F0461046104630463046504650467"
+        hex += "046704690469046B046B046D046D046F046F0471047104730473047504750477047704790479047B047B047D047D047F"
+        hex += "047F0481048104820483048404850486048704880489048B048B048D048D048F048F0491049104930493049504950497"
+        hex += "049704990499049B049B049D049D049F049F04A104A104A304A304A504A504A704A704A904A904AB04AB04AD04AD04AF"
+        hex += "04AF04B104B104B304B304B504B504B704B704B904B904BB04BB04BD04BD04BF04BF04CF04C204C204C404C404C604C6"
+        hex += "04C804C804CA04CA04CC04CC04CE04CE04CF04D104D104D304D304D504D504D704D704D904D904DB04DB04DD04DD04DF"
+        hex += "04DF04E104E104E304E304E504E504E704E704E904E904EB04EB04ED04ED04EF04EF04F104F104F304F304F504F504F7"
+        hex += "04F704F904F904FB04FB04FD04FD04FF04FF0501050105030503050505050507050705090509050B050B050D050D050F"
+        hex += "050F0511051105130513051505150517051705190519051B051B051D051D051F051F0521052105230523052505250527"
+        hex += "052705290529052B052B052D052D052F052F"
+        parts = []
+        for i = 1 to Len(hex) step 4
+            parts.Push(Chr(Unicode.hexValue(Mid(hex, i, 4))))
+        end for
+        return parts.Join("")
+    end function
+
+    ' Lines joined with LF; a backquote stands for a double quote.
+    function joinLines(list as object) as string
+        return list.Join(Chr(10)).Replace("`", Chr(34))
+    end function
+
+    ' MMTVL's M3UParserAttributeTests.manyAttributes, line for line (a backquote is a double quote).
+    function manyAttributes() as string
+        return M3UTests.joinLines([
+            "#EXTM3U url-tvg=`https://a/x.xml.gz, https://b/y.xml` x-tvg-url=`ftp://c/z.xml,https://a/x.xml.gz` tvg-shift=`0`",
+            "#EXTINF:-1 TVG-ID=`Upper.us` tvg-id=`lower.us` Group-Title=`Mixed Case`,Duplicate Keys",
+            "http://s/1",
+            "#EXTINF:0 tvg_id2=`a_b` tvg-logo=`https://l/x.png?a=1&b=2=3` tvg-name=`` group-title=``,Underscore, Digits & Empty",
+            "http://s/2",
+            "#EXTINF:-1 tvg-id=unquoted tvg-name='single' tvg-chno = `5` tvg-logo=`http://unterminated,No Closing Quote",
+            "http://s/3",
+            "#EXTINF:-1 a=`1`b=`2` x:tvg-country=`US` tvg.lang=`en`,Adjacent `Quoted` Name",
+            "http://s/4",
+            "#EXTINF:-1 tvg-name=`Café 🇺🇸 Ünïcode` tvg-name=`second` group-title=`Sports, Live`,Café `Name`, With Comma",
+            "http://s/5",
+            "#EXTINF:-1 tvg-name=`A \`B\` C` catchup=`default` catchup-days=`7`,Escaped Quotes",
+            "http://s/6",
+            "#EXTGRP:From EXTGRP",
+            "#EXTINF:-1 tvg-id=`g`,tvg-id=`in-name` Comma Then Attribute",
+            "http://s/7",
+            "#EXTINF:-1 group-title=`Explicit` tvg-ID=`MiXeD`,",
+            "http://s/8",
+            "#EXTINF:-1  tvg-id=`  padded  `  ,  Padded Name  ",
+            "   http://s/9   ",
+            "#EXTINF:-1 tvg-name=`x`" + Chr(769) + " group-title=`G`,Combining Mark",
+            "http://s/10"
+        ])
+    end function
+
+    ' An entry as ChannelListTests builds one: group "G" and a live URL unless options say otherwise.
+    function makeEntry(name as string, options as object) as object
+        attributes = {}
+        if options.extra <> invalid then attributes = options.extra
+        if options.tvgID <> invalid then attributes["tvg-id"] = options.tvgID
+        if options.tvgName <> invalid then attributes["tvg-name"] = options.tvgName
+        group = "G"
+        if options.DoesExist("group") then group = options.group
+        url = "https://cdn/x/chunks.m3u8"
+        if options.url <> invalid then url = options.url
+        return { name: name, attributes: attributes, group: group, url: url }
+    end function
+
+    function pluck(list as object, key as string) as object
+        values = []
+        for each item in list
+            values.Push(item[key])
+        end for
+        return values
+    end function
+
+    function entryURLs(playlist as object) as object
+        return M3UTests.pluck(playlist.entries, "url")
+    end function
+
+    ' "" when both lists have the same items in the named fields, else the first difference:
+    ' "<what> <index> <field>: expected …, got …" (or the counts).
+    function firstDifference(actual as object, expected as object, what as string, fields as object) as string
+        count = actual.Count()
+        if expected.Count() < count then count = expected.Count()
+        for i = 0 to count - 1
+            for each key in fields
+                if not LocalTest.same(actual[i][key], expected[i][key])
+                    return what + " " + i.ToStr() + " " + key + ": expected " + LocalTest.describe(expected[i][key]) + ", got " + LocalTest.describe(actual[i][key])
+                end if
+            end for
+            if actual[i].Count() <> expected[i].Count()
+                return what + " " + i.ToStr() + ": expected fields " + FormatJson(expected[i].Keys()) + ", got " + FormatJson(actual[i].Keys())
+            end if
+        end for
+        if actual.Count() <> expected.Count()
+            return what + " count: expected " + expected.Count().ToStr() + ", got " + actual.Count().ToStr()
+        end if
+        return ""
+    end function
+
+end namespace

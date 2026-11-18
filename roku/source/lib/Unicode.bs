@@ -1,0 +1,195 @@
+' Unicode helpers that must give the same results as MMTVL's Swift on every Roku (M12 step 6).
+'
+' Unicode.lower is Swift's String.lowercased() for the ranges playlists use. Roku documents LCase only as
+' "Converts the string to all lower case", with no word on non-ASCII letters (global-string-functions,
+' read 2026-11-18), so lower runs LCase first and then maps what LCase may have left: Latin-1 Supplement,
+' Latin Extended-A and -B, Greek and Coptic, Cyrillic and Cyrillic Supplement (U+00C0 to U+024F and
+' U+0370 to U+052F), upper to lower, as Swift does. Checked code point by code point against Swift for
+' U+0080 to U+052F on 2026-11-18: identical (the local test sweeps the same range). Letters outside the
+' table are lowered only if the Roku's LCase does it.
+'
+' Unicode.trim is Foundation's trimmingCharacters(in: .whitespaces) or (newlines = true)
+' .whitespacesAndNewlines: Unicode Zs and TAB, plus LF, VT, FF, CR, NEL, LS and PS. Unlike Roku's Trim
+' (and JavaScript's), it never removes U+FEFF.
+'
+' Unicode.isExtend approximates Unicode's grapheme Extend property: a character it accepts joins the one
+' before it into one Swift Character, so a quote or comma followed by one isn't a quote or comma to Swift.
+namespace Unicode
+
+    ' A roRegex that finds any non-ASCII character; pass one to lower when lowering many strings.
+    function newNonASCIIFinder() as object
+        return CreateObject("roRegex", "[^\x00-\x7F]", "")
+    end function
+
+    ' Swift's lowercased(), see above. finder: Unicode.newNonASCIIFinder(), made once by the caller.
+    function lower(text as string, finder = invalid as dynamic) as string
+        low = LCase(text)
+        if finder = invalid then finder = Unicode.newNonASCIIFinder()
+        if not finder.IsMatch(low) then return low
+        return Unicode.mapLower(low)
+    end function
+
+    ' The table path alone, without LCase (see above); every other character as is.
+    function mapLower(text as string) as string
+        parts = []
+        count = Len(text)
+        changed = false
+        for i = 1 to count
+            piece = Mid(text, i, 1)
+            code = Asc(piece)
+            if code >= 192 and code <= 1327
+                mapped = Unicode.lowerOf(code)
+                if mapped <> ""
+                    piece = mapped
+                    changed = true
+                end if
+            end if
+            parts.Push(piece)
+        end for
+        if not changed then return text
+        return parts.Join("")
+    end function
+
+    ' The lowercase of one code point from U+00C0 to U+052F, or "" when it has none (or is lowercase).
+    function lowerOf(code as integer) as string
+        if code < 256
+            ' Latin-1 Supplement: À to Þ, except ×.
+            if code >= 192 and code <= 222 and code <> 215 then return Chr(code + 32)
+            return ""
+        end if
+        if code < 384
+            ' Latin Extended-A.
+            if code = 304 then return "i" + Chr(775) ' İ: i and a combining dot above, as Swift gives it
+            if code = 376 then return Chr(255) ' Ÿ
+            if code <= 311 or (code >= 330 and code <= 375)
+                if code mod 2 = 0 then return Chr(code + 1)
+                return ""
+            end if
+            if (code >= 313 and code <= 328) or (code >= 377 and code <= 382)
+                if code mod 2 = 1 then return Chr(code + 1)
+            end if
+            return ""
+        end if
+        if code < 592
+            ' Latin Extended-B: irregular, so a table (Unicode.latinExtendedB).
+            hex = Mid(Unicode.latinExtendedB(), (code - 384) * 4 + 1, 4)
+            if hex = "0000" then return ""
+            return Chr(Unicode.hexValue(hex))
+        end if
+        if code >= 880 and code < 1024
+            ' Greek and Coptic.
+            if code = 880 or code = 882 or code = 886 then return Chr(code + 1)
+            if code = 895 then return Chr(1011)
+            if code = 902 then return Chr(940)
+            if code >= 904 and code <= 906 then return Chr(code + 37)
+            if code = 908 then return Chr(972)
+            if code = 910 or code = 911 then return Chr(code + 63)
+            if (code >= 913 and code <= 929) or (code >= 931 and code <= 939) then return Chr(code + 32)
+            if code = 975 then return Chr(983)
+            if code >= 984 and code <= 1007
+                if code mod 2 = 0 then return Chr(code + 1)
+                return ""
+            end if
+            if code = 1012 then return Chr(952)
+            if code = 1015 then return Chr(1016)
+            if code = 1017 then return Chr(1010)
+            if code = 1018 then return Chr(1019)
+            if code >= 1021 and code <= 1023 then return Chr(code - 130)
+            return ""
+        end if
+        if code >= 1024 and code <= 1327
+            ' Cyrillic and Cyrillic Supplement.
+            if code <= 1039 then return Chr(code + 80)
+            if code <= 1071 then return Chr(code + 32)
+            if code = 1216 then return Chr(1231)
+            if code >= 1217 and code <= 1230
+                if code mod 2 = 1 then return Chr(code + 1)
+                return ""
+            end if
+            if (code >= 1120 and code <= 1153) or (code >= 1162 and code <= 1215) or code >= 1232
+                if code mod 2 = 0 then return Chr(code + 1)
+            end if
+            return ""
+        end if
+        return ""
+    end function
+
+    ' The lowercase of U+0180 to U+024F, 4 hex digits per code point in order, 0000 for none. Generated from
+    ' Swift's lowercased() on 2026-11-18 (Python's str.lower() agrees on every one; 107 letters, including
+    ' the digraphs: Ǆ and ǅ both give ǆ).
+    function latinExtendedB() as string
+        table = "00000253018300000185000002540188000002560257018C0000000001DD0259025B0192000002600263000002690268"
+        table += "0199000000000000026F02720000027501A1000001A3000001A50000028001A8000002830000000001AD0000028801B0"
+        table += "0000028A028B01B4000001B60000029201B900000000000001BD000000000000000000000000000001C601C6000001C9"
+        table += "01C9000001CC01CC000001CE000001D0000001D2000001D4000001D6000001D8000001DA000001DC0000000001DF0000"
+        table += "01E1000001E3000001E5000001E7000001E9000001EB000001ED000001EF0000000001F301F3000001F50000019501BF"
+        table += "01F9000001FB000001FD000001FF00000201000002030000020500000207000002090000020B0000020D0000020F0000"
+        table += "0211000002130000021500000217000002190000021B0000021D0000021F0000019E0000022300000225000002270000"
+        table += "02290000022B0000022D0000022F000002310000023300000000000000000000000000002C65023C0000019A2C660000"
+        table += "00000242000001800289028C0247000002490000024B0000024D0000024F0000"
+        return table
+    end function
+
+    ' 4 hex digits (uppercase) as a number.
+    function hexValue(hex as string) as integer
+        value = 0
+        for i = 1 to Len(hex)
+            code = Asc(Mid(hex, i, 1))
+            if code >= 65 then value = value * 16 + code - 55 else value = value * 16 + code - 48
+        end for
+        return value
+    end function
+
+    ' Foundation's trimming of .whitespaces, or .whitespacesAndNewlines when newlines is true.
+    function trim(text as string, newlines = false as boolean) as string
+        count = Len(text)
+        if count = 0 then return text
+        ' Most lines start and end with a printable ASCII character.
+        code = Asc(Left(text, 1))
+        if code > 32 and code < 127
+            code = Asc(Right(text, 1))
+            if code > 32 and code < 127 then return text
+        end if
+        first = 1
+        while first <= count and Unicode.isSpace(Asc(Mid(text, first, 1)), newlines)
+            first++
+        end while
+        if first > count then return ""
+        last = count
+        while last > first and Unicode.isSpace(Asc(Mid(text, last, 1)), newlines)
+            last--
+        end while
+        if first = 1 and last = count then return text
+        return Mid(text, first, last - first + 1)
+    end function
+
+    function isSpace(code as integer, newlines as boolean) as boolean
+        if code = 32 or code = 9 then return true
+        if code < 10 then return false
+        if code <= 13 then return newlines
+        if code < 133 then return false
+        if code = 133 then return newlines
+        if code = 160 or code = 5760 or code = 8239 or code = 8287 or code = 12288 then return true
+        if code >= 8192 and code <= 8202 then return true
+        if code = 8232 or code = 8233 then return newlines
+        return false
+    end function
+
+    ' Whether a character joins the one before it in a Swift Character (combining marks, ZWNJ, ZWJ,
+    ' variation selectors, emoji modifiers, tags). An approximation of Unicode's Extend property.
+    function isExtend(code as integer) as boolean
+        if code < 768 then return false
+        if code <= 879 then return true ' Combining Diacritical Marks
+        if code >= 1155 and code <= 1161 then return true ' Cyrillic combining marks
+        if code >= 6832 and code <= 6911 then return true ' Combining Diacritical Marks Extended
+        if code >= 7616 and code <= 7679 then return true ' Combining Diacritical Marks Supplement
+        if code = 8204 or code = 8205 then return true ' ZWNJ, ZWJ
+        if code >= 8400 and code <= 8447 then return true ' Combining Diacritical Marks for Symbols
+        if code >= 65024 and code <= 65039 then return true ' Variation Selectors
+        if code >= 65056 and code <= 65071 then return true ' Combining Half Marks
+        if code >= 127995 and code <= 127999 then return true ' emoji modifiers
+        if code >= 917536 and code <= 917631 then return true ' tags
+        return false
+    end function
+
+end namespace
