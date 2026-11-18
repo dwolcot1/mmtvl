@@ -1,0 +1,129 @@
+﻿#EXTM3U URL-TVG="https://epg.example/a.xml.gz, http://epg.example/b.xml ,ftp://epg.example/c.xml,https://epg.example/a.xml.gz" url-tvg="https://epg.example/ignored.xml" x-tvg-url="https://epg.example/d.xml,http://epg.example/b.xml,https://epg.example/b.xml"
+# MMTVL/Roku parity fixture (M12 step 5). Hand-written; every host is .example. Lines starting with "#" other than
+# #EXTM3U, #EXTINF: and #EXTGRP: are ignored by M3UParser, so these comments are part of the test too.
+# The file starts with a UTF-8 BOM. Lines up to the "LF from here" marker end in CRLF, the rest in LF.
+# Header: URL-TVG (key case folded, first wins over the later url-tvg), comma split, trimmed, http(s) only, de-duplicated,
+# then x-tvg-url. Expected guideURLs: https a.xml.gz, http b.xml, https d.xml, https b.xml (a different URL).
+
+# tvg-id rule (guide A), logo, group-title.
+#EXTINF:-1 tvg-id="Sports.One.us" tvg-name="Sports One HD" tvg-logo="https://logo.example/s1.png" group-title="Sports",Sports One
+https://stream.example/live/u/p/101.m3u8
+# Same tvg-id after trimming and lowercasing: id gets #2.
+#EXTINF:-1 tvg-id=" sports.one.US " group-title="Sports",Sports One Backup
+https://stream.example/live/u/p/102.ts
+# Attribute keys are lowercased and the first one wins (TVG-ID over tvg-id, Group-Title).
+#EXTINF:-1 TVG-ID="Upper.Key.us" tvg-id="ignored.us" Group-Title="Sports" group-title="Ignored",Upper Key
+https://stream.example/live/u/p/103.m3u8
+#EXTGRP:News
+# Running #EXTGRP group; override by name (key and value in other cases) to guide B.
+#EXTINF:-1 tvg-name="Local News",Local News
+https://stream.example/live/u/p/104.m3u8
+# Empty group-title falls back to #EXTGRP. Override "" = no guide, beating a tvg-id that is in both guides.
+# ("Both Guides" below has the same tvg-id, so it becomes id:both.guides.us#2.)
+#EXTINF:-1 tvg-id="Both.Guides.us" group-title="",Evening News
+https://stream.example/live/u/p/105.m3u8
+# Missing name: tvg-name. Name rule with case and "4K" dropped.
+#EXTINF:-1 tvg-name="Fallback Name",
+https://stream.example/live/u/p/106.m3u8
+# Missing name and tvg-name: "Channel N" (N counts kept channels only).
+#EXTINF:-1,
+https://stream.example/live/u/p/107.m3u8
+#EXTVLCOPT:http-user-agent=Fixture/1.0
+# An empty #EXTGRP: clears the running group: "Other". Empty tvg-id counts as none.
+#EXTGRP:
+#EXTINF:-1 tvg-id="",No Group Channel
+#EXTVLCOPT:http-referrer=https://stream.example/
+https://stream.example/live/u/p/108.m3u8
+# A URL line with no #EXTINF before it is ignored.
+https://stream.example/live/u/p/orphan.m3u8
+# VOD and non-http entries are dropped (and use no channel number).
+#EXTINF:-1 group-title="Movies",A Movie
+https://stream.example/movie/u/p/5001.mkv
+#EXTINF:-1 group-title="Movies",Upper Movie Path
+https://stream.example/Movie/u/p/5002.ts
+#EXTINF:-1 group-title="Series",A Series
+https://stream.example/series/u/p/6001.m3u8
+#EXTINF:-1 group-title="Movies",An MP4
+https://stream.example/live/u/p/5003.mp4
+#EXTINF:-1 group-title="Movies",An AVI
+https://stream.example/live/u/p/5004.avi?token=abc
+#EXTINF:-1 group-title="Movies",Upper MOV
+https://stream.example/live/u/p/5005.MOV
+#EXTINF:-1 group-title="Radio",Not HTTP
+rtmp://stream.example/live/u/p/7001
+# "movie" not as a path segment, and an extension not on the list, are live.
+#EXTINF:-1 group-title="Movies",Movie Channel
+https://stream.example/live/u/p/movie.ts
+# LF from here
+# Duplicate names without tvg-id: name:kids zone, #2, #3 (lowercased). Name rule with punctuation ("Kids-Zone").
+#EXTINF:-1 group-title="Kids",Kids Zone
+https://stream.example/live/u/p/201.m3u8
+#EXTINF:-1 group-title="Kids",Kids Zone
+https://stream.example/live/u/p/202.m3u8
+#EXTINF:-1 group-title="Kids",KIDS ZONE
+https://stream.example/live/u/p/203.m3u8
+# Game feeds: -H / -A spelled out; ids keep the playlist's name. The override keyed by the feed name works; the one
+# keyed by the raw "-A" name doesn't (the override key is the shown name).
+#EXTINF:-1 group-title="Games",Lions @ Bears-H
+https://stream.example/live/u/p/301.m3u8
+#EXTINF:-1 group-title="Games",Lions @ Bears-A
+https://stream.example/live/u/p/302.m3u8
+#EXTINF:-1 group-title="Games",Lions @ Bears-X
+https://stream.example/live/u/p/303.m3u8
+#EXTINF:-1 group-title="Games",Newsroom-H
+https://stream.example/live/u/p/304.m3u8
+#EXTINF:-1 group-title="Games",Lions @ -H
+https://stream.example/live/u/p/305.m3u8
+# Commas inside quoted attributes; the name is everything after the first comma outside quotes.
+# tvg-name rule in guide B ("Hello World").
+#EXTINF:-1 tvg-name="Hello, World" group-title="Talk, Radio",Talk Time, Late Edition
+https://stream.example/live/u/p/401.m3u8
+# Attributes are matched on the whole line, so one inside the name still counts (logo).
+#EXTINF:-1 group-title="Odd",Odd Channel tvg-logo="https://logo.example/odd.png"
+https://stream.example/live/u/p/402.m3u8
+# Two #EXTINF lines in a row: the second one is used.
+#EXTINF:-1 group-title="Odd",Replaced Entry
+#EXTINF:-1 group-title="International",Café Télé FHD
+https://stream.example/live/u/p/501.m3u8
+#EXTINF:-1 group-title="International",Nandu Deportes UHD
+https://stream.example/live/u/p/502.m3u8
+# Name rule: "&" -> "and", "+" -> "plus", hd/sd/hevc dropped.
+#EXTINF:-1 group-title="Entertainment",A&E
+https://stream.example/live/u/p/601.m3u8
+#EXTINF:-1 group-title="Entertainment",Sports+ HD
+https://stream.example/live/u/p/602.m3u8
+#EXTINF:-1 group-title="Entertainment",Cinema Max SD HEVC
+https://stream.example/live/u/p/603.m3u8
+# tvg-id in both guides: guide A. tvg-id only in guide B beats a name match in guide A.
+#EXTINF:-1 tvg-id="BOTH.GUIDES.US" group-title="Rules",Both Guides
+https://stream.example/live/u/p/701.m3u8
+#EXTINF:-1 tvg-id="only.in.b.us" group-title="Rules",Only In B
+https://stream.example/live/u/p/702.m3u8
+# Name rule: tvg-name in guide B comes before the name in guide A (name by name, then guide by guide).
+#EXTINF:-1 tvg-name="Ticker Name B" group-title="Rules",Plain Name A
+https://stream.example/live/u/p/703.m3u8
+# Merged <channel> ids: a name from the second element matches.
+# (Trailing spaces and a tab on the URL line, leading spaces on the next #EXTINF: trimmed.)
+#EXTINF:-1 group-title="Rules",Merge Two
+https://stream.example/live/u/p/704.m3u8  	
+# The 16-name cap: the 16th name matches, the 17th doesn't.
+   #EXTINF:-1 group-title="Rules",Many 16
+https://stream.example/live/u/p/705.m3u8
+#EXTINF:-1 group-title="Rules",Many 17
+https://stream.example/live/u/p/706.m3u8
+# Two guide channels with the same normalized name in one guide: the first wins.
+#EXTINF:-1 group-title="Rules",Shared Name
+https://stream.example/live/u/p/707.m3u8
+# Overrides: by tvg-id; the name's override before the tvg-id's; a target in no guide falls through to the tvg-id rule;
+# a target in no guide doesn't fall back to the tvg-id's override; a target in both guides goes to guide A.
+#EXTINF:-1 tvg-id="Key.By.Tvg" group-title="Overrides",TvgKey Channel
+https://stream.example/live/u/p/801.m3u8
+#EXTINF:-1 tvg-id="Tvg.Loses" group-title="Overrides",Name Wins
+https://stream.example/live/u/p/802.m3u8
+#EXTINF:-1 tvg-id="Sports.Plus.us" group-title="Overrides",Missing Target
+https://stream.example/live/u/p/803.m3u8
+#EXTINF:-1 tvg-id="Fallthrough.Tvg" group-title="Overrides",Missing Then Tvg
+https://stream.example/live/u/p/804.m3u8
+#EXTINF:-1 group-title="Overrides",Override Both
+https://stream.example/live/u/p/805.m3u8
+	

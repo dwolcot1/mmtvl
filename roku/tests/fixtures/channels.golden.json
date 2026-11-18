@@ -1,0 +1,905 @@
+{
+  "channels" : [
+    {
+      "group" : "Sports",
+      "id" : "id:sports.one.us",
+      "logo" : "https://logo.example/s1.png",
+      "name" : "Sports One",
+      "number" : 1,
+      "tvgID" : "Sports.One.us",
+      "tvgName" : "Sports One HD",
+      "url" : "https://stream.example/live/u/p/101.m3u8"
+    },
+    {
+      "group" : "Sports",
+      "id" : "id:sports.one.us#2",
+      "logo" : null,
+      "name" : "Sports One Backup",
+      "number" : 2,
+      "tvgID" : "sports.one.US",
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/102.ts"
+    },
+    {
+      "group" : "Sports",
+      "id" : "id:upper.key.us",
+      "logo" : null,
+      "name" : "Upper Key",
+      "number" : 3,
+      "tvgID" : "Upper.Key.us",
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/103.m3u8"
+    },
+    {
+      "group" : "News",
+      "id" : "name:local news",
+      "logo" : null,
+      "name" : "Local News",
+      "number" : 4,
+      "tvgID" : null,
+      "tvgName" : "Local News",
+      "url" : "https://stream.example/live/u/p/104.m3u8"
+    },
+    {
+      "group" : "News",
+      "id" : "id:both.guides.us",
+      "logo" : null,
+      "name" : "Evening News",
+      "number" : 5,
+      "tvgID" : "Both.Guides.us",
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/105.m3u8"
+    },
+    {
+      "group" : "News",
+      "id" : "name:fallback name",
+      "logo" : null,
+      "name" : "Fallback Name",
+      "number" : 6,
+      "tvgID" : null,
+      "tvgName" : "Fallback Name",
+      "url" : "https://stream.example/live/u/p/106.m3u8"
+    },
+    {
+      "group" : "News",
+      "id" : "name:channel 7",
+      "logo" : null,
+      "name" : "Channel 7",
+      "number" : 7,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/107.m3u8"
+    },
+    {
+      "group" : "Other",
+      "id" : "name:no group channel",
+      "logo" : null,
+      "name" : "No Group Channel",
+      "number" : 8,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/108.m3u8"
+    },
+    {
+      "group" : "Movies",
+      "id" : "name:movie channel",
+      "logo" : null,
+      "name" : "Movie Channel",
+      "number" : 9,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/movie.ts"
+    },
+    {
+      "group" : "Kids",
+      "id" : "name:kids zone",
+      "logo" : null,
+      "name" : "Kids Zone",
+      "number" : 10,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/201.m3u8"
+    },
+    {
+      "group" : "Kids",
+      "id" : "name:kids zone#2",
+      "logo" : null,
+      "name" : "Kids Zone",
+      "number" : 11,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/202.m3u8"
+    },
+    {
+      "group" : "Kids",
+      "id" : "name:kids zone#3",
+      "logo" : null,
+      "name" : "KIDS ZONE",
+      "number" : 12,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/203.m3u8"
+    },
+    {
+      "group" : "Games",
+      "id" : "name:lions @ bears-h",
+      "logo" : null,
+      "name" : "Lions @ Bears (Home Feed)",
+      "number" : 13,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/301.m3u8"
+    },
+    {
+      "group" : "Games",
+      "id" : "name:lions @ bears-a",
+      "logo" : null,
+      "name" : "Lions @ Bears (Away Feed)",
+      "number" : 14,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/302.m3u8"
+    },
+    {
+      "group" : "Games",
+      "id" : "name:lions @ bears-x",
+      "logo" : null,
+      "name" : "Lions @ Bears-X",
+      "number" : 15,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/303.m3u8"
+    },
+    {
+      "group" : "Games",
+      "id" : "name:newsroom-h",
+      "logo" : null,
+      "name" : "Newsroom-H",
+      "number" : 16,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/304.m3u8"
+    },
+    {
+      "group" : "Games",
+      "id" : "name:lions @ -h",
+      "logo" : null,
+      "name" : "Lions @ -H",
+      "number" : 17,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/305.m3u8"
+    },
+    {
+      "group" : "Talk, Radio",
+      "id" : "name:talk time, late edition",
+      "logo" : null,
+      "name" : "Talk Time, Late Edition",
+      "number" : 18,
+      "tvgID" : null,
+      "tvgName" : "Hello, World",
+      "url" : "https://stream.example/live/u/p/401.m3u8"
+    },
+    {
+      "group" : "Odd",
+      "id" : "name:odd channel tvg-logo=\"https://logo.example/odd.png\"",
+      "logo" : "https://logo.example/odd.png",
+      "name" : "Odd Channel tvg-logo=\"https://logo.example/odd.png\"",
+      "number" : 19,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/402.m3u8"
+    },
+    {
+      "group" : "International",
+      "id" : "name:café télé fhd",
+      "logo" : null,
+      "name" : "Café Télé FHD",
+      "number" : 20,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/501.m3u8"
+    },
+    {
+      "group" : "International",
+      "id" : "name:nandu deportes uhd",
+      "logo" : null,
+      "name" : "Nandu Deportes UHD",
+      "number" : 21,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/502.m3u8"
+    },
+    {
+      "group" : "Entertainment",
+      "id" : "name:a&e",
+      "logo" : null,
+      "name" : "A&E",
+      "number" : 22,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/601.m3u8"
+    },
+    {
+      "group" : "Entertainment",
+      "id" : "name:sports+ hd",
+      "logo" : null,
+      "name" : "Sports+ HD",
+      "number" : 23,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/602.m3u8"
+    },
+    {
+      "group" : "Entertainment",
+      "id" : "name:cinema max sd hevc",
+      "logo" : null,
+      "name" : "Cinema Max SD HEVC",
+      "number" : 24,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/603.m3u8"
+    },
+    {
+      "group" : "Rules",
+      "id" : "id:both.guides.us#2",
+      "logo" : null,
+      "name" : "Both Guides",
+      "number" : 25,
+      "tvgID" : "BOTH.GUIDES.US",
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/701.m3u8"
+    },
+    {
+      "group" : "Rules",
+      "id" : "id:only.in.b.us",
+      "logo" : null,
+      "name" : "Only In B",
+      "number" : 26,
+      "tvgID" : "only.in.b.us",
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/702.m3u8"
+    },
+    {
+      "group" : "Rules",
+      "id" : "name:plain name a",
+      "logo" : null,
+      "name" : "Plain Name A",
+      "number" : 27,
+      "tvgID" : null,
+      "tvgName" : "Ticker Name B",
+      "url" : "https://stream.example/live/u/p/703.m3u8"
+    },
+    {
+      "group" : "Rules",
+      "id" : "name:merge two",
+      "logo" : null,
+      "name" : "Merge Two",
+      "number" : 28,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/704.m3u8"
+    },
+    {
+      "group" : "Rules",
+      "id" : "name:many 16",
+      "logo" : null,
+      "name" : "Many 16",
+      "number" : 29,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/705.m3u8"
+    },
+    {
+      "group" : "Rules",
+      "id" : "name:many 17",
+      "logo" : null,
+      "name" : "Many 17",
+      "number" : 30,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/706.m3u8"
+    },
+    {
+      "group" : "Rules",
+      "id" : "name:shared name",
+      "logo" : null,
+      "name" : "Shared Name",
+      "number" : 31,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/707.m3u8"
+    },
+    {
+      "group" : "Overrides",
+      "id" : "id:key.by.tvg",
+      "logo" : null,
+      "name" : "TvgKey Channel",
+      "number" : 32,
+      "tvgID" : "Key.By.Tvg",
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/801.m3u8"
+    },
+    {
+      "group" : "Overrides",
+      "id" : "id:tvg.loses",
+      "logo" : null,
+      "name" : "Name Wins",
+      "number" : 33,
+      "tvgID" : "Tvg.Loses",
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/802.m3u8"
+    },
+    {
+      "group" : "Overrides",
+      "id" : "id:sports.plus.us",
+      "logo" : null,
+      "name" : "Missing Target",
+      "number" : 34,
+      "tvgID" : "Sports.Plus.us",
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/803.m3u8"
+    },
+    {
+      "group" : "Overrides",
+      "id" : "id:fallthrough.tvg",
+      "logo" : null,
+      "name" : "Missing Then Tvg",
+      "number" : 35,
+      "tvgID" : "Fallthrough.Tvg",
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/804.m3u8"
+    },
+    {
+      "group" : "Overrides",
+      "id" : "name:override both",
+      "logo" : null,
+      "name" : "Override Both",
+      "number" : 36,
+      "tvgID" : null,
+      "tvgName" : null,
+      "url" : "https://stream.example/live/u/p/805.m3u8"
+    }
+  ],
+  "entries" : [
+    {
+      "attributes" : {
+        "group-title" : "Sports",
+        "tvg-id" : "Sports.One.us",
+        "tvg-logo" : "https://logo.example/s1.png",
+        "tvg-name" : "Sports One HD"
+      },
+      "group" : "Sports",
+      "name" : "Sports One",
+      "url" : "https://stream.example/live/u/p/101.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Sports",
+        "tvg-id" : " sports.one.US "
+      },
+      "group" : "Sports",
+      "name" : "Sports One Backup",
+      "url" : "https://stream.example/live/u/p/102.ts"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Sports",
+        "tvg-id" : "Upper.Key.us"
+      },
+      "group" : "Sports",
+      "name" : "Upper Key",
+      "url" : "https://stream.example/live/u/p/103.m3u8"
+    },
+    {
+      "attributes" : {
+        "tvg-name" : "Local News"
+      },
+      "group" : "News",
+      "name" : "Local News",
+      "url" : "https://stream.example/live/u/p/104.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "",
+        "tvg-id" : "Both.Guides.us"
+      },
+      "group" : "News",
+      "name" : "Evening News",
+      "url" : "https://stream.example/live/u/p/105.m3u8"
+    },
+    {
+      "attributes" : {
+        "tvg-name" : "Fallback Name"
+      },
+      "group" : "News",
+      "name" : "",
+      "url" : "https://stream.example/live/u/p/106.m3u8"
+    },
+    {
+      "attributes" : {
+
+      },
+      "group" : "News",
+      "name" : "",
+      "url" : "https://stream.example/live/u/p/107.m3u8"
+    },
+    {
+      "attributes" : {
+        "tvg-id" : ""
+      },
+      "group" : null,
+      "name" : "No Group Channel",
+      "url" : "https://stream.example/live/u/p/108.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Movies"
+      },
+      "group" : "Movies",
+      "name" : "A Movie",
+      "url" : "https://stream.example/movie/u/p/5001.mkv"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Movies"
+      },
+      "group" : "Movies",
+      "name" : "Upper Movie Path",
+      "url" : "https://stream.example/Movie/u/p/5002.ts"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Series"
+      },
+      "group" : "Series",
+      "name" : "A Series",
+      "url" : "https://stream.example/series/u/p/6001.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Movies"
+      },
+      "group" : "Movies",
+      "name" : "An MP4",
+      "url" : "https://stream.example/live/u/p/5003.mp4"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Movies"
+      },
+      "group" : "Movies",
+      "name" : "An AVI",
+      "url" : "https://stream.example/live/u/p/5004.avi?token=abc"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Movies"
+      },
+      "group" : "Movies",
+      "name" : "Upper MOV",
+      "url" : "https://stream.example/live/u/p/5005.MOV"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Radio"
+      },
+      "group" : "Radio",
+      "name" : "Not HTTP",
+      "url" : "rtmp://stream.example/live/u/p/7001"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Movies"
+      },
+      "group" : "Movies",
+      "name" : "Movie Channel",
+      "url" : "https://stream.example/live/u/p/movie.ts"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Kids"
+      },
+      "group" : "Kids",
+      "name" : "Kids Zone",
+      "url" : "https://stream.example/live/u/p/201.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Kids"
+      },
+      "group" : "Kids",
+      "name" : "Kids Zone",
+      "url" : "https://stream.example/live/u/p/202.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Kids"
+      },
+      "group" : "Kids",
+      "name" : "KIDS ZONE",
+      "url" : "https://stream.example/live/u/p/203.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Games"
+      },
+      "group" : "Games",
+      "name" : "Lions @ Bears-H",
+      "url" : "https://stream.example/live/u/p/301.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Games"
+      },
+      "group" : "Games",
+      "name" : "Lions @ Bears-A",
+      "url" : "https://stream.example/live/u/p/302.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Games"
+      },
+      "group" : "Games",
+      "name" : "Lions @ Bears-X",
+      "url" : "https://stream.example/live/u/p/303.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Games"
+      },
+      "group" : "Games",
+      "name" : "Newsroom-H",
+      "url" : "https://stream.example/live/u/p/304.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Games"
+      },
+      "group" : "Games",
+      "name" : "Lions @ -H",
+      "url" : "https://stream.example/live/u/p/305.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Talk, Radio",
+        "tvg-name" : "Hello, World"
+      },
+      "group" : "Talk, Radio",
+      "name" : "Talk Time, Late Edition",
+      "url" : "https://stream.example/live/u/p/401.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Odd",
+        "tvg-logo" : "https://logo.example/odd.png"
+      },
+      "group" : "Odd",
+      "name" : "Odd Channel tvg-logo=\"https://logo.example/odd.png\"",
+      "url" : "https://stream.example/live/u/p/402.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "International"
+      },
+      "group" : "International",
+      "name" : "Café Télé FHD",
+      "url" : "https://stream.example/live/u/p/501.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "International"
+      },
+      "group" : "International",
+      "name" : "Nandu Deportes UHD",
+      "url" : "https://stream.example/live/u/p/502.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Entertainment"
+      },
+      "group" : "Entertainment",
+      "name" : "A&E",
+      "url" : "https://stream.example/live/u/p/601.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Entertainment"
+      },
+      "group" : "Entertainment",
+      "name" : "Sports+ HD",
+      "url" : "https://stream.example/live/u/p/602.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Entertainment"
+      },
+      "group" : "Entertainment",
+      "name" : "Cinema Max SD HEVC",
+      "url" : "https://stream.example/live/u/p/603.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Rules",
+        "tvg-id" : "BOTH.GUIDES.US"
+      },
+      "group" : "Rules",
+      "name" : "Both Guides",
+      "url" : "https://stream.example/live/u/p/701.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Rules",
+        "tvg-id" : "only.in.b.us"
+      },
+      "group" : "Rules",
+      "name" : "Only In B",
+      "url" : "https://stream.example/live/u/p/702.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Rules",
+        "tvg-name" : "Ticker Name B"
+      },
+      "group" : "Rules",
+      "name" : "Plain Name A",
+      "url" : "https://stream.example/live/u/p/703.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Rules"
+      },
+      "group" : "Rules",
+      "name" : "Merge Two",
+      "url" : "https://stream.example/live/u/p/704.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Rules"
+      },
+      "group" : "Rules",
+      "name" : "Many 16",
+      "url" : "https://stream.example/live/u/p/705.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Rules"
+      },
+      "group" : "Rules",
+      "name" : "Many 17",
+      "url" : "https://stream.example/live/u/p/706.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Rules"
+      },
+      "group" : "Rules",
+      "name" : "Shared Name",
+      "url" : "https://stream.example/live/u/p/707.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Overrides",
+        "tvg-id" : "Key.By.Tvg"
+      },
+      "group" : "Overrides",
+      "name" : "TvgKey Channel",
+      "url" : "https://stream.example/live/u/p/801.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Overrides",
+        "tvg-id" : "Tvg.Loses"
+      },
+      "group" : "Overrides",
+      "name" : "Name Wins",
+      "url" : "https://stream.example/live/u/p/802.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Overrides",
+        "tvg-id" : "Sports.Plus.us"
+      },
+      "group" : "Overrides",
+      "name" : "Missing Target",
+      "url" : "https://stream.example/live/u/p/803.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Overrides",
+        "tvg-id" : "Fallthrough.Tvg"
+      },
+      "group" : "Overrides",
+      "name" : "Missing Then Tvg",
+      "url" : "https://stream.example/live/u/p/804.m3u8"
+    },
+    {
+      "attributes" : {
+        "group-title" : "Overrides"
+      },
+      "group" : "Overrides",
+      "name" : "Override Both",
+      "url" : "https://stream.example/live/u/p/805.m3u8"
+    }
+  ],
+  "feedNames" : [
+    {
+      "input" : "Sports One",
+      "output" : "Sports One"
+    },
+    {
+      "input" : "Sports One Backup",
+      "output" : "Sports One Backup"
+    },
+    {
+      "input" : "Upper Key",
+      "output" : "Upper Key"
+    },
+    {
+      "input" : "Local News",
+      "output" : "Local News"
+    },
+    {
+      "input" : "Evening News",
+      "output" : "Evening News"
+    },
+    {
+      "input" : "",
+      "output" : ""
+    },
+    {
+      "input" : "",
+      "output" : ""
+    },
+    {
+      "input" : "No Group Channel",
+      "output" : "No Group Channel"
+    },
+    {
+      "input" : "A Movie",
+      "output" : "A Movie"
+    },
+    {
+      "input" : "Upper Movie Path",
+      "output" : "Upper Movie Path"
+    },
+    {
+      "input" : "A Series",
+      "output" : "A Series"
+    },
+    {
+      "input" : "An MP4",
+      "output" : "An MP4"
+    },
+    {
+      "input" : "An AVI",
+      "output" : "An AVI"
+    },
+    {
+      "input" : "Upper MOV",
+      "output" : "Upper MOV"
+    },
+    {
+      "input" : "Not HTTP",
+      "output" : "Not HTTP"
+    },
+    {
+      "input" : "Movie Channel",
+      "output" : "Movie Channel"
+    },
+    {
+      "input" : "Kids Zone",
+      "output" : "Kids Zone"
+    },
+    {
+      "input" : "Kids Zone",
+      "output" : "Kids Zone"
+    },
+    {
+      "input" : "KIDS ZONE",
+      "output" : "KIDS ZONE"
+    },
+    {
+      "input" : "Lions @ Bears-H",
+      "output" : "Lions @ Bears (Home Feed)"
+    },
+    {
+      "input" : "Lions @ Bears-A",
+      "output" : "Lions @ Bears (Away Feed)"
+    },
+    {
+      "input" : "Lions @ Bears-X",
+      "output" : "Lions @ Bears-X"
+    },
+    {
+      "input" : "Newsroom-H",
+      "output" : "Newsroom-H"
+    },
+    {
+      "input" : "Lions @ -H",
+      "output" : "Lions @ -H"
+    },
+    {
+      "input" : "Talk Time, Late Edition",
+      "output" : "Talk Time, Late Edition"
+    },
+    {
+      "input" : "Odd Channel tvg-logo=\"https://logo.example/odd.png\"",
+      "output" : "Odd Channel tvg-logo=\"https://logo.example/odd.png\""
+    },
+    {
+      "input" : "Café Télé FHD",
+      "output" : "Café Télé FHD"
+    },
+    {
+      "input" : "Nandu Deportes UHD",
+      "output" : "Nandu Deportes UHD"
+    },
+    {
+      "input" : "A&E",
+      "output" : "A&E"
+    },
+    {
+      "input" : "Sports+ HD",
+      "output" : "Sports+ HD"
+    },
+    {
+      "input" : "Cinema Max SD HEVC",
+      "output" : "Cinema Max SD HEVC"
+    },
+    {
+      "input" : "Both Guides",
+      "output" : "Both Guides"
+    },
+    {
+      "input" : "Only In B",
+      "output" : "Only In B"
+    },
+    {
+      "input" : "Plain Name A",
+      "output" : "Plain Name A"
+    },
+    {
+      "input" : "Merge Two",
+      "output" : "Merge Two"
+    },
+    {
+      "input" : "Many 16",
+      "output" : "Many 16"
+    },
+    {
+      "input" : "Many 17",
+      "output" : "Many 17"
+    },
+    {
+      "input" : "Shared Name",
+      "output" : "Shared Name"
+    },
+    {
+      "input" : "TvgKey Channel",
+      "output" : "TvgKey Channel"
+    },
+    {
+      "input" : "Name Wins",
+      "output" : "Name Wins"
+    },
+    {
+      "input" : "Missing Target",
+      "output" : "Missing Target"
+    },
+    {
+      "input" : "Missing Then Tvg",
+      "output" : "Missing Then Tvg"
+    },
+    {
+      "input" : "Override Both",
+      "output" : "Override Both"
+    }
+  ],
+  "guideURLs" : [
+    "https://epg.example/a.xml.gz",
+    "http://epg.example/b.xml",
+    "https://epg.example/d.xml",
+    "https://epg.example/b.xml"
+  ]
+}

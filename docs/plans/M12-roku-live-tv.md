@@ -295,7 +295,7 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
 
 ### Phase 1 — data and logic
 
-- [ ] **5. Parity fixtures** `[implementer]`, files: `roku/tests/fixtures/{playlist.m3u, channels.golden.json, guide-a.xml, guide-b.xml, matches.golden.json, overrides.json}`, `MMTVLTests/RokuParityTests.swift`
+- [x] **5. Parity fixtures** `[implementer]`, files: `roku/tests/fixtures/{playlist.m3u, channels.golden.json, guide-a.xml, guide-b.xml, matches.golden.json, overrides.json}`, `MMTVLTests/RokuParityTests.swift`
   - Hand-written fixtures, with no real URLs or provider names, covering:
     - the M3UParserTests and ChannelListTests cases: BOM, CRLF, `#EXTGRP`, VOD filtering, duplicate ids `#2`, `-H`/`-A` feeds, missing names;
     - EPGMatcherTests' rules: override, `""`, tvg-id, normalized names, guide priority.
@@ -506,3 +506,14 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
 - **2026-11-18, step 3, for step 9: display-name case.** Step 3's `XMLTVScan` lowercases display-names, as *Research* says, but MMTVL's `XMLTVParser.add` keeps names as written, de-duplicated exactly. So "ESPN" and "espn" stay two names when ids merge. Matching folds case either way. Step 9 follows MMTVL, and the parity fixtures decide.
 - **2026-11-18, step 3 (done; QA PASS, security review: 1 medium + lows, all fixed or carried).** Built as the deviations above say: the Probes screen (DEBUG only, OK or `*` on the main scene) with on-screen results, a details page and a summary code. Typed entries go in registry section `mmtvl-probe` and are erased when Run all ends or the screen closes, and a release build deletes that section at launch. The own guide is the typed one, else the playlist's `url-tvg` (`src=typed|tvg|-`). `npm run build:release` (`bsconfig.release.json`, DEBUG=false) checks itself for probe code. `source/lib/Inflate.bs` checks ISIZE, not CRC-32 (too slow per byte in BrightScript; add `GetCRC32` per piece if step 4 keeps inflate), and `XMLTVScan.bs` exists in its first version. `test:local`: 40 passed, 0 failed. Fixes: QA Q1–Q4 (raw memory-call values with types in h, a "guard inactive" note, `xmltv_ns` empty parts as in Swift, a permanent 256 KB inflate test) and security M-1, L-1, L-3, L-4, L-6, L-7. Accepted: L-5 (dotless names pass `safeText` in error text only) and L-8 ("US2" is a guide file name, already in the plans).
   - **Not verified (device):** everything the probes measure; the units of the `ifAppMemoryMonitor` calls; `ReadFile`/`AppendFile` with offsets; whether `cachefs:` holds 77 MB; `roDataGramSocket` broadcast; `StandardKeyboardDialog`; whether `ToAsciiString` decodes UTF-8; whether a stopped Task keeps running.
+- **2026-11-18, step 5 (done; QA PASS).** `RokuParityTests`: 5 tests. Full suite: "2091 tests in 186 suites passed". Fixtures: `playlist.m3u` (43 entries, 36 channels, BOM then CRLF then LF, kept by `roku/tests/fixtures/.gitattributes`), `guide-a.xml`, `guide-b.xml`, `overrides.json`. Goldens, Unix seconds UTC with explicit nulls:
+  - `channels.golden.json`: `guideURLs`, every parsed `entries` item including VOD, `feedNames`, and `channels`.
+  - `matches.golden.json`: channel id → `{guide, file, epgID}` or null.
+  - `programmes.golden.json` (added for step 9): per guide, `wantedIDs`, `channels` and `programmes`.
+
+  Regenerate with `TEST_RUNNER_MMTVL_WRITE_ROKU_GOLDENS=1 xcodebuild … -only-testing:MMTVLTests/RokuParityTests`. Settled for the ports:
+  - display-names keep their case; only a merge de-duplicates them, and repeats within one `<channel>` stay;
+  - the override key is the shown name, after `feedName`;
+  - lowercasing is Unicode (step 6 must check BrightScript's `LCase` on non-ASCII).
+
+  Carried: the `antenna:` override key goes to step 21. A malformed XMLTV file throwing needs a plain test in step 9, since a golden can't express it.
