@@ -4,7 +4,7 @@
 // Never print the password.
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
 
@@ -117,8 +117,12 @@ function testLocal() {
     };
     collect(join(staging, 'source'));
 
-    // -n: no SceneGraph (pure logic only); -c 0: no colours. stdin is closed so a STOP can't wait for input.
-    const result = spawnSync(bin('brs-cli'), ['-n', '-c', '0', ...files], {
+    // -n: no SceneGraph (pure logic only); -c 0: no colours; -r: pkg:/ is the staging folder, so tests read the
+    // shared fixtures as pkg:/fixtures/<name> (staged by bsconfig.local.json only, never in the app's zips).
+    // stdin is closed so a STOP can't wait for input.
+    // With -r, brs-cli takes the files relative to that root.
+    const relativeFiles = files.map((file) => relative(staging, file));
+    const result = spawnSync(bin('brs-cli'), ['-n', '-c', '0', '-r', staging, ...relativeFiles], {
         cwd: staging,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe']

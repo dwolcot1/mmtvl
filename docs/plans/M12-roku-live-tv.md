@@ -301,10 +301,10 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
     - EPGMatcherTests' rules: override, `""`, tvg-id, normalized names, guide priority.
   - `RokuParityTests` (Swift Testing) loads the fixtures through `#filePath`, runs `M3UParser`/`ChannelList.make`/`EPGMatcher`, and `#expect`s equality with the golden JSON. This keeps MMTVL and the Roku app in step.
   - Done when: `xcodebuild … test -only-testing:MMTVLTests/RokuParityTests` passes and the full MMTVL suite passes (quote the result line).
-- [ ] **6. M3U and channels** `[implementer]`, files: `roku/source/lib/M3U.bs`, `roku/tests/M3UTests.bs`
+- [x] **6. M3U and channels** `[implementer]`, files: `roku/source/lib/M3U.bs`, `roku/tests/M3UTests.bs`
   - A port of `M3UParser.parse` and `ChannelList.make`/`feedName` (rules in *Research*).
   - Done when: `M3UTests` reproduce `channels.golden.json` exactly, plus the M3UParserTests cases as Rooibos tests (12).
-- [ ] **7. Settings store and capabilities** `[implementer]`, files: `roku/source/lib/SettingsStore.bs`, `Capabilities.bs`, tests
+- [x] **7. Settings store and capabilities** `[implementer]`, files: `roku/source/lib/SettingsStore.bs`, `Capabilities.bs`, tests
   - L5 and L7. Defaults equal MMTVL's (`channelUpMovesUpList` true, and so on). The registry size check works as L5 says.
   - Done when: tests cover round-trips, defaults for missing keys, a corrupt value reading as the default, and the low-space refusal (with a fake space function).
 - [ ] **8. Playlist and lineup** `[implementer]`, files: `roku/components/tasks/PlaylistTask.*`, `roku/source/lib/Lineup.bs`, tests
@@ -517,3 +517,14 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
   - lowercasing is Unicode (step 6 must check BrightScript's `LCase` on non-ASCII).
 
   Carried: the `antenna:` override key goes to step 21. A malformed XMLTV file throwing needs a plain test in step 9, since a golden can't express it.
+- **2026-11-18, step 6 (done; QA PASS).** `source/lib/M3U.bs` (`parse`, `makeChannels`, `feedName`, `groups`, `readFile`) reproduces `channels.golden.json` exactly. All 12 M3UParserTests and 6 ChannelListTests cases are in `tests/local/M3U.test.bs`. New file `source/lib/Unicode.bs` (`Unicode.lower`, `trim`, `isExtend`); any component that loads `M3U.bs` also needs it.
+  - **Lowercasing:** whether Roku's `LCase` handles non-ASCII is undocumented, so ids lowercase through an explicit table that matches Swift for U+00C0–U+052F (generated, tested over the whole range).
+  - **URLs are kept as written**, with no percent-encoding or punycode. `M3U.isValidURL` approximates which URLs Swift's `URL(string:)` refuses; ids don't depend on it.
+  - **Fixtures:** the local build stages `tests/fixtures/**` as `pkg:/fixtures/` (`brs-cli -r`), and the app zips have none.
+  - **Moved to step 8:** `guideGroups` and `channels(in:)` from ChannelListTests.
+  - **Device checks:** what `LCase`, `ReadAsciiFile` (BOM, UTF-8), `Len`/`Mid` and `roRegex` actually do, and parse time on the stick. brs-node: 5,000 entries take 0.7 s to parse plus 0.5 s to build channels.
+- **2026-11-18, step 7 (done; QA PASS, majors fixed).** `source/lib/SettingsStore.bs` (L5) and `Capabilities.bs` (L7), with 85 local tests at that point.
+  - **The registry is injected:** `read`, `write`, `delete`, `flush`, `spaceAvailable`.
+  - **QA fixes:** every save checks the value's size against the space left. A save that won't fit gets a "too large" message and writes nothing, and overrides keep 4 KB free. `save` and `replaceAll` are all or nothing, putting the old values back on a failed write or flush. Override keys are lowercased, and on a collision the last in sorted order wins.
+  - **Deviations:** `lastChannelID` and `lastGroup` use `""` for none. Sizes are estimated uncompressed, which is conservative against the 32 KB compressed budget; revisit with real `GetSpaceAvailable` numbers. The memory-limit unit is guessed from its magnitude, provisionally, until step 4. The thresholds are named constants.
+  - **bsc gotcha:** inside a namespace, a local variable named like a function of that namespace is rewritten to the function. Avoid such names.
