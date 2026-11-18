@@ -1,0 +1,191 @@
+' Capabilities (M12 step 7, L7): the Low/High class from the memory limit (an integer in any of its possible units,
+' an AA, or unknown) and the UI, the decoders, model and OS, and the feature items. Fake device-info and
+' memory-monitor objects only.
+namespace CapabilitiesTests
+
+    sub test_aLimitOver512MBWithAFullHDUIIsHigh(t as object)
+        caps = Capabilities.detect(CapabilitiesTests.device({}), CapabilitiesTests.monitor(1024))
+        t.assertEqual(caps.memoryMB, 1024)
+        t.assertFalse(caps.uiHD)
+        t.assertEqual(caps.deviceClass, "High")
+        t.assertEqual(caps.classReason, "")
+        t.assertEqual(caps.guideHours, 36)
+        t.assertTrue(caps.logosDefault)
+        t.assertInvalid(caps.inflateMaxCompressedBytes, "no limit")
+    end sub
+
+    sub test_aLimitAtOrUnder512MBIsLow(t as object)
+        caps = Capabilities.detect(CapabilitiesTests.device({}), CapabilitiesTests.monitor(512))
+        t.assertEqual(caps.deviceClass, "Low")
+        t.assertEqual(caps.classReason, "Low-end Roku: memory limit 512 MB")
+        t.assertEqual(caps.guideHours, 24)
+        t.assertFalse(caps.logosDefault)
+        t.assertEqual(caps.inflateMaxCompressedBytes, 2097152)
+        t.assertEqual(Capabilities.detect(CapabilitiesTests.device({}), CapabilitiesTests.monitor(513)).deviceClass, "High")
+    end sub
+
+    sub test_a720pUIIsLowWhateverTheMemory(t as object)
+        caps = Capabilities.detect(CapabilitiesTests.device({ ui: { name: "HD", width: 1280, height: 720 } }), CapabilitiesTests.monitor(2048))
+        t.assertTrue(caps.uiHD)
+        t.assertEqual(caps.deviceClass, "Low")
+        t.assertEqual(caps.classReason, "Low-end Roku: 720p UI")
+        byHeight = Capabilities.detect(CapabilitiesTests.device({ ui: { width: 1280, height: 720 } }), CapabilitiesTests.monitor(2048))
+        t.assertTrue(byHeight.uiHD, "no name: by height")
+    end sub
+
+    sub test_unknownMemoryIsLowAndSaysSo(t as object)
+        caps = Capabilities.detect(CapabilitiesTests.device({}), invalid)
+        t.assertInvalid(caps.memoryMB)
+        t.assertEqual(caps.deviceClass, "Low")
+        t.assertEqual(caps.classReason, "Low-end Roku: memory limit unknown")
+        t.assertEqual(caps.features[0], { id: "longGuide", on: false, reason: "Low-end Roku: memory limit unknown; the guide shows 24 hours" })
+    end sub
+
+    sub test_aMonitorWithoutTheCallIsUnknown(t as object)
+        caps = Capabilities.detect(CapabilitiesTests.device({}), { name: "an older Roku OS" })
+        t.assertInvalid(caps.memoryMB)
+        t.assertEqual(caps.deviceClass, "Low")
+    end sub
+
+    sub test_unusableLimitValuesAreUnknown(t as object)
+        for each raw in [0, -5, "512", true, invalid, { maxBackgroundMemory: 100 }]
+            t.assertInvalid(Capabilities.memoryLimitMB(CapabilitiesTests.monitor(raw)), FormatJson(raw))
+        end for
+    end sub
+
+    sub test_anAAIsReadByItsForegroundLimit(t as object)
+        limits = CapabilitiesTests.monitor({ maxForegroundMemory: 768, maxBackgroundMemory: 100, maxRokuManagedHeapMemory: 50 })
+        caps = Capabilities.detect(CapabilitiesTests.device({}), limits)
+        t.assertEqual(caps.memoryMB, 768)
+        t.assertEqual(caps.deviceClass, "High")
+        t.assertEqual(Capabilities.memoryLimitMB(CapabilitiesTests.monitor({ MAXFOREGROUNDMEMORY: 300 })), 300, "any key case")
+    end sub
+
+    sub test_aNumberIsReadAsMBKBOrBytesByItsSize(t as object)
+        t.assertEqual(Capabilities.memoryLimitMB(CapabilitiesTests.monitor(768)), 768, "MB")
+        t.assertEqual(Capabilities.memoryLimitMB(CapabilitiesTests.monitor(786432)), 768, "KB")
+        t.assertEqual(Capabilities.memoryLimitMB(CapabilitiesTests.monitor(805306368)), 768, "bytes")
+        t.assertEqual(Capabilities.memoryLimitMB(CapabilitiesTests.monitor(65535)), 65535, "the largest MB value")
+        t.assertEqual(Capabilities.memoryLimitMB(CapabilitiesTests.monitor(65536)), 64, "the smallest KB value")
+        t.assertEqual(Capabilities.memoryLimitMB(CapabilitiesTests.monitor(67108864)), 64, "the smallest bytes value")
+        t.assertEqual(Capabilities.memoryLimitMB(CapabilitiesTests.monitor(384.5)), 384, "a float")
+        t.assertEqual(Capabilities.memoryLimitMB(CapabilitiesTests.monitor({ maxForegroundMemory: 524288 })), 512, "KB in an AA")
+        caps = Capabilities.detect(CapabilitiesTests.device({}), CapabilitiesTests.monitor(536870912))
+        t.assertEqual(caps.deviceClass, "Low", "512 MB in bytes")
+    end sub
+
+    sub test_decodersModelAndOS(t as object)
+        caps = Capabilities.detect(CapabilitiesTests.device({ mpeg2: true, ac3: true }), CapabilitiesTests.monitor(1024))
+        t.assertTrue(caps.mpeg2)
+        t.assertTrue(caps.ac3)
+        t.assertEqual(caps.model, "4850X")
+        t.assertEqual(caps.osVersion, "15.1.4.1234")
+        none = Capabilities.detect(CapabilitiesTests.device({}), CapabilitiesTests.monitor(1024))
+        t.assertFalse(none.mpeg2)
+        t.assertFalse(none.ac3)
+    end sub
+
+    sub test_aPlainBooleanDecoderAnswerAndMissingCallsAreHandled(t as object)
+        info = CapabilitiesTests.device({ mpeg2: true })
+        info.CanDecodeVideo = CapabilitiesTests.fakeCanDecodeBoolean
+        info.Delete("CanDecodeAudio")
+        info.Delete("GetOSVersion")
+        info.version = "14.6"
+        caps = Capabilities.detect(info, CapabilitiesTests.monitor(1024))
+        t.assertTrue(caps.mpeg2, "a boolean answer")
+        t.assertFalse(caps.ac3, "no CanDecodeAudio")
+        t.assertEqual(caps.osVersion, "14.6", "GetVersion without GetOSVersion")
+        bare = Capabilities.detect({}, invalid)
+        t.assertEqual(bare.model, "")
+        t.assertEqual(bare.osVersion, "")
+        t.assertFalse(bare.uiHD)
+        t.assertEqual(bare.deviceClass, "Low")
+    end sub
+
+    sub test_featureItemsSayOnOrWhyOff(t as object)
+        high = Capabilities.detect(CapabilitiesTests.device({ mpeg2: true, ac3: true }), CapabilitiesTests.monitor(1024))
+        t.assertEqual(high.features, [
+            { id: "longGuide", on: true, reason: "" },
+            { id: "logos", on: true, reason: "" },
+            { id: "inflateLargeGuides", on: true, reason: "" },
+            { id: "mpeg2", on: true, reason: "" },
+            { id: "ac3", on: true, reason: "" }
+        ])
+        low = Capabilities.detect(CapabilitiesTests.device({ ui: { name: "HD", height: 720 } }), CapabilitiesTests.monitor(256))
+        t.assertEqual(low.classReason, "Low-end Roku: memory limit 256 MB, 720p UI")
+        for each item in low.features
+            t.assertFalse(item.on, item.id)
+            t.assertTrue(item.reason <> "", item.id + " has a reason")
+        end for
+        t.assertEqual(low.features[3].reason, "This Roku can't play MPEG-2; antenna MPEG-2 channels are hidden")
+    end sub
+
+    sub test_mpeg2IsItsOwnFeatureWhateverTheClass(t as object)
+        low = Capabilities.detect(CapabilitiesTests.device({ mpeg2: true }), invalid)
+        t.assertEqual(low.deviceClass, "Low")
+        t.assertEqual(low.features[3], { id: "mpeg2", on: true, reason: "" })
+    end sub
+
+    ' --- fakes --------------------------------------------------------------------------------------------------
+
+    ' A fake roDeviceInfo. options: ui (GetUIResolution's AA; default FHD), mpeg2, ac3 (default false).
+    function device(options as object) as object
+        ui = options.ui
+        if ui = invalid then ui = { name: "FHD", width: 1920, height: 1080 }
+        return {
+            ui: ui,
+            mpeg2: CapabilitiesTests.flag(options.mpeg2),
+            ac3: CapabilitiesTests.flag(options.ac3),
+            version: "15.1",
+            GetModel: CapabilitiesTests.fakeModel,
+            GetOSVersion: CapabilitiesTests.fakeOSVersion,
+            GetVersion: CapabilitiesTests.fakeVersion,
+            GetUIResolution: CapabilitiesTests.fakeUIResolution,
+            CanDecodeVideo: CapabilitiesTests.fakeCanDecodeVideo,
+            CanDecodeAudio: CapabilitiesTests.fakeCanDecodeAudio
+        }
+    end function
+
+    function flag(value as dynamic) as boolean
+        return Capabilities.isBoolean(value) and value = true
+    end function
+
+    ' A fake roAppMemoryMonitor whose GetChannelMemoryLimit() returns raw.
+    function monitor(raw as dynamic) as object
+        return { raw: raw, GetChannelMemoryLimit: CapabilitiesTests.fakeMemoryLimit }
+    end function
+
+    ' The methods below run with m = the fake.
+    function fakeModel() as string
+        return "4850X"
+    end function
+
+    function fakeOSVersion() as object
+        return { major: "15", minor: "1", revision: "4", build: "1234" }
+    end function
+
+    function fakeVersion() as string
+        return m.version
+    end function
+
+    function fakeUIResolution() as object
+        return m.ui
+    end function
+
+    function fakeCanDecodeVideo(options as object) as object
+        return { result: options.codec = "mpeg2" and m.mpeg2 }
+    end function
+
+    function fakeCanDecodeAudio(options as object) as object
+        return { result: options.codec = "ac3" and m.ac3 }
+    end function
+
+    function fakeCanDecodeBoolean(options as object) as boolean
+        return options.codec = "mpeg2" and m.mpeg2
+    end function
+
+    function fakeMemoryLimit() as dynamic
+        return m.raw
+    end function
+
+end namespace
