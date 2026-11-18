@@ -1,0 +1,455 @@
+' The Live TV settings in the registry (M12 L5). One registry section, "mmtvl", holds one JSON value per key:
+'   source     the playlist URL ("" = none)
+'   guides     the pasted guide URLs, in priority order (at most 6)
+'   prefs      { favorites, hiddenChannels, hiddenGroups, teams }: lists of ids or group names
+'   overrides  { overrideKey (lowercased): EPG channel id, or "" for no guide }
+'   state      { lastChannelID, lastGroup, recentChannelIDs }: "" = none; recents most recent first, at most 10
+'   settings   { channelUpMovesUpList, usePlaylistGuide, teamMatchInitials, teamMatchNicknames, antennaEnabled,
+'                antennaGuide }
+'   schema     1
+' Defaults are MMTVL's (App/AppSettings.swift, IPTV/Sources/ChannelPreferences.swift, IPTV/IPTVState.swift). A
+' missing key reads as its default; a value that isn't JSON reads as the key's default; a field of the wrong type
+' or past a limit reads as that field's default (list entries are dropped one by one), never a crash. The limits
+' are the import's (step 14): URLs at most 2 KB, ids at most 256 characters, at most 500 entries per list.
+'
+' Every save checks the registry's space. Under 4 KB left, store.lowSpace is set (Settings warns) and saving
+' the overrides is refused with a message; other saves go ahead. A save is also refused, with nothing written,
+' when the new value's size (minus the old one's) is more than the space left, or for the overrides more than the
+' space left minus 4 KB (QA 1). Sizes are estimated as UTF-8 bytes of key and value plus entryOverheadBytes,
+' uncompressed, so the estimate errs on the large side (the registry counts compressed bytes). Each save flushes.
+' A save or replaceAll is all or nothing: when a write or the flush fails, the old values are written back (or
+' the new keys deleted) and flushed again (QA 2, 4).
+'
+' The registry is passed in, so tests use a fake: an object with read(key) (the stored string or invalid),
+' write(key, text), delete(key) and flush() (true on success), and spaceAvailable() (bytes).
+' SettingsStore.deviceRegistry() is the real one. Logs show counts and the playlist's host only (L6).
+namespace SettingsStore
+
+    const sectionName = "mmtvl"
+    const schemaVersion = 1
+    ' Under this many bytes left in the registry, Settings warns and the overrides aren't saved (L5).
+    const lowSpaceBytes = 4096
+    const maximumGuides = 6
+    const maximumURLLength = 2048
+    const maximumIDLength = 256
+    const maximumListEntries = 500
+    const maximumRecents = 10
+    ' Added to each entry's estimated size for the registry's own bookkeeping (unverified; errs on the large side).
+    const entryOverheadBytes = 16
+    const overridesRefusedMessage = "This Roku is almost out of room for settings, so the guide match wasn't saved. Remove some guide matches, favorites or hidden channels and try again."
+    const saveFailedMessage = "Couldn't save the settings on this Roku."
+    const tooLargeMessage = "These settings are too large for the Roku's settings storage, so they weren't saved. Remove some favorites, hidden channels or guide matches and try again."
+
+    ' The keys, in the order they're written.
+    function keys() as object
+        return ["source", "guides", "prefs", "overrides", "state", "settings"]
+    end function
+
+    ' The real registry: section "mmtvl" of this app's roRegistry.
+    function deviceRegistry() as object
+        return {
+            section: CreateObject("roRegistrySection", SettingsStore.sectionName),
+            registry: CreateObject("roRegistry"),
+            read: SettingsStore.deviceRead,
+            write: SettingsStore.deviceWrite,
+            delete: SettingsStore.deviceDelete,
+            flush: SettingsStore.deviceFlush,
+            spaceAvailable: SettingsStore.deviceSpaceAvailable
+        }
+    end function
+
+    ' The methods below run with m = the object deviceRegistry() returned.
+    function deviceRead(key as string) as dynamic
+        if not m.section.Exists(key) then return invalid
+        return m.section.Read(key)
+    end function
+
+    function deviceWrite(key as string, text as string) as boolean
+        return m.section.Write(key, text)
+    end function
+
+    function deviceDelete(key as string) as boolean
+        return m.section.Delete(key)
+    end function
+
+    function deviceFlush() as boolean
+        return m.section.Flush()
+    end function
+
+    function deviceSpaceAvailable() as dynamic
+        return m.registry.GetSpaceAvailable()
+    end function
+
+    ' Reads every key. The store is an AA with the six values, plus registry, schema (what the registry held; 0 if
+    ' none), lowSpace and spaceLeft (bytes, or -1 if unknown).
+    function load(registry as object) as object
+        store = { "registry": registry, "schema": 0, "lowSpace": false, "spaceLeft": -1 }
+        SettingsStore.readAll(store)
+        SettingsStore.checkSpace(store)
+        Log.info("Settings", "Loaded: " + SettingsStore.summary(store))
+        return store
+    end function
+
+    ' Saves one key ("source", "guides", "prefs", "overrides", "state" or "settings"). The value is limited as on
+    ' load, so store[key] may hold less than was given. Returns { ok, message }; on failure store[key] is unchanged.
+    function save(store as object, key as string, value as dynamic) as object
+        if not SettingsStore.isKey(key)
+            Log.error("Settings", "Not a settings key: " + key)
+            return { "ok": false, "message": SettingsStore.saveFailedMessage }
+        end if
+        SettingsStore.checkSpace(store)
+        if key = "overrides" and store.lowSpace
+            Log.warn("Settings", "Guide matches not saved: " + store.spaceLeft.ToStr() + " bytes left in the registry")
+            return { "ok": false, "message": SettingsStore.overridesRefusedMessage }
+        end if
+        normalized = SettingsStore.normalize(key, value)
+        values = {}
+        values[key] = normalized
+        writes = SettingsStore.writesFor(store, [key], values)
+        if writes = invalid
+            Log.error("Settings", "Couldn't encode " + key)
+            return { "ok": false, "message": SettingsStore.saveFailedMessage }
+        end if
+        if key = "overrides" then reserve = SettingsStore.lowSpaceBytes else reserve = 0
+        if not SettingsStore.fits(store, writes, reserve)
+            Log.warn("Settings", key + " not saved: too large for the " + store.spaceLeft.ToStr() + " bytes left in the registry")
+            return { "ok": false, "message": SettingsStore.tooLargeMessage }
+        end if
+        ok = SettingsStore.commit(store, writes)
+        SettingsStore.checkSpace(store)
+        if not ok
+            Log.error("Settings", "Couldn't save " + key)
+            return { "ok": false, "message": SettingsStore.saveFailedMessage }
+        end if
+        store[key] = normalized
+        Log.info("Settings", "Saved " + key)
+        return { "ok": true, "message": "" }
+    end function
+
+    ' Replaces every key from an import bundle (v1, L2), already validated by the import (step 14): writes all keys
+    ' and the schema, then flushes once. A field the bundle lacks gets its default; the limits apply. Low space
+    ' alone doesn't refuse it (the old values are replaced), but a bundle bigger than the space left does, with
+    ' nothing written. A failed write or flush puts every old value back. Returns { ok, message }.
+    function replaceAll(store as object, bundle as dynamic) as object
+        if type(bundle) <> "roAssociativeArray"
+            Log.error("Settings", "Import bundle isn't an object")
+            return { "ok": false, "message": SettingsStore.saveFailedMessage }
+        end if
+        values = {
+            "source": bundle.playlistURL,
+            "guides": bundle.guideURLs,
+            "prefs": {
+                "favorites": bundle.favorites,
+                "hiddenChannels": bundle.hiddenChannels,
+                "hiddenGroups": bundle.hiddenGroups,
+                "teams": bundle.teams
+            },
+            "overrides": bundle.overrides,
+            "state": {
+                "lastChannelID": bundle.lastChannelID,
+                "lastGroup": bundle.lastGroup,
+                "recentChannelIDs": bundle.recentChannelIDs
+            },
+            "settings": {
+                "channelUpMovesUpList": bundle.channelUpMovesUpList,
+                "usePlaylistGuide": bundle.usePlaylistGuide,
+                "teamMatchInitials": bundle.teamMatchInitials,
+                "teamMatchNicknames": bundle.teamMatchNicknames,
+                "antennaEnabled": bundle.antennaEnabled,
+                "antennaGuide": bundle.antennaGuide
+            }
+        }
+        for each key in SettingsStore.keys()
+            values[key] = SettingsStore.normalize(key, values[key])
+        end for
+        writes = SettingsStore.writesFor(store, SettingsStore.keys(), values)
+        if writes = invalid
+            Log.error("Settings", "Couldn't encode the imported settings")
+            return { "ok": false, "message": SettingsStore.saveFailedMessage }
+        end if
+        SettingsStore.checkSpace(store)
+        if not SettingsStore.fits(store, writes, 0)
+            Log.warn("Settings", "Import not saved: too large for the " + store.spaceLeft.ToStr() + " bytes left in the registry")
+            return { "ok": false, "message": SettingsStore.tooLargeMessage }
+        end if
+        ok = SettingsStore.commit(store, writes)
+        SettingsStore.checkSpace(store)
+        if not ok
+            Log.error("Settings", "Couldn't replace the settings")
+            SettingsStore.readAll(store)
+            return { "ok": false, "message": SettingsStore.saveFailedMessage }
+        end if
+        for each key in SettingsStore.keys()
+            store[key] = values[key]
+        end for
+        Log.info("Settings", "Replaced: " + SettingsStore.summary(store))
+        return { "ok": true, "message": "" }
+    end function
+
+    ' --- defaults and limits ------------------------------------------------------------------------------------
+
+    function defaultValue(key as string) as dynamic
+        if key = "source" then return ""
+        if key = "guides" then return []
+        if key = "prefs" then return { "favorites": [], "hiddenChannels": [], "hiddenGroups": [], "teams": [] }
+        if key = "overrides" then return {}
+        if key = "state" then return { "lastChannelID": "", "lastGroup": "", "recentChannelIDs": [] }
+        if key = "settings" then return SettingsStore.defaultSettings()
+        return invalid
+    end function
+
+    ' MMTVL's defaults (App/AppSettings.swift).
+    function defaultSettings() as object
+        return {
+            "channelUpMovesUpList": true,
+            "usePlaylistGuide": false,
+            "teamMatchInitials": false,
+            "teamMatchNicknames": false,
+            "antennaEnabled": true,
+            "antennaGuide": true
+        }
+    end function
+
+    ' A key's value from anything (parsed JSON, a bundle field, a caller's value): the default where the shape is
+    ' wrong, field by field, with the limits applied.
+    function normalize(key as string, value as dynamic) as dynamic
+        if key = "source" then return SettingsStore.boundedText(value, SettingsStore.maximumURLLength)
+        if key = "guides" then return SettingsStore.textList(value, SettingsStore.maximumURLLength, SettingsStore.maximumGuides)
+        if key = "overrides" then return SettingsStore.overrideMap(value)
+        result = SettingsStore.defaultValue(key)
+        if type(value) <> "roAssociativeArray" then return result
+        if key = "prefs"
+            for each field in ["favorites", "hiddenChannels", "hiddenGroups", "teams"]
+                result[field] = SettingsStore.textList(value[field], SettingsStore.maximumIDLength, SettingsStore.maximumListEntries)
+            end for
+        else if key = "state"
+            result["lastChannelID"] = SettingsStore.boundedText(value.lastChannelID, SettingsStore.maximumIDLength)
+            result["lastGroup"] = SettingsStore.boundedText(value.lastGroup, SettingsStore.maximumIDLength)
+            result["recentChannelIDs"] = SettingsStore.textList(value.recentChannelIDs, SettingsStore.maximumIDLength, SettingsStore.maximumRecents)
+        else if key = "settings"
+            for each field in result.Keys()
+                if SettingsStore.isBoolean(value[field]) then result[field] = value[field]
+            end for
+        end if
+        return result
+    end function
+
+    ' A string of at most maximumLength characters, else "".
+    function boundedText(value as dynamic, maximumLength as integer) as string
+        if not SettingsStore.isString(value) then return ""
+        if Len(value) > maximumLength then return ""
+        return value
+    end function
+
+    ' The non-empty strings of at most maximumLength characters, in order, at most maximumCount of them; [] if value
+    ' isn't an array.
+    function textList(value as dynamic, maximumLength as integer, maximumCount as integer) as object
+        result = []
+        if type(value) <> "roArray" then return result
+        for each item in value
+            if result.Count() >= maximumCount then exit for
+            if SettingsStore.isString(item)
+                if item <> "" and Len(item) <= maximumLength then result.Push(item)
+            end if
+        end for
+        return result
+    end function
+
+    ' Override key → EPG id ("" allowed: no guide). Keys of 1–256 characters, values of at most 256, at most 500.
+    function overrideMap(value as dynamic) as object
+        if type(value) <> "roAssociativeArray" then return {}
+        return SettingsStore.overridesFromPairs(value.Items())
+    end function
+
+    ' QA 3: keys are lowercased, since MMTVL matches override keys ignoring case and a BrightScript AA keeps keys
+    ' that differ only in case unpredictably. The pairs are taken in case-sensitive sorted order of their original
+    ' keys, and on a collision the last one wins ("news" over "News" over "NEWS"), whatever order they came in.
+    ' The 500 kept are the first 500 lowercased keys in that order.
+    function overridesFromPairs(pairs as object) as object
+        sorted = []
+        for each pair in pairs
+            if type(pair) = "roAssociativeArray"
+                if SettingsStore.isString(pair.key) then sorted.Push({ "key": pair.key, "value": pair.value })
+            end if
+        end for
+        sorted.SortBy("key")
+        result = {}
+        for each pair in sorted
+            name = pair.key
+            target = pair.value
+            if name <> "" and Len(name) <= SettingsStore.maximumIDLength and SettingsStore.isString(target)
+                lowered = LCase(name)
+                if Len(target) <= SettingsStore.maximumIDLength and (result.DoesExist(lowered) or result.Count() < SettingsStore.maximumListEntries)
+                    result[lowered] = target
+                end if
+            end if
+        end for
+        return result
+    end function
+
+    function isKey(key as string) as boolean
+        for each known in SettingsStore.keys()
+            if key = known then return true
+        end for
+        return false
+    end function
+
+    function isString(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "string" or kind = "rostring"
+    end function
+
+    function isBoolean(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "boolean" or kind = "roboolean"
+    end function
+
+    function isNumber(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "integer" or kind = "roint" or kind = "rointeger" or kind = "longinteger" or kind = "rolonginteger" or kind = "float" or kind = "rofloat" or kind = "double" or kind = "rodouble"
+    end function
+
+    ' --- registry ----------------------------------------------------------------------------------------------
+
+    sub readAll(store as object)
+        for each key in SettingsStore.keys()
+            store[key] = SettingsStore.readKey(store.registry, key)
+        end for
+        schema = SettingsStore.parse(store.registry.read("schema"))
+        if SettingsStore.isNumber(schema) then store.schema = Int(schema) else store.schema = 0
+    end sub
+
+    function readKey(registry as object, key as string) as dynamic
+        stored = registry.read(key)
+        if stored = invalid then return SettingsStore.defaultValue(key)
+        parsed = SettingsStore.parse(stored)
+        if parsed = invalid
+            Log.warn("Settings", "Stored " + key + " couldn't be read; using the defaults")
+            return SettingsStore.defaultValue(key)
+        end if
+        return SettingsStore.normalize(key, parsed)
+    end function
+
+    ' Parsed JSON, or invalid for anything that isn't a JSON string.
+    function parse(stored as dynamic) as dynamic
+        if not SettingsStore.isString(stored) then return invalid
+        if stored = "" then return invalid
+        parsed = invalid
+        try
+            parsed = ParseJson(stored)
+        catch e
+            parsed = invalid
+        end try
+        return parsed
+    end function
+
+    ' The writes for some keys, as [{ key, text }], plus the schema when the registry doesn't hold 1 yet; invalid
+    ' when a value can't be encoded.
+    function writesFor(store as object, names as object, values as object) as dynamic
+        writes = []
+        for each name in names
+            json = FormatJson(values[name])
+            if json = "" then return invalid
+            writes.Push({ "key": name, "text": json })
+        end for
+        if store.schema <> SettingsStore.schemaVersion
+            writes.Push({ "key": "schema", "text": FormatJson(SettingsStore.schemaVersion) })
+        end if
+        return writes
+    end function
+
+    ' Whether the writes fit the space left, keeping reserve bytes free. An unknown space answer counts as enough.
+    function fits(store as object, writes as object, reserve as integer) as boolean
+        if store.spaceLeft < 0 then return true
+        growth = 0
+        for each item in writes
+            growth += SettingsStore.entryBytes(item.key, item.text)
+            growth -= SettingsStore.entryBytes(item.key, store.registry.read(item.key))
+        end for
+        if growth <= 0 then return true
+        return growth <= store.spaceLeft - reserve
+    end function
+
+    ' An entry's estimated size: UTF-8 bytes of key and value plus the overhead; 0 when there's no value.
+    function entryBytes(name as string, stored as dynamic) as integer
+        if not SettingsStore.isString(stored) then return 0
+        return SettingsStore.byteLength(name) + SettingsStore.byteLength(stored) + SettingsStore.entryOverheadBytes
+    end function
+
+    function byteLength(text as string) as integer
+        encoded = CreateObject("roByteArray")
+        encoded.FromAsciiString(text)
+        return encoded.Count()
+    end function
+
+    ' Writes all, then flushes. On any failure the old values are written back (keys that had none are deleted)
+    ' and flushed again, so the registry holds all old or all new values. Sets store.schema on success.
+    function commit(store as object, writes as object) as boolean
+        registry = store.registry
+        previous = []
+        ok = true
+        for each item in writes
+            previous.Push({ "key": item.key, "text": registry.read(item.key) })
+            if registry.write(item.key, item.text) <> true
+                ok = false
+                exit for
+            end if
+        end for
+        if ok then ok = registry.flush() = true
+        if ok
+            for each item in writes
+                if item.key = "schema" then store.schema = SettingsStore.schemaVersion
+            end for
+            return true
+        end if
+        SettingsStore.putBack(registry, previous)
+        return false
+    end function
+
+    ' Writes back what commit replaced, newest first, and flushes. Logged if that fails too.
+    sub putBack(registry as object, previous as object)
+        restored = true
+        for i = previous.Count() - 1 to 0 step -1
+            entry = previous[i]
+            if not SettingsStore.isString(entry.text)
+                if registry.delete(entry.key) <> true and SettingsStore.isString(registry.read(entry.key)) then restored = false
+            else if registry.write(entry.key, entry.text) <> true
+                restored = false
+            end if
+        end for
+        if registry.flush() <> true then restored = false
+        if not restored then Log.error("Settings", "Couldn't restore the previous settings")
+    end sub
+
+    ' Sets store.spaceLeft and store.lowSpace from the registry. An unknown answer counts as enough space.
+    sub checkSpace(store as object)
+        space = invalid
+        try
+            space = store.registry.spaceAvailable()
+        catch e
+            space = invalid
+        end try
+        if SettingsStore.isNumber(space)
+            store.spaceLeft = Int(space)
+            store.lowSpace = space < SettingsStore.lowSpaceBytes
+        else
+            store.spaceLeft = -1
+            store.lowSpace = false
+        end if
+        if store.lowSpace then Log.warn("Settings", "Registry space low: " + store.spaceLeft.ToStr() + " bytes left")
+    end sub
+
+    ' Counts and the playlist's host, for the log.
+    function summary(store as object) as string
+        if store.source = "" then source = "no playlist" else source = "playlist " + Log.host(store.source)
+        text = source + ", " + store.guides.Count().ToStr() + " guides, "
+        text += store.prefs.favorites.Count().ToStr() + " favorites, "
+        text += store.prefs.hiddenChannels.Count().ToStr() + " hidden channels, "
+        text += store.prefs.hiddenGroups.Count().ToStr() + " hidden groups, "
+        text += store.prefs.teams.Count().ToStr() + " teams, "
+        text += store.overrides.Count().ToStr() + " guide matches, "
+        text += store.state.recentChannelIDs.Count().ToStr() + " recent channels"
+        return text
+    end function
+
+end namespace
