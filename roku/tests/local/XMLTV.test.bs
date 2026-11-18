@@ -1,0 +1,302 @@
+' MMTVL's XMLTVTests (MMTVLTests/XMLTVTests.swift), the 9 cases, through the Roku scanner: XMLTVDate.parse, then
+' XMLTVParser.parse as the channel pass, the match (once, with the channels read so far) and the programme pass
+' over a file, as GuidePipeline runs them.
+namespace XMLTVTests
+
+    ' --- Dates ---
+
+    sub test_dates(t as object)
+        t.assertEqual(XMLTVDate.parse("20261005143000 +0000"), XMLTVTests.utc(2026, 10, 5, 14, 30, 0))
+        t.assertEqual(XMLTVDate.parse("20261005143000 -0500"), XMLTVTests.utc(2026, 10, 5, 19, 30, 0))
+        t.assertEqual(XMLTVDate.parse("20261005143000"), XMLTVTests.utc(2026, 10, 5, 14, 30, 0))
+        t.assertEqual(XMLTVDate.parse("202610051430"), XMLTVTests.utc(2026, 10, 5, 14, 30, 0))
+        t.assertEqual(XMLTVDate.parse("20261005143015+0100"), XMLTVTests.utc(2026, 10, 5, 13, 30, 15))
+        t.assertInvalid(XMLTVDate.parse("garbage"), "garbage")
+        t.assertInvalid(XMLTVDate.parse("2026100514"), "too short")
+        t.assertInvalid(XMLTVDate.parse("20261305143000"), "month 13")
+        t.assertInvalid(XMLTVDate.parse("20261005143000 EST"), "named zone")
+    end sub
+
+    ' Beyond the Swift cases: what XMLTVDate.swift's code does at the edges.
+    sub test_datesAtTheEdges(t as object)
+        t.assertEqual(XMLTVDate.parse("  20261005143000   +0000  "), XMLTVTests.utc(2026, 10, 5, 14, 30, 0), "spaces trimmed and skipped")
+        t.assertInvalid(XMLTVDate.parse("20261005143000" + Chr(9) + "+0000"), "only spaces before the offset")
+        t.assertInvalid(XMLTVDate.parse("20261005143000 +00000"), "five offset digits")
+        t.assertInvalid(XMLTVDate.parse("20261005143000 +00:0"), "a colon")
+        t.assertInvalid(XMLTVDate.parse("2026100514300"), "13 digits")
+        t.assertEqual(XMLTVDate.parse("20260230120000"), XMLTVTests.utc(2026, 3, 2, 12, 0, 0), "February 30 rolls over")
+        t.assertEqual(XMLTVDate.parse("20261005235960"), XMLTVTests.utc(2026, 10, 6, 0, 0, 0), "second 60 rolls over")
+        t.assertInvalid(XMLTVDate.parse("20261005235961"), "second 61")
+        t.assertInvalid(XMLTVDate.parse("20261032000000"), "day 32")
+        t.assertEqual(XMLTVDate.parse("20240229000000"), 1709164800&, "leap day")
+        t.assertEqual(XMLTVDate.parse("19700101000000"), 0&, "the epoch")
+    end sub
+
+    ' --- Parser ---
+
+    sub test_parsesFixture(t as object)
+        calls = []
+        wanted = function(channels as object, calls as object) as object
+            calls.Push(channels)
+            return ["nfl.network.hd.us2", "espn.us2"]
+        end function
+        result = XMLTVTests.parse(XMLTVTests.fixture(), XMLTVTests.utc(2026, 10, 5, 0, 0, 0), XMLTVTests.utc(2026, 10, 9, 0, 0, 0), wanted, calls)
+        t.assertTrue(result.ok, "ok (" + result.error + ")")
+        t.assertEqual(calls.Count(), 1, "matched once")
+        ids = []
+        for each channel in calls[0]
+            ids.Push(channel.id)
+        end for
+        t.assertEqual(ids, ["nfl.network.hd.us2", "espn.us2", "other.us2"])
+        t.assertEqual(result.channels[0].names, ["NFL Network HD", "NFL Network"])
+
+        titles = []
+        for each programme in result.programmes
+            titles.Push(programme.title)
+        end for
+        titles.Sort()
+        t.assertEqual(titles, ["Good Morning Football", "Later", "NFL Total Access", "SportsCenter"])
+
+        first = XMLTVTests.titled(result, "Good Morning Football")
+        t.assertEqual(first.channelID, "nfl.network.hd.us2")
+        t.assertEqual(first.subtitle, "Week 5")
+        t.assertEqual(first.summary, "Part one &")
+        t.assertEqual(first.category, "Sports")
+        t.assertEqual(first.episode, "S2 E1")
+        t.assertEqual(first.start, XMLTVTests.utc(2026, 10, 5, 12, 0, 0))
+        t.assertEqual(first.stop, XMLTVTests.utc(2026, 10, 5, 13, 0, 0))
+
+        missingStop = XMLTVTests.titled(result, "NFL Total Access")
+        t.assertEqual(missingStop.stop, XMLTVTests.utc(2026, 10, 5, 15, 0, 0))
+        t.assertEqual(missingStop.episode, "Ep 104")
+    end sub
+
+    sub test_lastProgrammeWithoutStopGetsHalfHour(t as object)
+        xml = "<tv><channel id=" + XMLTVTests.q("a") + "><display-name>A</display-name></channel>" + Chr(10)
+        xml += "<programme start=" + XMLTVTests.q("20261005120000") + " channel=" + XMLTVTests.q("a") + "><title>Only</title></programme></tv>"
+        result = XMLTVTests.parse(xml, XMLTVTests.distantPast(), XMLTVTests.distantFuture(), XMLTVTests.wantedA(), invalid)
+        t.assertEqual(result.programmes[0].stop, XMLTVTests.utc(2026, 10, 5, 12, 30, 0))
+    end sub
+
+    sub test_descriptionChunksAreJoined(t as object)
+        xml = "<tv><channel id=" + XMLTVTests.q("a") + "><display-name>A</display-name></channel>" + Chr(10)
+        xml += "<programme start=" + XMLTVTests.q("20261005120000") + " stop=" + XMLTVTests.q("20261005130000") + " channel=" + XMLTVTests.q("a") + "><title>T</title>" + Chr(10)
+        xml += "<desc>Tom &amp; Jerry &lt;3 and a long" + Chr(10) + "line that continues</desc></programme></tv>"
+        result = XMLTVTests.parse(xml, XMLTVTests.distantPast(), XMLTVTests.distantFuture(), XMLTVTests.wantedA(), invalid)
+        t.assertEqual(result.programmes[0].summary, "Tom & Jerry <3 and a long" + Chr(10) + "line that continues")
+    end sub
+
+    ' M7j step 8: two <channel> elements with one id become one channel with both elements' names, at the first
+    ' one's position, and its programmes are kept once.
+    sub test_repeatedChannelIDsMerge(t as object)
+        xml = "<tv>" + Chr(10)
+        xml += "<channel id=" + XMLTVTests.q("US1.hdhomerun.com") + "><display-name>WATLDT4</display-name><display-name>11.11</display-name></channel>" + Chr(10)
+        xml += "<channel id=" + XMLTVTests.q("b") + "><display-name>B</display-name></channel>" + Chr(10)
+        xml += "<channel id=" + XMLTVTests.q("us1.HDHOMERUN.com") + "><display-name>WATLDT4</display-name><display-name>36.4</display-name></channel>" + Chr(10)
+        xml += "<programme start=" + XMLTVTests.q("20261005120000") + " stop=" + XMLTVTests.q("20261005130000") + " channel=" + XMLTVTests.q("US1.hdhomerun.com") + "><title>T</title></programme>" + Chr(10)
+        xml += "</tv>"
+        seen = []
+        wanted = function(channels as object, seen as object) as object
+            seen.Append(channels)
+            return ["us1.hdhomerun.com"]
+        end function
+        result = XMLTVTests.parse(xml, XMLTVTests.distantPast(), XMLTVTests.distantFuture(), wanted, seen)
+        t.assertEqual(XMLTVTests.idsOf(result.channels), ["us1.hdhomerun.com", "b"])
+        t.assertEqual(result.channels[0].names, ["WATLDT4", "11.11", "36.4"])
+        t.assertEqual(XMLTVTests.idsOf(seen), ["us1.hdhomerun.com", "b"])
+        t.assertEqual(result.programmes.Count(), 1)
+        t.assertEqual(result.programmes[0].title, "T")
+    end sub
+
+    sub test_episodeText(t as object)
+        t.assertEqual(XMLTVScan.episodeText("1.0.0/1"), "S2 E1")
+        t.assertEqual(XMLTVScan.episodeText(".4."), "E5")
+        t.assertEqual(XMLTVScan.episodeText("0/2.11/20."), "S1 E12")
+        t.assertInvalid(XMLTVScan.episodeText(".."))
+    end sub
+
+    ' Swift's XMLParser refuses the file; the scanner reports "Malformed XMLTV" from either pass.
+    sub test_malformedFileThrows(t as object)
+        xml = "<tv><channel id=" + XMLTVTests.q("a") + ">"
+        result = XMLTVTests.parse(xml, XMLTVTests.distantPast(), XMLTVTests.distantFuture(), invalid, invalid)
+        t.assertFalse(result.ok, "ok")
+        t.assertEqual(result.error, "Malformed XMLTV")
+    end sub
+
+    ' Beyond the Swift case: a guide cut off in its programmes, or without </tv>, fails too; the channel pass alone
+    ' doesn't see a cut in the programmes (it stops at the first one), the programme pass does.
+    sub test_truncatedFilesFail(t as object)
+        channel = "<tv><channel id=" + XMLTVTests.q("a") + "><display-name>A</display-name></channel>"
+        programme = "<programme start=" + XMLTVTests.q("20261005120000") + " channel=" + XMLTVTests.q("a") + "><title>Only</title></programme>"
+        cases = [
+            { xml: channel + programme + "<programme start=" + XMLTVTests.q("20261005130000") + " channel=" + XMLTVTests.q("a") + "><title>Cut", label: "cut in a programme" },
+            { xml: channel + programme, label: "no </tv>" },
+            { xml: channel, label: "channels only, no </tv>" },
+            { xml: channel + programme + "</tv><extra/>", label: "content after </tv>" },
+            { xml: "<html><body>Not found</body></html>", label: "not XMLTV" },
+            { xml: "", label: "empty" }
+        ]
+        for each item in cases
+            result = XMLTVTests.parse(item.xml, XMLTVTests.distantPast(), XMLTVTests.distantFuture(), XMLTVTests.wantedA(), invalid)
+            t.assertFalse(result.ok, item.label + ": ok")
+        end for
+        for each ending in ["</tv>" + Chr(13) + Chr(10) + "  ", "</tv" + Chr(9) + " >", "</tv>" + String(5000, Chr(10)), "</tv>" + String(60, " ")]
+            whole = XMLTVTests.parse(channel + programme + ending, XMLTVTests.distantPast(), XMLTVTests.distantFuture(), XMLTVTests.wantedA(), invalid)
+            t.assertTrue(whole.ok, "whitespace after </tv>: ok (" + whole.error + ")")
+            t.assertEqual(whole.programmes.Count(), 1)
+        end for
+    end sub
+
+    ' Security M1: many <channel id="a"> elements, each with a new display-name, merge in linear time and keep at
+    ' most 16 names; one element listing many names is capped too. 20,000 and 5,000 here (Swift: 200,000 and
+    ' 50,000), since brs-node runs about 100 times slower; the names past 16 are dropped without a comparison, so
+    ' the time grows linearly either way.
+    sub test_manyRepeatsOfOneIDStayLinearAndCapped(t as object)
+        parts = ["<tv>" + Chr(10)]
+        for i = 0 to 19999
+            parts.Push("<channel id=" + XMLTVTests.q("a") + "><display-name>name " + i.ToStr() + "</display-name></channel>" + Chr(10))
+        end for
+        parts.Push("<channel id=" + XMLTVTests.q("b") + ">")
+        for i = 0 to 4999
+            parts.Push("<display-name>b " + i.ToStr() + "</display-name>")
+        end for
+        parts.Push("</channel>" + Chr(10) + "</tv>" + Chr(10))
+        timer = CreateObject("roTimespan")
+        result = XMLTVTests.parse(parts.Join(""), XMLTVTests.distantPast(), XMLTVTests.distantFuture(), invalid, invalid)
+        print "TIMING XMLTV manyRepeats: " + timer.TotalMilliseconds().ToStr() + " ms"
+        t.assertTrue(result.ok, "ok (" + result.error + ")")
+        t.assertEqual(XMLTVTests.idsOf(result.channels), ["a", "b"])
+        expected = []
+        for i = 0 to 15
+            expected.Push("name " + i.ToStr())
+        end for
+        t.assertEqual(result.channels[0].names, expected)
+        t.assertEqual(result.channels[1].names.Count(), 16)
+    end sub
+
+    ' The cap keeps everything SiliconDust's file has: two merged elements with 6 names each.
+    sub test_theCapKeepsTwoMergedSiliconDustChannels(t as object)
+        first = ["WATLDT4", "11.11 WATLDT4", "11.11 WATL-DT4", "11.11", "WATL-DT4", "MeTV"]
+        second = ["WATLDT4B", "36.4 WATLDT4", "36.4 WATL-D4", "36.4", "WATL-D4", "MeTV Toons"]
+        xml = "<tv>" + XMLTVTests.element(first) + XMLTVTests.element(second) + "</tv>"
+        result = XMLTVTests.parse(xml, XMLTVTests.distantPast(), XMLTVTests.distantFuture(), invalid, invalid)
+        expected = []
+        expected.Append(first)
+        expected.Append(second)
+        t.assertEqual(result.channels[0].names, expected)
+    end sub
+
+    ' --- Helpers ---
+
+    ' XMLTVParser.parse over a file: the channel pass, wanted(channels, context) once (invalid: nothing wanted),
+    ' then the programme pass. { ok, error, channels: [{ id, names }], programmes: [programme with channelID] }.
+    function parse(xml as string, windowStart as dynamic, windowEnd as dynamic, wanted as dynamic, context as dynamic) as object
+        path = "tmp:/xmltv-test.xml"
+        bytes = CreateObject("roByteArray")
+        bytes.FromAsciiString(xml)
+        bytes.WriteFile(path)
+        channelPass = XMLTVScan.newChannelPass()
+        first = XMLTVScan.scanFile(path, channelPass, 4096)
+        channels = XMLTVScan.channelList(channelPass)
+        if not first.ok then return { ok: false, error: first.error, channels: channels, programmes: [] }
+        ids = []
+        if wanted <> invalid then ids = wanted(channels, context)
+        programmePass = XMLTVScan.newProgrammePass(ids, windowStart, windowEnd)
+        second = XMLTVScan.scanFile(path, programmePass, 4096)
+        programmes = []
+        for each id in programmePass.programmes
+            for each programme in programmePass.programmes[id]
+                programme.channelID = id
+                programmes.Push(programme)
+            end for
+        end for
+        return { ok: second.ok, error: second.error, channels: channels, programmes: programmes }
+    end function
+
+    function wantedA() as object
+        return function(_channels as object, _context as dynamic) as object
+            return ["a"]
+        end function
+    end function
+
+    function titled(result as object, title as string) as dynamic
+        for each programme in result.programmes
+            if programme.title = title then return programme
+        end for
+        return {}
+    end function
+
+    function idsOf(channels as object) as object
+        list = []
+        for each channel in channels
+            list.Push(channel.id)
+        end for
+        return list
+    end function
+
+    function element(names as object) as string
+        text = "<channel id=" + XMLTVTests.q("US1.hdhomerun.com") + ">"
+        for each displayName in names
+            text += "<display-name>" + displayName + "</display-name>"
+        end for
+        return text + "</channel>"
+    end function
+
+    function utc(y as integer, mo as integer, d as integer, h as integer, mi as integer, s as integer) as dynamic
+        return XMLTVDate.daysFromCivil(y, mo, d) * 86400& + h * 3600 + mi * 60 + s
+    end function
+
+    function distantPast() as dynamic
+        return -62135596800&
+    end function
+
+    function distantFuture() as dynamic
+        return 64092211200&
+    end function
+
+    function q(text as string) as string
+        return Chr(34) + text + Chr(34)
+    end function
+
+    function fixture() as string
+        dq = Chr(34)
+        lines = [
+            "<?xml version=" + dq + "1.0" + dq + " encoding=" + dq + "UTF-8" + dq + "?>",
+            "<!DOCTYPE tv SYSTEM " + dq + "xmltv.dtd" + dq + ">",
+            "<tv generator-info-name=" + dq + "test" + dq + ">",
+            "  <channel id=" + dq + "NFL.Network.HD.us2" + dq + "><display-name>NFL Network HD</display-name><display-name>NFL Network</display-name></channel>",
+            "  <channel id=" + dq + "ESPN.us2" + dq + "><display-name>ESPN</display-name></channel>",
+            "  <channel id=" + dq + "Other.us2" + dq + "><display-name>Other</display-name></channel>",
+            "  <programme start=" + dq + "20261005120000 +0000" + dq + " stop=" + dq + "20261005130000 +0000" + dq + " channel=" + dq + "NFL.Network.HD.us2" + dq + ">",
+            "    <title lang=" + dq + "en" + dq + ">Good Morning Football</title><title lang=" + dq + "es" + dq + ">Buenos d" + Chr(237) + "as</title>",
+            "    <sub-title>Week 5</sub-title>",
+            "    <desc>Part one &amp; </desc>",
+            "    <category>Sports</category><category>Football</category>",
+            "    <episode-num system=" + dq + "xmltv_ns" + dq + ">1.0.0/1</episode-num>",
+            "  </programme>",
+            "  <programme start=" + dq + "20261005130000 +0000" + dq + " channel=" + dq + "NFL.Network.HD.us2" + dq + ">",
+            "    <title>NFL Total Access</title>",
+            "    <episode-num system=" + dq + "xmltv_ns" + dq + ">2.3.</episode-num>",
+            "    <episode-num system=" + dq + "onscreen" + dq + ">Ep 104</episode-num>",
+            "  </programme>",
+            "  <programme start=" + dq + "20261005150000 +0000" + dq + " stop=" + dq + "20261005160000 +0000" + dq + " channel=" + dq + "NFL.Network.HD.us2" + dq + ">",
+            "    <title>Later</title>",
+            "  </programme>",
+            "  <programme start=" + dq + "20261001120000 +0000" + dq + " stop=" + dq + "20261001130000 +0000" + dq + " channel=" + dq + "NFL.Network.HD.us2" + dq + ">",
+            "    <title>Too old</title>",
+            "  </programme>",
+            "  <programme start=" + dq + "20261005120000 +0000" + dq + " stop=" + dq + "20261005130000 +0000" + dq + " channel=" + dq + "Other.us2" + dq + ">",
+            "    <title>Unwanted</title>",
+            "  </programme>",
+            "  <programme start=" + dq + "bad" + dq + " stop=" + dq + "20261005130000 +0000" + dq + " channel=" + dq + "ESPN.us2" + dq + ">",
+            "    <title>Bad start</title>",
+            "  </programme>",
+            "  <programme start=" + dq + "20261005120000 +0000" + dq + " stop=" + dq + "20261005130000 +0000" + dq + " channel=" + dq + "ESPN.us2" + dq + ">",
+            "    <title>SportsCenter</title>",
+            "  </programme>",
+            "</tv>"
+        ]
+        return lines.Join(Chr(10))
+    end function
+
+end namespace

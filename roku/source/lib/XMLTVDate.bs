@@ -1,0 +1,64 @@
+' XMLTV timestamps (M12 step 9): a port of MMTVL's XMLTVDate.parse (MMTVL/IPTV/EPG/XMLTVDate.swift).
+' "20261005143000 +0000", "20261005143000", "202610051430 -0500", "20261005143000+0100" → seconds since 1970
+' (UTC), or invalid. Needs 12 or 14 ASCII digits (missing seconds = 0); spaces may come before the offset, which
+' is a sign and exactly 4 digits and nothing after; no offset = UTC. Month 1–12, day 1–31, hour < 24, minute < 60,
+' second < 61; a day past the month's end rolls over, as Swift's lenient Calendar does.
+namespace XMLTVDate
+
+    function parse(text as string) as dynamic
+        value = XMLTVDate.trimSpaces(text)
+        length = Len(value)
+        digits = 0
+        while digits < length and XMLTVDate.isDigit(Mid(value, digits + 1, 1))
+            digits++
+        end while
+        if digits <> 12 and digits <> 14 then return invalid
+        index = digits + 1
+        while index <= length and Mid(value, index, 1) = " "
+            index++
+        end while
+        offset = 0
+        if index <= length
+            sign = Mid(value, index, 1)
+            if sign <> "+" and sign <> "-" then return invalid
+            zone = Mid(value, index + 1)
+            if Len(zone) <> 4 then return invalid
+            for i = 1 to 4
+                if not XMLTVDate.isDigit(Mid(zone, i, 1)) then return invalid
+            end for
+            offset = Val(Left(zone, 2), 10) * 3600 + Val(Right(zone, 2), 10) * 60
+            if sign = "-" then offset = -offset
+        end if
+        year = Val(Mid(value, 1, 4), 10)
+        month = Val(Mid(value, 5, 2), 10)
+        day = Val(Mid(value, 7, 2), 10)
+        hour = Val(Mid(value, 9, 2), 10)
+        minute = Val(Mid(value, 11, 2), 10)
+        second = 0
+        if digits = 14 then second = Val(Mid(value, 13, 2), 10)
+        if month < 1 or month > 12 or day < 1 or day > 31 or hour > 23 or minute > 59 or second > 60 then return invalid
+        return XMLTVDate.daysFromCivil(year, month, day) * 86400& + hour * 3600 + minute * 60 + second - offset
+    end function
+
+    ' Days since 1970-01-01 of a proleptic Gregorian date; a day past the month's end rolls over.
+    function daysFromCivil(year as integer, month as integer, day as integer) as dynamic
+        y = year
+        if month <= 2 then y = y - 1
+        if y >= 0 then era = y \ 400 else era = (y - 399) \ 400
+        yearOfEra = y - era * 400
+        if month > 2 then shifted = month - 3 else shifted = month + 9
+        dayOfYear = (153 * shifted + 2) \ 5 + day - 1
+        dayOfEra = yearOfEra * 365 + yearOfEra \ 4 - yearOfEra \ 100 + dayOfYear
+        return era * 146097& + dayOfEra - 719468
+    end function
+
+    ' Foundation's trimmingCharacters(in: .whitespaces): spaces, tabs and the other Unicode spaces, not newlines.
+    function trimSpaces(text as string) as string
+        return Unicode.trim(text, false)
+    end function
+
+    function isDigit(c as string) as boolean
+        return c >= "0" and c <= "9" and Len(c) = 1
+    end function
+
+end namespace
