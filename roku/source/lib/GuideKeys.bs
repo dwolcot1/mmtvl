@@ -1,0 +1,385 @@
+' The guide's focus and keys (M12 step 12, L3, L4, D49) as pure functions: a port of MMTVL's GuideModel
+' (IPTV/Guide/GuideModel.swift: init :85-104, handle :143-151, the key handlers :244-363, moveRow :369-384,
+' moveInGroupPanel :394-409) and the guide part of LiveTVModel.handle (IPTV/LiveTVModel.swift:603-650, Back:
+' :675-693). No nodes and no programmes: Roku's TimeGrid moves between programmes itself, so the screen tells this
+' model where the grid's focus is (cellIndex, cellCount) and carries out the action that comes back. Uses Lineup,
+' so a component that loads this file loads Lineup.bs too.
+'
+'   open(lineup, lastGroup, focusedChannelID) -> state (MMTVL's GuideModel.init): the remembered group (Lineup's
+'     resolvedGroup, so "Teams" reads as "My Teams"), else the default group: the first that isn't My Teams or
+'     Antenna, else Antenna, else the first (M7l 8c, M7j L3). When the focused channel isn't in that group, All
+'     Channels if there is one, else the channel's own group. The focused channel's row, else row 0.
+'   rowsOf(lineup, group) -> the group's rows: { kind: "channel", channelID } per channel; My Teams starts with
+'     { kind: "chooseTeams", channelID: "" }. (My Teams' upcoming games, kind "upcoming", come with step 18.)
+'   handle(key, press, state) -> { handled, action, state, wrapped }
+'     key, press: as PlayerKeys.handle. A release does nothing, handled for the keys a press handles.
+'     state  { focus, lineup, groups, groupIndex, groupFocus, rows, row, cellIndex, cellCount, canReturn,
+'              isPlaying }
+'       focus       "grid" (a programme cell), "channel" (the row's channel cell, M6 L8), "groups" (the group
+'                   column) or "search" (the Search row above the groups, M7f L12)
+'       groups      lineup.groups; groupIndex: the selected group; groupFocus: the focused one in the column
+'       rows        rowsOf(lineup, the selected group); row: the focused row
+'       cellIndex   the focused programme cell in the row (0 = the first, the one on now), cellCount its cells
+'                   (at least 1: a row with no guide has one placeholder cell). The screen keeps both in step
+'                   with TimeGrid; Left on cell 0 goes to the channel cell, Right on the last cell does nothing.
+'       canReturn   LiveTVModel.canReturnToChannel: a channel plays, or a failed or stopped one is still in
+'                   the playlist. isPlaying: it plays (Back returns without a reconnect).
+'     state that comes back is a new object (lineup, groups and rows are shared, never changed).
+'     wrapped: a one-step move looped past an end of the rows or the group column (M7n L3, L4: put the rows in
+'     place instead of sliding).
+'     handled: true for every key in the table below (Back never leaves Live TV, D49), else false.
+'     action: { type, ... }: none, play { channelID }, channelMenu { channelID }, groupChanged { group,
+'       groupIndex } (remember it as lastGroup), openSearch, openTeamPicker, togglePause (the playing channel,
+'       MMTVL's Play/Pause in the guide), returnToChannel { reload } (Back: full screen on the channel; reload when
+'       it isn't playing, which retries a failed one).
+'
+' The keys (Roku's on the left; L4 maps Rewind/Fast Forward to MMTVL's Channel Up/Down, which page):
+'   up / down          the row (or, in the column, the group) above / below; loops (M7n L3)
+'   left               grid: the previous cell, from the first cell the channel cell; channel cell: the groups
+'                      (on the selected group); groups / Search: back to the grid
+'   right              grid: the next cell; channel cell: the grid; groups: select the group; Search: open Search
+'   rewind / channelup     page up: 6 rows (MMTVL's visibleRows), 7 in the column (visibleGroupRows)
+'   fastforward / channeldown  page down. A page stops at the end row and wraps only from it.
+'   OK                 grid: play; channel cell: the channel menu; groups: select the group; Search: open Search;
+'                      Choose Teams: the team picker; an upcoming game: play its channel
+'   options            the channel menu (grid or channel cell); nothing in the column or on Choose Teams
+'   back               the column or Search: back to the grid; else return to the channel, and with nothing to
+'                      return to, nothing (M7m L2, D49)
+'   play               togglePause
+'   replay             nothing
+namespace GuideKeys
+
+    ' MMTVL's GuideModel.visibleRows: a page of rows.
+    const pageRows = 6
+    ' MMTVL's GuideModel.visibleGroupRows: a page in the group column (Search and the groups).
+    const pageGroupRows = 7
+    const searchRowGroup = -1
+
+    function open(built as object, lastGroup as dynamic, focusedChannelID = "" as dynamic) as object
+        groups = built.groups
+        groupIndex = -1
+        resolved = Lineup.resolvedGroup(built, lastGroup)
+        if GuideKeys.isText(resolved) then groupIndex = GuideKeys.textIndex(groups, resolved)
+        if groupIndex < 0 then groupIndex = GuideKeys.defaultGroupIndex(groups)
+        rows = GuideKeys.rowsOf(built, GuideKeys.groupName(groups, groupIndex))
+        hasFocus = GuideKeys.isText(focusedChannelID) and focusedChannelID <> ""
+        if hasFocus and GuideKeys.channelRow(rows, focusedChannelID) < 0
+            ' Show the focused channel: All Channels if there is one, else its own group.
+            fallback = GuideKeys.textIndex(groups, Lineup.allChannelsGroup)
+            if fallback < 0
+                for each channel in built.visibleChannels
+                    if channel.id = focusedChannelID
+                        if GuideKeys.isText(channel.group) then fallback = GuideKeys.textIndex(groups, channel.group)
+                        exit for
+                    end if
+                end for
+            end if
+            if fallback >= 0
+                groupIndex = fallback
+                rows = GuideKeys.rowsOf(built, groups[groupIndex])
+            end if
+        end if
+        startRow = 0
+        if hasFocus then startRow = GuideKeys.channelRow(rows, focusedChannelID)
+        if startRow < 0 then startRow = 0
+        return {
+            focus: "grid",
+            lineup: built,
+            groups: groups,
+            groupIndex: groupIndex,
+            groupFocus: groupIndex,
+            rows: rows,
+            row: startRow,
+            cellIndex: 0,
+            cellCount: 1,
+            canReturn: false,
+            isPlaying: false
+        }
+    end function
+
+    function rowsOf(built as object, group as dynamic) as object
+        rows = []
+        if not GuideKeys.isText(group) then return rows
+        if group = Lineup.teamsGroup then rows.Push({ kind: "chooseTeams", channelID: "" })
+        for each channel in Lineup.channelsIn(built, group)
+            rows.Push({ kind: "channel", channelID: channel.id })
+        end for
+        return rows
+    end function
+
+    function handle(key as dynamic, press as dynamic, state as object) as object
+        result = { handled: GuideKeys.isKey(key), action: GuideKeys.action("none"), state: GuideKeys.copyState(state), wrapped: false }
+        if not result.handled or press <> true then return result
+        current = result.state
+        if key = "play"
+            result.action = GuideKeys.action("togglePause")
+            return result
+        end if
+        if current.focus = "groups" or current.focus = "search"
+            GuideKeys.handleColumn(key, result)
+            return result
+        end if
+        rowHere = GuideKeys.rowAtFocus(current)
+        if rowHere <> invalid and rowHere.kind <> "channel"
+            GuideKeys.handleActionRow(key, rowHere, result)
+        else if current.focus = "channel"
+            GuideKeys.handleChannelCell(key, rowHere, result)
+        else
+            GuideKeys.handleGrid(key, rowHere, result)
+        end if
+        if key = "back" then result.action = GuideKeys.backAction(current)
+        return result
+    end function
+
+    ' The grid: a programme cell.
+    sub handleGrid(key as string, rowHere as dynamic, result as object)
+        current = result.state
+        if key = "up" or key = "down"
+            GuideKeys.moveRow(result, GuideKeys.stepOf(key))
+        else if GuideKeys.isPageKey(key)
+            GuideKeys.moveRow(result, GuideKeys.pageStep(key, GuideKeys.pageRows))
+        else if key = "right"
+            if current.cellIndex + 1 < current.cellCount then current.cellIndex = current.cellIndex + 1
+        else if key = "left"
+            if current.cellIndex <= 0
+                current.focus = "channel"
+            else
+                current.cellIndex = current.cellIndex - 1
+            end if
+        else if key = "OK"
+            result.action = GuideKeys.channelAction("play", rowHere)
+        else if key = "options"
+            ' M7 L5: the channel menu, as OK on the channel cell.
+            result.action = GuideKeys.channelAction("channelMenu", rowHere)
+        end if
+    end sub
+
+    ' The channel cell of the focused row (M6 L8).
+    sub handleChannelCell(key as string, rowHere as dynamic, result as object)
+        current = result.state
+        if key = "up" or key = "down"
+            GuideKeys.moveRow(result, GuideKeys.stepOf(key))
+        else if GuideKeys.isPageKey(key)
+            GuideKeys.moveRow(result, GuideKeys.pageStep(key, GuideKeys.pageRows))
+        else if key = "right"
+            current.focus = "grid"
+        else if key = "left"
+            GuideKeys.focusGroups(current)
+        else if key = "OK" or key = "options"
+            result.action = GuideKeys.channelAction("channelMenu", rowHere)
+        end if
+    end sub
+
+    ' M7l 8c: My Teams' Choose Teams (and, from step 18, upcoming game) rows, focused as a whole.
+    sub handleActionRow(key as string, rowHere as object, result as object)
+        current = result.state
+        if key = "up" or key = "down"
+            GuideKeys.moveRow(result, GuideKeys.stepOf(key))
+        else if GuideKeys.isPageKey(key)
+            GuideKeys.moveRow(result, GuideKeys.pageStep(key, GuideKeys.pageRows))
+        else if key = "OK"
+            if rowHere.kind = "upcoming"
+                result.action = GuideKeys.channelAction("play", rowHere)
+            else
+                result.action = GuideKeys.action("openTeamPicker")
+            end if
+        else if key = "left"
+            GuideKeys.focusGroups(current)
+        else if key = "right"
+            current.focus = "grid"
+        end if
+    end sub
+
+    ' The group column: Search (focus "search") above the groups (focus "groups", groupFocus).
+    sub handleColumn(key as string, result as object)
+        current = result.state
+        if key = "up" or key = "down"
+            GuideKeys.moveInColumn(result, GuideKeys.stepOf(key))
+        else if GuideKeys.isPageKey(key)
+            GuideKeys.moveInColumn(result, GuideKeys.pageStep(key, GuideKeys.pageGroupRows))
+        else if key = "back" or key = "left"
+            current.focus = "grid"
+        else if key = "OK" or key = "right"
+            if current.focus = "search"
+                ' Focus stays, so closing Search comes back to the Search row.
+                result.action = GuideKeys.action("openSearch")
+            else if current.groupFocus >= 0 and current.groupFocus < current.groups.Count()
+                current.groupIndex = current.groupFocus
+                current.rows = GuideKeys.rowsOf(current.lineup, current.groups[current.groupIndex])
+                current.row = 0
+                current.cellIndex = 0
+                current.cellCount = 1
+                current.focus = "grid"
+                result.action = { type: "groupChanged", group: current.groups[current.groupIndex], groupIndex: current.groupIndex }
+            end if
+        end if
+    end sub
+
+    ' LiveTVModel's .close: full screen on the channel; with nothing to return to, the guide stays (D49).
+    function backAction(current as object) as object
+        if not current.canReturn then return GuideKeys.action("none")
+        return { type: "returnToChannel", reload: not current.isPlaying }
+    end function
+
+    sub focusGroups(current as object)
+        current.focus = "groups"
+        current.groupFocus = current.groupIndex
+    end sub
+
+    ' M7n L3: a step (±1) past either end wraps to the other end. A page stops at the first or last row and wraps
+    ' only from it, so paging never skips past an end unseen. A one-row list stays.
+    sub moveRow(result as object, stepSize as integer)
+        current = result.state
+        count = current.rows.Count()
+        if count <= 1 then return
+        last = count - 1
+        before = current.row
+        target = before + stepSize
+        if stepSize = 1 or stepSize = -1
+            current.row = ((target mod count) + count) mod count
+        else if target < 0
+            if before = 0 then current.row = last else current.row = 0
+        else if target > last
+            if before = last then current.row = 0 else current.row = last
+        else
+            current.row = target
+        end if
+        if (stepSize > 0 and current.row < before) or (stepSize < 0 and current.row > before) then result.wrapped = true
+    end sub
+
+    ' The group column loops like the rows: position 0 is Search, 1… the groups. Without groups Search stays.
+    sub moveInColumn(result as object, stepSize as integer)
+        current = result.state
+        groupCount = current.groups.Count()
+        if groupCount = 0 then return
+        position = 0
+        if current.focus = "groups" then position = current.groupFocus + 1
+        last = groupCount
+        target = position + stepSize
+        newPosition = target
+        if stepSize = 1 or stepSize = -1
+            newPosition = ((target mod (last + 1)) + last + 1) mod (last + 1)
+        else if target < 0
+            if position = 0 then newPosition = last else newPosition = 0
+        else if target > last
+            if position = last then newPosition = 0 else newPosition = last
+        end if
+        if (stepSize > 0 and newPosition < position) or (stepSize < 0 and newPosition > position) then result.wrapped = true
+        if newPosition = 0
+            current.focus = "search"
+        else
+            current.focus = "groups"
+            current.groupFocus = newPosition - 1
+        end if
+    end sub
+
+    function rowAtFocus(current as object) as dynamic
+        if current.row < 0 or current.row >= current.rows.Count() then return invalid
+        return current.rows[current.row]
+    end function
+
+    function channelAction(kind as string, row as dynamic) as object
+        if row = invalid or not GuideKeys.isText(row.channelID) or row.channelID = "" then return GuideKeys.action("none")
+        return { type: kind, channelID: row.channelID }
+    end function
+
+    function isPageKey(key as string) as boolean
+        return key = "rewind" or key = "fastforward" or key = "channelup" or key = "channeldown"
+    end function
+
+    function pageStep(key as string, size as integer) as integer
+        if key = "rewind" or key = "channelup" then return -size
+        return size
+    end function
+
+    function stepOf(key as string) as integer
+        if key = "up" then return -1
+        return 1
+    end function
+
+    function action(kind as string) as object
+        return { type: kind }
+    end function
+
+    ' A new state object; a missing or mistyped field reads as its default.
+    function copyState(state as dynamic) as object
+        result = {
+            focus: "grid",
+            lineup: { groups: [], visibleChannels: [], favoritesGroupChannels: [], teams: [] },
+            groups: [],
+            groupIndex: 0,
+            groupFocus: 0,
+            rows: [],
+            row: 0,
+            cellIndex: 0,
+            cellCount: 1,
+            canReturn: false,
+            isPlaying: false
+        }
+        if LCase(type(state)) <> "roassociativearray" then return result
+        for each field in ["focus", "lineup", "groups", "groupIndex", "groupFocus", "rows", "row", "cellIndex", "cellCount", "canReturn", "isPlaying"]
+            value = state[field]
+            if value <> invalid and GuideKeys.sameKind(value, result[field]) then result[field] = value
+        end for
+        if result.focus <> "grid" and result.focus <> "channel" and result.focus <> "groups" and result.focus <> "search" then result.focus = "grid"
+        if result.cellCount < 1 then result.cellCount = 1
+        if result.cellIndex >= result.cellCount then result.cellIndex = result.cellCount - 1
+        if result.cellIndex < 0 then result.cellIndex = 0
+        return result
+    end function
+
+    ' The first group that isn't My Teams nor Antenna, else Antenna, else 0.
+    function defaultGroupIndex(groups as object) as integer
+        for i = 0 to groups.Count() - 1
+            if groups[i] <> Lineup.teamsGroup and groups[i] <> Lineup.antennaGroup then return i
+        end for
+        antenna = GuideKeys.textIndex(groups, Lineup.antennaGroup)
+        if antenna >= 0 then return antenna
+        return 0
+    end function
+
+    function groupName(groups as object, index as integer) as dynamic
+        if index < 0 or index >= groups.Count() then return invalid
+        return groups[index]
+    end function
+
+    function channelRow(rows as object, id as string) as integer
+        for i = 0 to rows.Count() - 1
+            if rows[i].kind = "channel" and rows[i].channelID = id then return i
+        end for
+        return -1
+    end function
+
+    function textIndex(list as object, value as string) as integer
+        for i = 0 to list.Count() - 1
+            if list[i] = value then return i
+        end for
+        return -1
+    end function
+
+    function sameKind(a as dynamic, b as dynamic) as boolean
+        return GuideKeys.kindOf(a) = GuideKeys.kindOf(b)
+    end function
+
+    function kindOf(value as dynamic) as string
+        kind = LCase(type(value))
+        if kind = "rostring" then return "string"
+        if kind = "roint" or kind = "rointeger" or kind = "integer" or kind = "longinteger" or kind = "rolonginteger" or kind = "float" or kind = "rofloat" or kind = "double" or kind = "rodouble" then return "number"
+        if kind = "roboolean" then return "boolean"
+        return kind
+    end function
+
+    function isKey(key as dynamic) as boolean
+        if not GuideKeys.isText(key) then return false
+        for each known in ["up", "down", "left", "right", "OK", "back", "options", "replay", "play", "rewind", "fastforward", "channelup", "channeldown"]
+            if key = known then return true
+        end for
+        return false
+    end function
+
+    function isText(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "string" or kind = "rostring"
+    end function
+
+end namespace

@@ -1,0 +1,102 @@
+' How Settings shows a URL (M12 step 13, M6b L2): never whole. A port of MMTVL's GuideSource label rule
+' (IPTV/EPG/GuideSource.swift:9-40) and its playlist row (IPTVLibrary.playlistHost, Settings' "Playlist" when
+' there is none). Uses Log (host) and URLPolicy (percentDecoded), so a component that loads this file loads those.
+'
+'   playlistLabel(url) -> the playlist's host, else "Playlist".
+'   guideLabel(url) -> "<host> · <file name>" when the URL names a guide file, else the host; "?" when the URL
+'     has no host this port shows. Never the query, the fragment or another part of the path.
+'   guideShortLabel(url) -> the file name without its guide extension, else the host (else "?").
+'   guideFileName(url) -> the file name when it looks like a guide file, else "": the last path segment (a
+'     trailing "/" is dropped, as Swift's lastPathComponent does), at most 64 characters, ending in .xml, .xml.gz
+'     or .gz (any case) and not just the extension. Hosts are Log.host's: lowercased, and "" for an authority
+'     Log.host won't read.
+'   Stricter than MMTVL, so no unreadable text reaches the screen: Swift percent-decodes the whole name; here only
+'   escapes of printable ASCII are decoded (URLPolicy.percentDecoded), and a name left with a "%" or a character
+'   outside printable ASCII shows no file name (the host only). A URL whose host Log.host refuses shows "?" alone
+'   (MMTVL would show "? · <file>").
+namespace URLDisplay
+
+    const maximumFileNameLength = 64
+    const noHost = "?"
+    const noPlaylist = "Playlist"
+
+    function playlistLabel(url as dynamic) as string
+        hostName = URLDisplay.hostText(url)
+        if hostName = "" then return URLDisplay.noPlaylist
+        return hostName
+    end function
+
+    function guideLabel(url as dynamic) as string
+        hostName = URLDisplay.hostText(url)
+        if hostName = "" then return URLDisplay.noHost
+        file = URLDisplay.guideFileName(url)
+        if file = "" then return hostName
+        return hostName + " " + URLDisplay.separator() + " " + file
+    end function
+
+    function guideShortLabel(url as dynamic) as string
+        hostName = URLDisplay.hostText(url)
+        if hostName = "" then return URLDisplay.noHost
+        file = URLDisplay.guideFileName(url)
+        if file = "" then return hostName
+        lower = LCase(file)
+        for each suffix in URLDisplay.extensions()
+            if Right(lower, Len(suffix)) = suffix then return Left(file, Len(file) - Len(suffix))
+        end for
+        return file
+    end function
+
+    function guideFileName(url as dynamic) as string
+        if URLDisplay.hostText(url) = "" then return ""
+        name = URLPolicy.percentDecoded(URLDisplay.lastPathComponent(url))
+        if name = "" or Len(name) > URLDisplay.maximumFileNameLength then return ""
+        for i = 1 to Len(name)
+            code = Asc(Mid(name, i, 1))
+            if code < 33 or code > 126 or code = 37 then return ""
+        end for
+        lower = LCase(name)
+        matches = false
+        for each suffix in URLDisplay.extensions()
+            if lower = suffix then return ""
+            if Right(lower, Len(suffix)) = suffix then matches = true
+        end for
+        if not matches then return ""
+        return name
+    end function
+
+    ' The path's last segment as written: after the authority, before any "?" or "#", trailing "/"s dropped.
+    function lastPathComponent(url as string) as string
+        schemeEnd = Instr(1, url, "://")
+        if schemeEnd = 0 then return ""
+        rest = Mid(url, schemeEnd + 3)
+        for each stopper in ["?", "#"]
+            cut = Instr(1, rest, stopper)
+            if cut > 0 then rest = Left(rest, cut - 1)
+        end for
+        slash = Instr(1, rest, "/")
+        if slash = 0 then return ""
+        path = Mid(rest, slash)
+        while Len(path) > 1 and Right(path, 1) = "/"
+            path = Left(path, Len(path) - 1)
+        end while
+        segments = path.Split("/")
+        return segments[segments.Count() - 1]
+    end function
+
+    function hostText(url as dynamic) as string
+        kind = LCase(type(url))
+        if kind <> "string" and kind <> "rostring" then return ""
+        return Log.host(url)
+    end function
+
+    ' Longest first, so "a.xml.gz" drops ".xml.gz" for the short label.
+    function extensions() as object
+        return [".xml.gz", ".xml", ".gz"]
+    end function
+
+    ' U+00B7 MIDDLE DOT, as MMTVL's label.
+    function separator() as string
+        return Chr(183)
+    end function
+
+end namespace
