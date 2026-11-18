@@ -1,0 +1,316 @@
+{
+  "guides" : [
+    {
+      "channels" : [
+        {
+          "id" : "sports.one.us",
+          "names" : [
+            "Sports One"
+          ]
+        },
+        {
+          "id" : "a.and.e.us",
+          "names" : [
+            "A & E"
+          ]
+        },
+        {
+          "id" : "sports.plus.us",
+          "names" : [
+            "Sports Plus"
+          ]
+        },
+        {
+          "id" : "sports.hd.us",
+          "names" : [
+            "Sports HD"
+          ]
+        },
+        {
+          "id" : "cafe.tele.fr",
+          "names" : [
+            "Cafe Tele"
+          ]
+        },
+        {
+          "id" : "cinema.max.us",
+          "names" : [
+            "Cinema Max"
+          ]
+        },
+        {
+          "id" : "both.guides.us",
+          "names" : [
+            "Both Guides"
+          ]
+        },
+        {
+          "id" : "fallback.a",
+          "names" : [
+            "FALLBACK NAME 4K"
+          ]
+        },
+        {
+          "id" : "kids.a",
+          "names" : [
+            "Kids-Zone"
+          ]
+        },
+        {
+          "id" : "decoy.a",
+          "names" : [
+            "Only In B"
+          ]
+        },
+        {
+          "id" : "plain.name.a",
+          "names" : [
+            "Plain Name A"
+          ]
+        },
+        {
+          "id" : "name.first.a",
+          "names" : [
+            "Shared Name"
+          ]
+        },
+        {
+          "id" : "name.second.a",
+          "names" : [
+            "Shared Name HD"
+          ]
+        },
+        {
+          "id" : "override.target.a",
+          "names" : [
+            "Unrelated Words"
+          ]
+        },
+        {
+          "id" : "merge.us",
+          "names" : [
+            "Merge One",
+            "Merge One",
+            "Merge Two",
+            "MERGE ONE"
+          ]
+        },
+        {
+          "id" : "many.names.us",
+          "names" : [
+            "Many 01",
+            "Many 02",
+            "Many 03",
+            "Many 04",
+            "Many 05",
+            "Many 06",
+            "Many 07",
+            "Many 08",
+            "Many 09",
+            "Many 10",
+            "Many 11",
+            "Many 12",
+            "Many 13",
+            "Many 14",
+            "Many 15",
+            "Many 16"
+          ]
+        },
+        {
+          "id" : "unmatched.a",
+          "names" : [
+            "Nobody Watches This"
+          ]
+        }
+      ],
+      "file" : "guide-a.xml",
+      "programmes" : [
+        {
+          "category" : "Sports",
+          "channelID" : "sports.one.us",
+          "episode" : "S2 E1",
+          "start" : 1791201600,
+          "stop" : 1791205200,
+          "subtitle" : "Week 5",
+          "summary" : "Scores & highlights",
+          "title" : "Morning Kickoff"
+        },
+        {
+          "category" : null,
+          "channelID" : "sports.one.us",
+          "episode" : "Ep 104",
+          "start" : 1791205200,
+          "stop" : 1791208800,
+          "subtitle" : null,
+          "summary" : null,
+          "title" : "Total Access"
+        },
+        {
+          "category" : null,
+          "channelID" : "sports.one.us",
+          "episode" : "E5",
+          "start" : 1791212400,
+          "stop" : 1791216000,
+          "subtitle" : null,
+          "summary" : null,
+          "title" : "Afternoon Show"
+        },
+        {
+          "category" : null,
+          "channelID" : "sports.one.us",
+          "episode" : null,
+          "start" : 1791241200,
+          "stop" : 1791243000,
+          "subtitle" : null,
+          "summary" : null,
+          "title" : "Late Wrap"
+        },
+        {
+          "category" : null,
+          "channelID" : "a.and.e.us",
+          "episode" : null,
+          "start" : 1791230400,
+          "stop" : 1791234000,
+          "subtitle" : null,
+          "summary" : "Trimmed <edges>",
+          "title" : "Night Movie"
+        },
+        {
+          "category" : null,
+          "channelID" : "merge.us",
+          "episode" : null,
+          "start" : 1791273600,
+          "stop" : 1791277200,
+          "subtitle" : null,
+          "summary" : null,
+          "title" : "Merged Channel Show"
+        }
+      ],
+      "wantedIDs" : [
+        "a.and.e.us",
+        "both.guides.us",
+        "cafe.tele.fr",
+        "cinema.max.us",
+        "decoy.a",
+        "fallback.a",
+        "kids.a",
+        "many.names.us",
+        "merge.us",
+        "name.first.a",
+        "override.target.a",
+        "plain.name.a",
+        "sports.one.us",
+        "sports.plus.us"
+      ]
+    },
+    {
+      "channels" : [
+        {
+          "id" : "local.news.b",
+          "names" : [
+            "Local News Network"
+          ]
+        },
+        {
+          "id" : "both.guides.us",
+          "names" : [
+            "Both Guides B"
+          ]
+        },
+        {
+          "id" : "only.in.b.us",
+          "names" : [
+            "Only In B Network"
+          ]
+        },
+        {
+          "id" : "ticker.b",
+          "names" : [
+            "Ticker Name B"
+          ]
+        },
+        {
+          "id" : "hello.world.b",
+          "names" : [
+            "Hello World"
+          ]
+        },
+        {
+          "id" : "lions.bears.b",
+          "names" : [
+            "Lions Bears Game"
+          ]
+        },
+        {
+          "id" : "nandu.deportes.b",
+          "names" : [
+            "Ñandú Deportes"
+          ]
+        },
+        {
+          "id" : "case.b",
+          "names" : [
+            "Case Channel",
+            "CASE CHANNEL"
+          ]
+        }
+      ],
+      "file" : "guide-b.xml",
+      "programmes" : [
+        {
+          "category" : null,
+          "channelID" : "local.news.b",
+          "episode" : null,
+          "start" : 1791223200,
+          "stop" : 1791226800,
+          "subtitle" : null,
+          "summary" : "Line one & more\non a second line",
+          "title" : "Evening Report"
+        },
+        {
+          "category" : "News",
+          "channelID" : "local.news.b",
+          "episode" : null,
+          "start" : 1791226800,
+          "stop" : 1791228600,
+          "subtitle" : null,
+          "summary" : null,
+          "title" : "Late Report"
+        },
+        {
+          "category" : null,
+          "channelID" : "ticker.b",
+          "episode" : "S1 E12",
+          "start" : 1791219600,
+          "stop" : 1791221400,
+          "subtitle" : "Closing Bell",
+          "summary" : null,
+          "title" : "Market Ticker"
+        },
+        {
+          "category" : null,
+          "channelID" : "only.in.b.us",
+          "episode" : null,
+          "start" : 1791327600,
+          "stop" : 1791334800,
+          "subtitle" : null,
+          "summary" : null,
+          "title" : "Crosses Window End"
+        }
+      ],
+      "wantedIDs" : [
+        "both.guides.us",
+        "hello.world.b",
+        "lions.bears.b",
+        "local.news.b",
+        "nandu.deportes.b",
+        "only.in.b.us",
+        "ticker.b"
+      ]
+    }
+  ],
+  "window" : {
+    "end" : 1791331200,
+    "start" : 1791158400
+  }
+}

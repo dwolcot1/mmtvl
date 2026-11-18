@@ -1,0 +1,13 @@
+{
+  "LOCAL NEWS": "Local.News.B",
+  "Evening News": "",
+  "lions @ bears (home feed)": "lions.bears.b",
+  "Lions @ Bears-A": "lions.bears.b",
+  "KEY.BY.TVG": "Override.Target.A",
+  "Name Wins": "only.in.b.us",
+  "tvg.loses": "override.target.a",
+  "Missing Target": "nowhere.us",
+  "missing then tvg": "nowhere.us",
+  "Fallthrough.Tvg": "override.target.a",
+  "override both": "BOTH.GUIDES.US"
+}

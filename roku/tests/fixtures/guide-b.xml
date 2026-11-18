@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- MMTVL/Roku parity fixture (M12 step 5), guide B: the second guide in priority order. Hand-written. -->
+<tv generator-info-name="parity-fixture">
+  <channel id="Local.News.B"><display-name>Local News Network</display-name></channel>
+  <!-- In both guides: guide A wins for the tvg-id rule and for overrides. -->
+  <channel id="Both.Guides.us"><display-name>Both Guides B</display-name></channel>
+  <channel id="Only.In.B.us"><display-name>Only In B Network</display-name></channel>
+  <channel id="Ticker.b"><display-name>Ticker Name B</display-name></channel>
+  <channel id="Hello.World.b"><display-name>Hello World</display-name></channel>
+  <channel id="Lions.Bears.b"><display-name>Lions Bears Game</display-name></channel>
+  <!-- Diacritics fold: "Ñandú" matches "Nandu". -->
+  <channel id="Nandu.Deportes.b"><display-name>Ñandú Deportes</display-name></channel>
+  <!-- Display-name case is kept when ids merge: "Case Channel" and "CASE CHANNEL" stay two names; the exact repeat goes. -->
+  <channel id="Case.b"><display-name>Case Channel</display-name></channel>
+  <channel id="case.B"><display-name>CASE CHANNEL</display-name><display-name>Case Channel</display-name></channel>
+
+  <programme start="20261005180000" stop="20261005190000" channel="Local.News.B">
+    <title>Evening Report</title>
+    <desc>Line one &amp; more
+on a second line</desc>
+  </programme>
+  <programme start="20261005190000 +0000" channel="Local.News.B">
+    <title>Late Report</title>
+    <category>News</category>
+  </programme>
+  <programme start="20261005170000 +0000" stop="20261005173000 +0000" channel="Ticker.b">
+    <title>Market Ticker</title>
+    <sub-title>Closing Bell</sub-title>
+    <episode-num system="xmltv_ns">0.11.0/1</episode-num>
+  </programme>
+  <programme start="20261006230000 +0000" stop="20261007010000 +0000" channel="Only.In.B.us">
+    <title>Crosses Window End</title>
+  </programme>
+  <programme start="20261007000000 +0000" stop="20261007010000 +0000" channel="Only.In.B.us">
+    <title>Starts At Window End</title>
+  </programme>
+  <programme start="20261005160000 +0000" stop="20261005170000 +0000" channel="Case.b">
+    <title>Case Hour</title>
+  </programme>
+</tv>
