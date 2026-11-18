@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <!-- Loads the playlist off the render thread (M12 step 8). Set playlistURL and prefs, then control = "run". The
      task sets result once: { ok: true, host, channels, lineup, guideURLs } or { ok: false, host, status }, where
-     status is the text to show ("Couldn't load the playlist (<host>)"). On failure the scene keeps the channels it
-     has. channels are M3U.makeChannels'; lineup is Lineup.build(channels, prefs, []); guideURLs are the playlist's
+     status is the text to show ("Couldn't load the playlist (<host>)", or without "(<host>)" when the URL shows no host). On failure the scene keeps the channels it
+     has. Step 9 (security L-5): the result also has matchFields (GuideSources.matchFields of the channels: what the
+     guide task matches with) and channelsKey (GuideSources.channelsKey of those), made here, off the render
+     thread. channels are M3U.makeChannels'; lineup is Lineup.build(channels, prefs, []); guideURLs are the playlist's
      url-tvg guides that URLPolicy allows with the playlist as the referrer. Logs show the host only (L6). -->
 <component name="PlaylistTask" extends="Task">
     <interface>
@@ -16,4 +18,6 @@
     <script type="text/brighterscript" uri="pkg:/source/lib/URLPolicy.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/Lineup.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/Refresh.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/SettingsStore.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/GuideSources.bs" />
 </component>

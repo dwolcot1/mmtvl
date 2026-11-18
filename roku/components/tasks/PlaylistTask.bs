@@ -49,11 +49,13 @@ sub loadPlaylistFrom(url as string, host as string)
     guideURLs = allowedGuideURLs(playlist.guideURLs, url)
     sorted = Lineup.build(channels, m.top.prefs, [])
     Log.info("IPTV", "Loaded " + channels.Count().ToStr() + " channels from " + host)
-    m.top.result = { ok: true, host: host, channels: channels, lineup: sorted, guideURLs: guideURLs }
+    ' Step 9 (security L-5): the guide's channel fields and their key, here rather than on the render thread.
+    fields = GuideSources.matchFields(channels)
+    m.top.result = { ok: true, host: host, channels: channels, lineup: sorted, guideURLs: guideURLs, matchFields: fields, channelsKey: GuideSources.channelsKey(fields) }
 end sub
 
 function playlistFailure(host as string) as object
-    return { ok: false, host: host, status: "Couldn't load the playlist (" + host + ")" }
+    return { ok: false, host: host, status: Log.withHost("Couldn't load the playlist", host) }
 end function
 
 ' The playlist's url-tvg guides that URLPolicy allows with the playlist as the referrer (a public playlist names no

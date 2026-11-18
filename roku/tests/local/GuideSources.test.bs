@@ -1,0 +1,385 @@
+' GuideSources (M12 step 9): which guides are read (MMTVL's updateGuideSources), their cachefs: names, and when the
+' scene starts a guide run. Off-device; no URL here is real (iptv.example, documentation addresses).
+namespace GuideSourcesTests
+
+    ' --- chooseSources: MMTVL's rule (IPTV/IPTVLibrary.swift:1003-1008) ---
+
+    sub test_pastedGuidesWinWhenThereAreAny(t as object)
+        chosen = GuideSources.chooseSources(["https://iptv.example/a.xml", "https://iptv.example/b.xml.gz"], ["https://iptv.example/tvg.xml"], false, "https://iptv.example/list.m3u")
+        t.assertEqual(chosen.Count(), 2)
+        t.assertEqual(chosen[0], { url: "https://iptv.example/a.xml", index: 1, fromPlaylist: false, referrerURL: "" })
+        t.assertEqual(chosen[1], { url: "https://iptv.example/b.xml.gz", index: 2, fromPlaylist: false, referrerURL: "" })
+    end sub
+
+    sub test_thePlaylistsGuidesWithoutPastedOnes(t as object)
+        chosen = GuideSources.chooseSources([], ["https://iptv.example/tvg.xml", "https://iptv.example/tvg2.xml"], false, "https://iptv.example/list.m3u")
+        t.assertEqual(chosen.Count(), 2)
+        t.assertEqual(chosen[0], { url: "https://iptv.example/tvg.xml", index: 1, fromPlaylist: true, referrerURL: "https://iptv.example/list.m3u" })
+        t.assertEqual(chosen[1].index, 2)
+        t.assertEqual(chosen[1].referrerURL, "https://iptv.example/list.m3u")
+    end sub
+
+    sub test_usePlaylistGuidePrefersThePlaylistsWhenItNamesOne(t as object)
+        chosen = GuideSources.chooseSources(["https://iptv.example/a.xml"], ["https://iptv.example/tvg.xml"], true, "https://iptv.example/list.m3u")
+        t.assertEqual(chosen.Count(), 1)
+        t.assertEqual(chosen[0].url, "https://iptv.example/tvg.xml")
+        t.assertTrue(chosen[0].fromPlaylist, "from the playlist")
+    end sub
+
+    sub test_usePlaylistGuideKeepsPastedOnesWhenThePlaylistNamesNone(t as object)
+        chosen = GuideSources.chooseSources(["https://iptv.example/a.xml"], [], true, "https://iptv.example/list.m3u")
+        t.assertEqual(chosen.Count(), 1)
+        t.assertEqual(chosen[0].url, "https://iptv.example/a.xml")
+        t.assertFalse(chosen[0].fromPlaylist, "pasted")
+        t.assertEqual(chosen[0].referrerURL, "")
+    end sub
+
+    sub test_noGuidesAtAll(t as object)
+        t.assertEqual(GuideSources.chooseSources([], [], false, "https://iptv.example/list.m3u"), [])
+        t.assertEqual(GuideSources.chooseSources([], [], true, ""), [])
+        t.assertEqual(GuideSources.chooseSources(invalid, invalid, invalid, invalid), [], "nothing set")
+    end sub
+
+    sub test_atMostSixEitherWay(t as object)
+        many = []
+        for i = 1 to 8
+            many.Push("https://iptv.example/g" + i.ToStr() + ".xml")
+        end for
+        pasted = GuideSources.chooseSources(many, [], false, "")
+        t.assertEqual(pasted.Count(), 6, "pasted")
+        t.assertEqual(pasted[5].url, "https://iptv.example/g6.xml", "in priority order")
+        t.assertEqual(pasted[5].index, 6)
+        named = GuideSources.chooseSources([], many, false, "https://iptv.example/list.m3u")
+        t.assertEqual(named.Count(), 6, "url-tvg")
+    end sub
+
+    sub test_entriesThatArentURLsAreSkipped(t as object)
+        chosen = GuideSources.chooseSources(["", 5, invalid, "https://iptv.example/a.xml"], "not a list", "yes", invalid)
+        t.assertEqual(chosen.Count(), 1)
+        t.assertEqual(chosen[0], { url: "https://iptv.example/a.xml", index: 1, fromPlaylist: false, referrerURL: "" })
+        ' usePlaylistGuide that isn't a boolean reads as off.
+        kept = GuideSources.chooseSources(["https://iptv.example/a.xml"], ["https://iptv.example/tvg.xml"], "true", "")
+        t.assertFalse(kept[0].fromPlaylist, "off")
+    end sub
+
+    ' --- cachefs: names: SHA-1 of the URL, never the URL ---
+
+    sub test_cacheIDIsTheURLsSHA1(t as object)
+        ' FIPS 180 test vectors.
+        t.assertEqual(GuideSources.cacheID("abc"), "a9993e364706816aba3e25717850c26c9cd0d89d")
+        t.assertEqual(GuideSources.cacheID(""), "da39a3ee5e6b4b0d3255bfef95601890afd80709")
+        t.assertEqual(Len(GuideSources.cacheID("https://iptv.example/a.xml?token=secret")), 40)
+        t.assertTrue(GuideSources.cacheID("https://iptv.example/a.xml") <> GuideSources.cacheID("https://iptv.example/A.xml"), "case matters")
+    end sub
+
+    sub test_cachePathsCarryOnlyTheID(t as object)
+        url = "https://user:pw@iptv.example:8443/epg/US2.xml.gz?username=u&password=p"
+        paths = GuideSources.cachePaths(url)
+        id = GuideSources.cacheID(url)
+        t.assertEqual(paths, {
+            id: id,
+            file: "cachefs:/guides/" + id + ".xml.gz",
+            time: "cachefs:/guides/" + id + ".time",
+            fail: "cachefs:/guides/" + id + ".fail",
+            part: "cachefs:/guides/" + id + ".part",
+            inflated: "cachefs:/guides/" + id + ".inflated.xml"
+        })
+        for each key in ["file", "time", "fail", "part", "inflated"]
+            name = Mid(paths[key], Len("cachefs:/guides/") + 1)
+            for each piece in ["iptv", "example", "US2", "epg", "user", "token", "password", "?", "/", ":"]
+                t.assertEqual(Instr(1, LCase(name), LCase(piece)), 0, key + " has no " + piece)
+            end for
+        end for
+    end sub
+
+    ' Security M-3 of step 9: a run's .part and .inflated.xml carry its token; the guide's own files don't.
+    sub test_aRunsTokenNamesOnlyItsWorkFiles(t as object)
+        url = "https://iptv.example/a.xml.gz"
+        id = GuideSources.cacheID(url)
+        paths = GuideSources.cachePaths(url, "ab12cd34")
+        t.assertEqual(paths.part, "cachefs:/guides/" + id + ".ab12cd34.part")
+        t.assertEqual(paths.inflated, "cachefs:/guides/" + id + ".ab12cd34.inflated.xml")
+        t.assertEqual(paths.file, "cachefs:/guides/" + id + ".xml.gz")
+        t.assertEqual(paths.time, "cachefs:/guides/" + id + ".time")
+        t.assertEqual(paths.fail, "cachefs:/guides/" + id + ".fail")
+        t.assertTrue(GuideSources.cachePaths(url, "11112222").part <> paths.part, "another run, another name")
+    end sub
+
+    sub test_theFilesExtensionFollowsTheURLsPath(t as object)
+        t.assertTrue(GuideSources.namesGzip("https://iptv.example/a.xml.gz"))
+        t.assertTrue(GuideSources.namesGzip("https://iptv.example/A.XML.GZ?x=1"), "case, query")
+        t.assertTrue(GuideSources.namesGzip("https://iptv.example/a.gz#top"), "fragment")
+        t.assertFalse(GuideSources.namesGzip("https://iptv.example/a.xml"))
+        t.assertFalse(GuideSources.namesGzip("https://iptv.example/xmltv.php?file=a.gz"), "only the path counts")
+        t.assertEqual(Right(GuideSources.cachePaths("https://iptv.example/a.xml").file, 4), ".xml")
+        t.assertEqual(Right(GuideSources.cachePaths("https://iptv.example/xmltv.php?u=1").file, 4), ".xml")
+    end sub
+
+    ' --- When guides are due ---
+
+    sub test_aGuideIsDueAfterTwelveHours(t as object)
+        t.assertEqual(GuideSources.guideMaxAgeSeconds, 43200)
+        t.assertTrue(GuideSources.isGuideDue(invalid, 1000), "never fetched")
+        t.assertFalse(GuideSources.isGuideDue(1000, 1000), "just fetched")
+        t.assertFalse(GuideSources.isGuideDue(1000, 44200), "exactly 12 h isn't stale (MMTVL compares with >)")
+        t.assertTrue(GuideSources.isGuideDue(1000, 44201), "12 h and 1 s")
+        t.assertTrue(GuideSources.isGuideDue(5000, 1000), "a clock that went back")
+    end sub
+
+    sub test_theTimeFileRoundTripsWholeSeconds(t as object)
+        t.assertEqual(GuideSources.timeText(1234567.8), "1234567")
+        t.assertEqual(GuideSources.readTime("1234567"), 1234567)
+        ' QA minor of step 9: wall-clock seconds, 10 digits today.
+        t.assertEqual(GuideSources.readTime("1791158400"), 1791158400)
+        t.assertEqual(GuideSources.readTime("2147483647"), 2147483647, "the largest")
+        t.assertInvalid(GuideSources.readTime("2147483648"), "past what an Integer holds")
+        t.assertInvalid(GuideSources.readTime("12345678901"), "11 digits")
+        t.assertEqual(GuideSources.readTime(" 42" + Chr(10)), 42, "spaces and a newline")
+        t.assertInvalid(GuideSources.readTime(""), "empty")
+        t.assertInvalid(GuideSources.readTime("12a"), "not digits")
+        t.assertInvalid(GuideSources.readTime("1.5e+06"), "not whole seconds")
+        t.assertInvalid(GuideSources.readTime("-5"), "negative")
+        t.assertInvalid(GuideSources.readTime(invalid), "no file")
+        ' A damaged file makes the guide due, even early after a Roku restart.
+        t.assertTrue(GuideSources.isGuideDue(GuideSources.readTime("junk"), 60))
+    end sub
+
+    sub test_sourcesKeyHasIDsNotURLs(t as object)
+        a = { url: "https://iptv.example/a.xml", fromPlaylist: false }
+        b = { url: "https://iptv.example/b.xml", fromPlaylist: false }
+        key = GuideSources.sourcesKey([a, b])
+        t.assertEqual(key, "p" + GuideSources.cacheID(a.url) + ",p" + GuideSources.cacheID(b.url))
+        t.assertEqual(Instr(1, key, "iptv"), 0, "no host")
+        t.assertTrue(key <> GuideSources.sourcesKey([b, a]), "order matters (priority)")
+        t.assertTrue(key <> GuideSources.sourcesKey([{ url: a.url, fromPlaylist: true }, b]), "url-tvg vs pasted")
+        t.assertEqual(GuideSources.sourcesKey([]), "")
+    end sub
+
+    sub test_aRunIsDueWithNoRunYetOrAChangedSet(t as object)
+        sources = [{ url: "https://iptv.example/a.xml", fromPlaylist: false }]
+        key = GuideSources.sourcesKey(sources)
+        fresh = {}
+        fresh[GuideSources.cacheID(sources[0].url)] = 1000
+        t.assertEqual(GuideSources.isRunDue(sources, GuideSourcesTests.newState(invalid, invalid), 1000), { due: true, reason: "first" }, "no run yet")
+        t.assertEqual(GuideSources.isRunDue([], GuideSourcesTests.newState(invalid, invalid), 1000).reason, "first", "no run yet, no guides: a run clears what's there")
+        t.assertEqual(GuideSources.isRunDue(sources, GuideSourcesTests.newState(key, fresh), 2000), { due: false, reason: "" }, "fresh, same set")
+        t.assertEqual(GuideSources.isRunDue(sources, GuideSourcesTests.newState("", fresh), 2000), { due: true, reason: "sources" }, "a guide was added")
+        t.assertEqual(GuideSources.isRunDue([], GuideSourcesTests.newState(key, fresh), 2000).reason, "sources", "the guide was removed")
+        t.assertFalse(GuideSources.isRunDue([], GuideSourcesTests.newState("", {}), 2000).due, "still no guides")
+    end sub
+
+    sub test_aRunIsDueWhenAnyGuideIsDue(t as object)
+        sources = [{ url: "https://iptv.example/a.xml", fromPlaylist: false }, { url: "https://iptv.example/b.xml", fromPlaylist: false }]
+        key = GuideSources.sourcesKey(sources)
+        times = {}
+        times[GuideSources.cacheID(sources[0].url)] = 1000
+        t.assertEqual(GuideSources.isRunDue(sources, GuideSourcesTests.newState(key, times), 2000), { due: true, reason: "guides" }, "b has no time")
+        times[GuideSources.cacheID(sources[1].url)] = 1000
+        t.assertFalse(GuideSources.isRunDue(sources, GuideSourcesTests.newState(key, times), 2000).due, "both fresh")
+        times[GuideSources.cacheID(sources[1].url)] = 0
+        t.assertEqual(GuideSources.isRunDue(sources, GuideSourcesTests.newState(key, times), 43201).reason, "guides", "b is 12 h old")
+        t.assertTrue(GuideSources.isRunDue(sources, GuideSourcesTests.newState(key, "not times"), 2000).due, "no times")
+    end sub
+
+    ' --- A failed guide waits an hour (coordinator, 2026-11-18) ---
+
+    sub test_aFailedGuideWaitsAnHour(t as object)
+        t.assertEqual(GuideSources.retryAfterSeconds, 3600)
+        failed = { at: 1000, kind: "failed" }
+        t.assertFalse(GuideSources.isRetryWaiting(invalid, 5000), "never failed")
+        t.assertTrue(GuideSources.isRetryWaiting(failed, 1000), "just failed")
+        t.assertTrue(GuideSources.isRetryWaiting(failed, 4600), "exactly an hour: still waiting")
+        t.assertFalse(GuideSources.isRetryWaiting(failed, 4601), "an hour and a second")
+        t.assertFalse(GuideSources.isRetryWaiting({ at: 5000, kind: "failed" }, 1000), "a time in the future: try again")
+        t.assertFalse(GuideSources.isRetryWaiting({ at: "1000", kind: "failed" }, 1000), "not a number")
+        t.assertFalse(GuideSources.isRetryWaiting(1000, 1000), "not a failure record")
+    end sub
+
+    ' QA minor of step 9: refused or too large waits 12 h, which an hour wouldn't change.
+    sub test_refusedAndTooLargeGuidesWaitTwelveHours(t as object)
+        t.assertEqual(GuideSources.retryAfter("failed"), 3600)
+        t.assertEqual(GuideSources.retryAfter("refused"), 43200)
+        t.assertEqual(GuideSources.retryAfter("tooLarge"), 43200)
+        for each kind in ["refused", "tooLarge"]
+            t.assertTrue(GuideSources.isRetryWaiting({ at: 1000, kind: kind }, 4601), kind + " still waits after an hour")
+            t.assertTrue(GuideSources.isRetryWaiting({ at: 1000, kind: kind }, 44200), kind + " at 12 h")
+            t.assertFalse(GuideSources.isRetryWaiting({ at: 1000, kind: kind }, 44201), kind + " past 12 h")
+        end for
+    end sub
+
+    sub test_theFailFileIsStrictlyRead(t as object)
+        t.assertEqual(GuideSources.failureText(1791158400.7, "tooLarge"), "1791158400 tooLarge")
+        t.assertEqual(GuideSources.readFailure("1791158400 tooLarge"), { at: 1791158400, kind: "tooLarge" })
+        t.assertEqual(GuideSources.readFailure("42 failed" + Chr(10)), { at: 42, kind: "failed" }, "a newline")
+        t.assertEqual(GuideSources.readFailure("42 refused"), { at: 42, kind: "refused" })
+        t.assertInvalid(GuideSources.readFailure("42"), "no kind")
+        t.assertInvalid(GuideSources.readFailure("42 failed extra"), "three words")
+        t.assertInvalid(GuideSources.readFailure("42  failed"), "two spaces")
+        t.assertInvalid(GuideSources.readFailure("42 toolarge"), "the kind's case")
+        t.assertInvalid(GuideSources.readFailure("42 other"), "an unknown kind")
+        t.assertInvalid(GuideSources.readFailure("x2 failed"), "not seconds")
+        t.assertInvalid(GuideSources.readFailure("2147483648 failed"), "too big")
+        t.assertInvalid(GuideSources.readFailure(invalid), "no file")
+    end sub
+
+    ' QA minor of step 9: times are wall-clock; one in the future is due (a clock that went back, or a file from
+    ' before a restart that set the clock back).
+    sub test_aFutureDownloadTimeIsDue(t as object)
+        t.assertTrue(GuideSources.isGuideDue(1791158400 + 60, 1791158400))
+        t.assertFalse(GuideSources.isGuideDue(1791158400 - 60, 1791158400), "a minute old")
+    end sub
+
+    sub test_needsFetch(t as object)
+        t.assertTrue(GuideSources.needsFetch(invalid, invalid, 1000), "never fetched")
+        t.assertFalse(GuideSources.needsFetch(1000, invalid, 2000), "fresh")
+        t.assertFalse(GuideSources.needsFetch(invalid, { at: 1500, kind: "failed" }, 2000), "failed 500 s ago")
+        t.assertTrue(GuideSources.needsFetch(invalid, { at: 1500, kind: "failed" }, 5101), "failed over an hour ago")
+        t.assertFalse(GuideSources.needsFetch(0, { at: 50000, kind: "failed" }, 50100), "stale file, failed just now: waits")
+        t.assertTrue(GuideSources.needsFetch(0, { at: 1000, kind: "failed" }, 50000), "stale file, failure long ago")
+        t.assertFalse(GuideSources.needsFetch(invalid, { at: 1000, kind: "tooLarge" }, 5000), "too large: waits 12 h")
+    end sub
+
+    sub test_aRunWaitsForAFailedGuidesHour(t as object)
+        sources = [{ url: "https://iptv.example/a.xml", fromPlaylist: false }, { url: "https://iptv.example/b.xml", fromPlaylist: false }]
+        key = GuideSources.sourcesKey(sources)
+        times = {}
+        times[GuideSources.cacheID(sources[0].url)] = 1000
+        failures = {}
+        failures[GuideSources.cacheID(sources[1].url)] = { at: 1000, kind: "failed" }
+        state = GuideSourcesTests.newState(key, times)
+        state.failures = failures
+        t.assertFalse(GuideSources.isRunDue(sources, state, 1900).due, "the 15-minute tick: b waits")
+        t.assertFalse(GuideSources.isRunDue(sources, state, 4600).due, "an hour: still waiting")
+        t.assertEqual(GuideSources.isRunDue(sources, state, 4601), { due: true, reason: "guides" }, "past the hour: b is tried again")
+        state.failures = "not times"
+        t.assertTrue(GuideSources.isRunDue(sources, state, 1900).due, "no failure times: b is due")
+    end sub
+
+    ' --- A changed channel set rematches, at most once an hour (coordinator, 2026-11-18) ---
+
+    sub test_channelsKeyIsAHashOfTheMatchFields(t as object)
+        a = [{ id: "id:a.us", name: "A", tvgID: "a.us", tvgName: "A HD" }, { id: "name:b", name: "B", tvgID: invalid, tvgName: invalid }]
+        key = GuideSources.channelsKey(a)
+        t.assertEqual(Len(key), 40, "a SHA-1")
+        t.assertEqual(GuideSources.channelsKey([{ id: "id:a.us", name: "A", tvgID: "a.us", tvgName: "A HD" }, { id: "name:b", name: "B", tvgID: invalid, tvgName: invalid }]), key, "same channels, same key")
+        renamed = [{ id: "id:a.us", name: "A2", tvgID: "a.us", tvgName: "A HD" }, a[1]]
+        t.assertTrue(GuideSources.channelsKey(renamed) <> key, "a name changed")
+        retagged = [{ id: "id:a.us", name: "A", tvgID: "a2.us", tvgName: "A HD" }, a[1]]
+        t.assertTrue(GuideSources.channelsKey(retagged) <> key, "a tvg-id changed")
+        t.assertTrue(GuideSources.channelsKey([a[0]]) <> key, "a channel left")
+        withURL = GuideSources.matchFields([{ id: "id:a.us", name: "A", tvgID: "a.us", tvgName: "A HD", url: "https://iptv.example/new-token/1.m3u8" }, { id: "name:b", name: "B", url: "http://192.0.2.1/2.ts" }])
+        t.assertEqual(GuideSources.channelsKey(withURL), key, "stream URLs (new tokens) don't count")
+        t.assertEqual(GuideSources.channelsKey([]), GuideSources.cacheID(""), "no channels")
+    end sub
+
+    sub test_aChangedChannelSetRunsAtOnceTheFirstTime(t as object)
+        sources = [{ url: "https://iptv.example/a.xml", fromPlaylist: false }]
+        state = GuideSourcesTests.freshState(sources, 1000)
+        state.lastChannelsKey = "old"
+        state.channelsKey = "old"
+        t.assertFalse(GuideSources.isRunDue(sources, state, 2000).due, "same channels")
+        state.channelsKey = "new"
+        t.assertEqual(GuideSources.isRunDue(sources, state, 2000), { due: true, reason: "channels" }, "the first change since launch")
+    end sub
+
+    sub test_aChangedChannelSetRunsAtMostOnceAnHour(t as object)
+        sources = [{ url: "https://iptv.example/a.xml", fromPlaylist: false }]
+        state = GuideSourcesTests.freshState(sources, 1000)
+        state.lastChannelsKey = "after the last run"
+        state.channelsKey = "changed again"
+        state.channelRunAt = 2000
+        t.assertEqual(GuideSources.isRunDue(sources, state, 2900), { due: false, reason: "waiting" }, "15 min after a channel run")
+        t.assertFalse(GuideSources.isRunDue(sources, state, 5600).due, "exactly an hour")
+        t.assertEqual(GuideSources.isRunDue(sources, state, 5601), { due: true, reason: "channels" }, "past the hour")
+        ' Other reasons don't wait for the hour.
+        state.lastKey = "other sources"
+        t.assertEqual(GuideSources.isRunDue(sources, state, 2900).reason, "sources")
+    end sub
+
+    sub test_aChannelChangeNeedsGuidesAndARun(t as object)
+        state = GuideSourcesTests.freshState([], 1000)
+        state.lastChannelsKey = "old"
+        state.channelsKey = "new"
+        t.assertFalse(GuideSources.isRunDue([], state, 2000).due, "no guides: nothing to rematch")
+        sources = [{ url: "https://iptv.example/a.xml", fromPlaylist: false }]
+        noRunYet = GuideSourcesTests.freshState(sources, 1000)
+        noRunYet.channelsKey = "new"
+        t.assertFalse(GuideSources.isRunDue(sources, noRunYet, 2000).due, "no channels matched yet (lastChannelsKey invalid): nothing to compare")
+    end sub
+
+    ' --- A run that failed (crash or cancel) holds back "first" and "channels" for an hour ---
+
+    sub test_aFailedFirstRunWaitsAnHour(t as object)
+        sources = [{ url: "https://iptv.example/a.xml", fromPlaylist: false }]
+        state = GuideSourcesTests.newState(invalid, invalid)
+        state.failedRunAt = 1000
+        t.assertEqual(GuideSources.isRunDue(sources, state, 1900), { due: false, reason: "waiting" }, "the 15-minute tick after a failed run")
+        t.assertFalse(GuideSources.isRunDue(sources, state, 4600).due, "exactly an hour")
+        t.assertEqual(GuideSources.isRunDue(sources, state, 4601), { due: true, reason: "first" }, "past the hour")
+        state.failedRunAt = 9000
+        t.assertEqual(GuideSources.isRunDue(sources, state, 1900).reason, "first", "a failure time in the future doesn't hold it back")
+        state.failedRunAt = invalid
+        t.assertEqual(GuideSources.isRunDue(sources, state, 1900).reason, "first", "no failed run")
+    end sub
+
+    sub test_aFailedRunHoldsBackAChannelRunButNotOtherReasons(t as object)
+        sources = [{ url: "https://iptv.example/a.xml", fromPlaylist: false }]
+        state = GuideSourcesTests.freshState(sources, 1000)
+        state.lastChannelsKey = "old"
+        state.channelsKey = "new"
+        state.failedRunAt = 1500
+        t.assertEqual(GuideSources.isRunDue(sources, state, 2000), { due: false, reason: "waiting" }, "channels wait")
+        t.assertEqual(GuideSources.isRunDue(sources, state, 5101), { due: true, reason: "channels" }, "after the hour")
+        state.lastKey = "other sources"
+        t.assertEqual(GuideSources.isRunDue(sources, state, 2000).reason, "sources", "sources don't wait")
+        due = GuideSourcesTests.newState(GuideSources.sourcesKey(sources), {})
+        due.failedRunAt = 1500
+        t.assertEqual(GuideSources.isRunDue(sources, due, 2000).reason, "guides", "a due guide doesn't wait")
+    end sub
+
+    ' --- The task's channels field ---
+
+    sub test_matchFieldsKeepNoStreamURL(t as object)
+        channels = [
+            { id: "id:a.us", name: "A", tvgID: "a.us", tvgName: "A HD", url: "https://iptv.example/live/u/p/1.m3u8", group: "News", logo: "https://iptv.example/a.png", number: 1 },
+            { id: "name:b", name: "B", tvgID: invalid, tvgName: invalid, url: "http://192.0.2.1/2.ts" },
+            "not a channel"
+        ]
+        fields = GuideSources.matchFields(channels)
+        t.assertEqual(fields.Count(), 2)
+        t.assertEqual(fields[0], { id: "id:a.us", name: "A", tvgID: "a.us", tvgName: "A HD" })
+        t.assertEqual(fields[1].id, "name:b")
+        t.assertFalse(fields[1].DoesExist("url"), "no url")
+        t.assertEqual(FormatJson(fields).Instr("://"), -1, "nothing URL-like")
+        t.assertEqual(GuideSources.matchFields(invalid), [])
+    end sub
+
+    ' The fields are all EPGMatcher needs: matching them gives what matching the full channels gives.
+    sub test_matchFieldsMatchLikeTheFullChannels(t as object)
+        channels = M3U.makeChannels(M3U.parse(M3U.readFile("pkg:/fixtures/playlist.m3u")).entries)
+        pass = XMLTVScan.newChannelPass()
+        XMLTVScan.scanFile("pkg:/fixtures/guide-a.xml", pass)
+        list = XMLTVScan.channelList(pass)
+        overrides = SettingsStore.overrideMap(ParseJson(ReadAsciiFile("pkg:/fixtures/overrides.json")))
+        full = EPGMatcher.match(channels, [{ sourceID: "0", channels: list }], overrides)
+        slim = EPGMatcher.match(GuideSources.matchFields(channels), [{ sourceID: "0", channels: list }], overrides)
+        t.assertTrue(full.Count() > 0, "some matches")
+        t.assertEqual(slim, full)
+    end sub
+
+    ' --- Helpers ---
+
+    function newState(lastKey as dynamic, fetchedAt as dynamic) as object
+        return { lastKey: lastKey, fetchedAt: fetchedAt, failures: invalid, channelsKey: invalid, lastChannelsKey: invalid, channelRunAt: invalid, failedRunAt: invalid }
+    end function
+
+    ' The state after a run that read every source's file fresh at time.
+    function freshState(sources as object, time as integer) as object
+        times = {}
+        for each source in sources
+            times[GuideSources.cacheID(source.url)] = time
+        end for
+        return GuideSourcesTests.newState(GuideSources.sourcesKey(sources), times)
+    end function
+
+end namespace

@@ -193,6 +193,111 @@ namespace XMLTVScanTests
     ' --- Helpers ---
 
     ' Feeds text in chunks of size characters (0: all at once), then finishes the pass.
+    ' --- Caps (QA-M2 / security M-2 of step 9) ---
+
+    sub test_textIsClippedToMMTVLsReadingLengths(t as object)
+        long = String(500, "t")
+        desc = String(1200, "d")
+        xml = "<tv><programme start=" + XMLTVScanTests.q("20261118100000 +0000") + " stop=" + XMLTVScanTests.q("20261118110000 +0000") + " channel=" + XMLTVScanTests.q("c") + ">"
+        xml += "<title>" + long + "</title><sub-title>" + long + "</sub-title><desc>" + desc + "</desc><category>" + long + "</category></programme></tv>"
+        pass = XMLTVScanTests.scanText(XMLTVScan.newProgrammePass({ "c": true }, XMLTVScanTests.at("20261118000000"), XMLTVScanTests.at("20261119000000")), xml, 0)
+        item = pass.programmes["c"][0]
+        t.assertEqual(Len(item.title), 400, "title")
+        t.assertEqual(Len(item.subtitle), 400, "sub-title")
+        t.assertEqual(Len(item.category), 400, "category")
+        t.assertEqual(Len(item.summary), 1000, "desc")
+        t.assertTrue(pass.retainedBytes >= 2200, "the estimate counts the text")
+    end sub
+
+    sub test_displayNamesAreClippedTo200(t as object)
+        xml = "<tv><channel id=" + XMLTVScanTests.q("x") + "><display-name>" + String(250, "n") + "</display-name></channel></tv>"
+        pass = XMLTVScanTests.scanText(XMLTVScan.newChannelPass(), xml, 0)
+        t.assertEqual(Len(pass.channels["x"][0]), 200)
+    end sub
+
+    ' UTF-16 units, as Swift counts: a character above U+FFFF is 2, and is never cut in half.
+    sub test_clipCountsUTF16UnitsAndNeverSplitsACharacter(t as object)
+        finder = Unicode.newNonASCIIFinder()
+        emoji = Chr(128512)
+        t.assertEqual(XMLTVScan.clip("abc", 2, finder), "ab")
+        t.assertEqual(XMLTVScan.clip("abc", 3, finder), "abc")
+        t.assertEqual(XMLTVScan.clip(emoji + emoji + "a", 4, finder), emoji + emoji, "two emoji are 4 units")
+        t.assertEqual(XMLTVScan.clip(emoji + emoji + "a", 3, finder), emoji, "not half of the second")
+        t.assertEqual(XMLTVScan.clip("a" + emoji, 2, finder), "a", "1 + 2 units")
+        t.assertEqual(XMLTVScan.clip(Chr(233) + Chr(233), 2, finder), Chr(233) + Chr(233), "BMP characters are 1 unit")
+    end sub
+
+    ' clip's per-character decision, fed code points: a Roku's UTF-8 Mid gives a code point above U+FFFF (2 units,
+    ' 1 character), an interpreter's UTF-16 Mid a high surrogate (2 units over 2), anything else 1 unit.
+    sub test_charWidthForEachStringModel(t as object)
+        t.assertEqual(XMLTVScan.charWidth(128512), { units: 2, stride: 1 }, "U+1F600 as a Roku gives it")
+        t.assertEqual(XMLTVScan.charWidth(65536), { units: 2, stride: 1 }, "U+10000")
+        t.assertEqual(XMLTVScan.charWidth(1114111), { units: 2, stride: 1 }, "U+10FFFF")
+        t.assertEqual(XMLTVScan.charWidth(65535), { units: 1, stride: 1 }, "U+FFFF")
+        t.assertEqual(XMLTVScan.charWidth(55357), { units: 2, stride: 2 }, "a high surrogate (UTF-16 strings)")
+        t.assertEqual(XMLTVScan.charWidth(56320), { units: 1, stride: 1 }, "a low surrogate alone")
+        t.assertEqual(XMLTVScan.charWidth(233), { units: 1, stride: 1 }, "é")
+        t.assertEqual(XMLTVScan.charWidth(65), { units: 1, stride: 1 }, "A")
+    end sub
+
+    sub test_atMost300ProgrammesPerChannel(t as object)
+        parts = ["<tv>"]
+        for i = 0 to 309
+            start = XMLTVScanTests.stamp(i * 300)
+            parts.Push("<programme start=" + XMLTVScanTests.q(start) + " stop=" + XMLTVScanTests.q(XMLTVScanTests.stamp(i * 300 + 300)) + " channel=" + XMLTVScanTests.q("c") + "><title>P" + i.ToStr() + "</title></programme>")
+        end for
+        parts.Push("</tv>")
+        pass = XMLTVScanTests.scanText(XMLTVScan.newProgrammePass({ "c": true }, XMLTVScanTests.at("20261118000000"), XMLTVScanTests.at("20261120000000")), parts.Join(""), 0)
+        t.assertEqual(pass.programmes["c"].Count(), 300)
+        t.assertEqual(pass.programmes["c"][299].title, "P299", "the first 300, in file order")
+        t.assertTrue(pass.shortened, "shortened")
+        t.assertEqual(XMLTVScan.maximumPerChannel, 300)
+    end sub
+
+    sub test_theTotalCapStopsAddingAndSaysShortened(t as object)
+        parts = ["<tv>"]
+        for i = 0 to 9
+            for each id in ["a", "b"]
+                parts.Push("<programme start=" + XMLTVScanTests.q(XMLTVScanTests.stamp(i * 600)) + " stop=" + XMLTVScanTests.q(XMLTVScanTests.stamp(i * 600 + 600)) + " channel=" + XMLTVScanTests.q(id) + "><title>T</title></programme>")
+            end for
+        end for
+        parts.Push("</tv>")
+        pass = XMLTVScanTests.scanText(XMLTVScan.newProgrammePass({ "a": true, "b": true }, XMLTVScanTests.at("20261118000000"), XMLTVScanTests.at("20261120000000"), 7), parts.Join(""), 0)
+        t.assertEqual(pass.kept, 7)
+        t.assertTrue(pass.shortened, "shortened")
+        whole = XMLTVScanTests.scanText(XMLTVScan.newProgrammePass({ "a": true, "b": true }, XMLTVScanTests.at("20261118000000"), XMLTVScanTests.at("20261120000000")), parts.Join(""), 0)
+        t.assertEqual(whole.kept, 20, "no cap")
+        t.assertFalse(whole.shortened, "not shortened")
+    end sub
+
+    ' A programme starting at or after the window's end is skipped before its text is read (and doesn't count).
+    sub test_programmesAfterTheWindowDontCount(t as object)
+        parts = ["<tv>"]
+        for i = 0 to 9
+            parts.Push("<programme start=" + XMLTVScanTests.q(XMLTVScanTests.stamp(86400 + i * 600)) + " channel=" + XMLTVScanTests.q("a") + "><title>Later</title></programme>")
+        end for
+        parts.Push("</tv>")
+        pass = XMLTVScanTests.scanText(XMLTVScan.newProgrammePass({ "a": true }, XMLTVScanTests.at("20261118000000"), XMLTVScanTests.at("20261118120000"), 3), parts.Join(""), 0)
+        t.assertEqual(pass.kept, 0)
+        t.assertFalse(pass.shortened, "nothing counted")
+        t.assertEqual(pass.retainedBytes, 0)
+    end sub
+
+    ' An XMLTV time offset seconds from 2026-11-18 00:00 UTC.
+    function stamp(offset as integer) as string
+        date = CreateObject("roDateTime")
+        date.FromSeconds(XMLTVScanTests.at("20261118000000") + offset)
+        return XMLTVScanTests.pad(date.GetYear(), 4) + XMLTVScanTests.pad(date.GetMonth(), 2) + XMLTVScanTests.pad(date.GetDayOfMonth(), 2) + XMLTVScanTests.pad(date.GetHours(), 2) + XMLTVScanTests.pad(date.GetMinutes(), 2) + XMLTVScanTests.pad(date.GetSeconds(), 2) + " +0000"
+    end function
+
+    function pad(value as integer, width as integer) as string
+        text = value.ToStr()
+        while Len(text) < width
+            text = "0" + text
+        end while
+        return text
+    end function
+
     function scanText(pass as object, text as string, size as integer) as object
         if size = 0
             XMLTVScan.feed(pass, text)

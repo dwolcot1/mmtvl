@@ -1,0 +1,423 @@
+' GuideFetch (M12 step 9): the address check's chain, the memory guard from fake memory numbers, the observer with
+' a fake clock, and the shapes handed to the scene (no URLs). Off-device.
+namespace GuideFetchTests
+
+    ' --- publicChain: which downloads must reach a public address ---
+
+    sub test_onlyURLTVGGuidesFromAPublicPlaylistArePublicChains(t as object)
+        t.assertFalse(GuideFetch.publicChain({ url: "https://iptv.example/a.xml", fromPlaylist: false, referrerURL: "" }), "pasted")
+        t.assertTrue(GuideFetch.publicChain({ url: "https://iptv.example/a.xml", fromPlaylist: true, referrerURL: "https://iptv.example/list.m3u" }), "public playlist")
+        t.assertFalse(GuideFetch.publicChain({ url: "http://192.168.1.5/a.xml", fromPlaylist: true, referrerURL: "http://192.168.1.5:34400/list.m3u" }), "LAN playlist (Threadfin)")
+        t.assertFalse(GuideFetch.publicChain({ url: "http://tuner.local/a.xml", fromPlaylist: true, referrerURL: "http://proxy.local/list.m3u" }), "LAN name")
+        t.assertTrue(GuideFetch.publicChain({ url: "https://iptv.example/a.xml", fromPlaylist: true, referrerURL: invalid }), "no referrer: public, the strict side")
+    end sub
+
+    ' The address check as the task makes it (URLPolicy.allowsPeer with publicChain).
+    sub test_thePeerCheckRefusesInternalAddressesForPublicChains(t as object)
+        own = ["192.168.1.20"]
+        publicGuide = { url: "https://iptv.example/a.xml", fromPlaylist: true, referrerURL: "https://iptv.example/list.m3u" }
+        pasted = { url: "https://iptv.example/a.xml", fromPlaylist: false, referrerURL: "" }
+        t.assertTrue(URLPolicy.allowsPeer("203.0.113.7", GuideFetch.publicChain(publicGuide), own).ok, "public peer")
+        t.assertFalse(URLPolicy.allowsPeer("192.168.1.30", GuideFetch.publicChain(publicGuide), own).ok, "LAN peer of a public chain")
+        t.assertFalse(URLPolicy.allowsPeer("127.0.0.1", GuideFetch.publicChain(publicGuide), own).ok, "loopback")
+        t.assertTrue(URLPolicy.allowsPeer("192.168.1.30", GuideFetch.publicChain(pasted), own).ok, "LAN peer of a pasted guide")
+        t.assertFalse(URLPolicy.allowsPeer("127.0.0.1", GuideFetch.publicChain(pasted), own).ok, "never loopback")
+        t.assertFalse(URLPolicy.allowsPeer("192.168.1.20", GuideFetch.publicChain(pasted), own).ok, "never the Roku itself")
+    end sub
+
+    ' --- memoryCheck: stop under 15 % of the limit, whatever the unit ---
+
+    sub test_unknownMemoryLeavesTheGuardInactive(t as object)
+        inactive = { known: false, stop: false, availableMB: invalid }
+        t.assertEqual(GuideFetch.memoryCheck(100, invalid), inactive, "no limit")
+        t.assertEqual(GuideFetch.memoryCheck(100, 0), inactive, "zero limit")
+        t.assertEqual(GuideFetch.memoryCheck(invalid, 512), inactive, "no reading")
+        t.assertEqual(GuideFetch.memoryCheck("100", 512), inactive, "not a number")
+        t.assertEqual(GuideFetch.memoryCheck(-1, 512), inactive, "negative")
+        t.assertEqual(GuideFetch.memoryCheck(1000000000000&, 512), inactive, "more than the limit even in bytes")
+    end sub
+
+    sub test_megabytes(t as object)
+        check = GuideFetch.memoryCheck(100, 512)
+        t.assertTrue(check.known, "known")
+        t.assertFalse(check.stop, "100 of 512 MB is 19.5 %")
+        t.assertEqual(check.availableMB, 100)
+        t.assertTrue(GuideFetch.memoryCheck(76, 512).stop, "76 of 512 MB is 14.8 %")
+        t.assertFalse(GuideFetch.memoryCheck(77, 512).stop, "77 of 512 MB is 15.04 %")
+    end sub
+
+    sub test_kilobytes(t as object)
+        ' 30 MB left of 256 (11.7 %) in KB: Capabilities' floors would read 30720 as MB and never stop.
+        check = GuideFetch.memoryCheck(30720, 256)
+        t.assertTrue(check.known, "known")
+        t.assertEqual(check.availableMB, 30)
+        t.assertTrue(check.stop, "stops")
+        t.assertFalse(GuideFetch.memoryCheck(204800, 256).stop, "200 MB left in KB")
+        t.assertEqual(GuideFetch.memoryCheck(204800, 256).availableMB, 200)
+    end sub
+
+    sub test_bytes(t as object)
+        check = GuideFetch.memoryCheck(31457280, 256)
+        t.assertEqual(check.availableMB, 30)
+        t.assertTrue(check.stop, "30 MB left in bytes")
+        t.assertFalse(GuideFetch.memoryCheck(209715200, 256).stop, "200 MB left in bytes")
+        t.assertFalse(GuideFetch.memoryCheck(1073741824&, 2048).stop, "a LongInteger: 1 GB of 2 GB")
+    end sub
+
+    sub test_theBoundaryIsFifteenPercent(t as object)
+        t.assertFalse(GuideFetch.memoryCheck(15, 100).stop, "exactly 15 % left goes on")
+        t.assertTrue(GuideFetch.memoryCheck(14.9, 100).stop, "under 15 %")
+        t.assertTrue(GuideFetch.memoryCheck(0, 100).stop, "nothing left")
+        t.assertEqual(GuideFetch.memoryGuardPercent, 15)
+    end sub
+
+    ' --- The observer, with a fake clock and fake memory ---
+
+    sub test_observerStopsPastTheSizeCap(t as object)
+        observer = GuideFetchTests.fakeObserver({ maxBytes: 1000 }, 100)
+        t.assertTrue(observer.tick(1000), "at the cap")
+        t.assertFalse(observer.tick(1001), "past it")
+        t.assertEqual(observer.reason, "size")
+    end sub
+
+    sub test_observerStopsAfterTheTimeLimit(t as object)
+        observer = GuideFetchTests.fakeObserver({ timeLimitMs: 5000 }, 100)
+        observer.fakeMs = 5000
+        t.assertTrue(observer.tick(1), "at the limit")
+        observer.fakeMs = 5001
+        t.assertFalse(observer.tick(2), "past it")
+        t.assertEqual(observer.reason, "time")
+        t.assertFalse(observer.tick(0), "and every guide after it")
+        t.assertEqual(observer.stops, ["time", "time"])
+    end sub
+
+    sub test_observerStopsOnLowMemory(t as object)
+        observer = GuideFetchTests.fakeObserver({ limitMB: 512 }, 200)
+        t.assertTrue(observer.tick(1), "200 MB left")
+        observer.fakeMs = 300
+        observer.fakeMemory = 50
+        t.assertFalse(observer.tick(2), "50 MB left")
+        t.assertEqual(observer.reason, "memory")
+        t.assertEqual(observer.lowestMB, 50)
+        t.assertFalse(observer.guardInactive, "the guard was active")
+    end sub
+
+    sub test_observerSamplesMemoryEveryQuarterSecond(t as object)
+        observer = GuideFetchTests.fakeObserver({ limitMB: 512 }, 200)
+        observer.tick(1)
+        observer.fakeMs = 100
+        observer.fakeMemory = 10
+        t.assertTrue(observer.tick(2), "not sampled 100 ms later")
+        t.assertEqual(observer.memoryCalls, 1)
+        observer.fakeMs = 250
+        t.assertFalse(observer.tick(3), "sampled at 250 ms")
+        t.assertEqual(observer.memoryCalls, 2)
+    end sub
+
+    sub test_observerWithUnknownMemoryGoesOnAndSaysSo(t as object)
+        observer = GuideFetchTests.fakeObserver({ limitMB: 512 }, invalid)
+        t.assertTrue(observer.tick(1), "goes on")
+        t.assertTrue(observer.guardInactive, "inactive")
+        t.assertInvalid(observer.lowestMB)
+        noLimit = GuideFetchTests.fakeObserver({ limitMB: invalid }, 10)
+        t.assertTrue(noLimit.tick(1), "no limit: goes on")
+        t.assertTrue(noLimit.guardInactive, "inactive without a limit")
+    end sub
+
+    ' The real observer in the real pipeline: the size cap makes a guide "Too large for this Roku".
+    sub test_theObserverStopsAGuideInThePipeline(t as object)
+        observer = GuideFetchTests.fakeObserver({ maxBytes: 600 }, 100)
+        request = GuideFetchTests.fixtureRequest()
+        request.observer = observer
+        request.chunkBytes = 512
+        result = GuidePipeline.process(request)
+        t.assertTrue(result.stopped, "stopped")
+        t.assertEqual(result.guides[0].status, "Too large for this Roku")
+        t.assertEqual(observer.reason, "size")
+    end sub
+
+    ' --- Settings → Guides rows ---
+
+    sub test_statusRowsCarryTheHostOnly(t as object)
+        request = GuideFetchTests.fixtureRequest()
+        result = GuidePipeline.process(request)
+        sources = GuideFetchTests.fixtureSources()
+        rows = GuideFetch.statusRows(sources, [{ state: "downloaded" }, { state: "cached" }], result)
+        t.assertEqual(rows[0], { index: 1, host: "iptv.example", status: "OK, 17 channels matched", problem: "", matched: 17, fromPlaylist: false, stale: false })
+        t.assertEqual(rows[1], { index: 2, host: "guides.iptv.example", status: "OK, 7 channels matched", problem: "", matched: 7, fromPlaylist: true, stale: false })
+        text = FormatJson(rows)
+        for each piece in ["://", "token", "guide-a", "user"]
+            t.assertEqual(text.Instr(piece), -1, "no " + piece)
+        end for
+    end sub
+
+    sub test_statusRowsForFailedDownloads(t as object)
+        request = GuideFetchTests.fixtureRequest()
+        request.guides[1].path = ""
+        result = GuidePipeline.process(request)
+        sources = GuideFetchTests.fixtureSources()
+        rows = GuideFetch.statusRows(sources, [{ state: "stale" }, { state: "tooLarge" }], result)
+        t.assertEqual(rows[0].status, "Failed: iptv.example", "the last file was read")
+        t.assertEqual(rows[0].problem, "failed")
+        t.assertTrue(rows[0].stale, "stale")
+        t.assertTrue(rows[0].matched > 0, "its channels still have a guide")
+        t.assertEqual(rows[1].status, "Too large for this Roku")
+        t.assertEqual(rows[1].problem, "tooLarge")
+        t.assertEqual(rows[1].matched, 0)
+        failed = GuideFetch.statusRows(sources, [{ state: "downloaded" }, { state: "failed" }], result)
+        t.assertEqual(failed[1].status, "Failed: guides.iptv.example", "the pipeline's")
+        t.assertFalse(failed[1].stale, "not stale")
+    end sub
+
+    sub test_aStaleFileTheRokuCantReadKeepsItsOwnStatus(t as object)
+        request = GuideFetchTests.fixtureRequest()
+        request.guides[0].path = ""
+        result = GuidePipeline.process(request)
+        rows = GuideFetch.statusRows(GuideFetchTests.fixtureSources(), [{ state: "stale" }, { state: "downloaded" }], result)
+        t.assertEqual(rows[0].status, "Failed: iptv.example")
+        t.assertFalse(rows[0].stale, "nothing was read")
+    end sub
+
+    sub test_logLine(t as object)
+        t.assertEqual(GuideFetch.logLine({ index: 2, host: "iptv.example", status: "OK, 7 channels matched" }), "Guide 2 from iptv.example: OK, 7 channels matched")
+    end sub
+
+    ' --- The guide screen's data ---
+
+    sub test_guideDataReadsLikeThePipelinesResult(t as object)
+        result = GuidePipeline.process(GuideFetchTests.fixtureRequest())
+        data = GuideFetch.guideData(result, 100, 200)
+        t.assertEqual(data.windowStart, 100)
+        t.assertEqual(data.windowEnd, 200)
+        t.assertEqual(data.guides.Count(), 2)
+        t.assertEqual(data.matches, result.matches)
+        count = 0
+        for i = 0 to 1
+            t.assertEqual(data.guides[i].channels, result.guides[i].channels, "channels " + i.ToStr())
+            for each epgID in result.guides[i].programmes
+                count += result.guides[i].programmes[epgID].Count()
+            end for
+        end for
+        t.assertTrue(count > 0, "programmes")
+        t.assertEqual(data.programmeCount, count)
+        for each channelID in result.matches
+            t.assertEqual(GuidePipeline.programmesFor(data, channelID), GuidePipeline.programmesFor(result, channelID), channelID)
+        end for
+        t.assertEqual(FormatJson(data).Instr("://"), -1, "no URL")
+    end sub
+
+    ' --- Pruning cachefs:/guides ---
+
+    sub test_pruneKeepsOnlyTheCurrentGuidesFiles(t as object)
+        sources = GuideFetchTests.fixtureSources()
+        a = GuideSources.cachePaths(sources[0].url)
+        b = GuideSources.cachePaths(sources[1].url)
+        names = [GuideFetch.fileName(a.file), GuideFetch.fileName(a.time), GuideFetch.fileName(a.fail), GuideFetch.fileName(a.part), GuideFetch.fileName(a.inflated), GuideFetch.fileName(b.file), GuideFetch.fileName(b.time), GuideFetch.fileName(b.fail), "0123456789abcdef0123456789abcdef01234567.xml", "0123456789abcdef0123456789abcdef01234567.time"]
+        t.assertEqual(GuideFetch.prunable(names, sources), [GuideFetch.fileName(a.part), GuideFetch.fileName(a.inflated), "0123456789abcdef0123456789abcdef01234567.xml", "0123456789abcdef0123456789abcdef01234567.time"])
+        t.assertEqual(GuideFetch.prunable(names, []).Count(), names.Count(), "no guides: everything goes")
+        t.assertEqual(GuideFetch.prunable(invalid, sources), [], "no listing")
+    end sub
+
+    ' Security M-3 / L-4 of step 9: at a run's start, dead runs' token files go too.
+    sub test_pruneDeletesDeadRunsWorkFiles(t as object)
+        sources = GuideFetchTests.fixtureSources()
+        a = GuideSources.cachePaths(sources[0].url, "deadbeef")
+        b = GuideSources.cachePaths(sources[1].url, "0badf00d")
+        names = [GuideFetch.fileName(a.file), GuideFetch.fileName(a.part), GuideFetch.fileName(a.inflated), GuideFetch.fileName(b.time), GuideFetch.fileName(b.inflated)]
+        t.assertEqual(GuideFetch.prunable(names, sources), [GuideFetch.fileName(a.part), GuideFetch.fileName(a.inflated), GuideFetch.fileName(b.inflated)])
+    end sub
+
+    ' --- The memory guard counts what's held (QA-M2 / security M-2) ---
+
+    sub test_memoryGuardStopsWhenTwiceTheHeldDataWontFit(t as object)
+        megabyte = 1048576
+        t.assertFalse(GuideFetch.memoryCheck(100, 512, 40 * megabyte).stop, "80 MB of copies fit in 100 MB")
+        t.assertTrue(GuideFetch.memoryCheck(100, 512, 60 * megabyte).stop, "120 MB of copies don't")
+        t.assertFalse(GuideFetch.memoryCheck(100, 512, 50 * megabyte).stop, "exactly 100 MB")
+        t.assertTrue(GuideFetch.memoryCheck(102400, 512, 60 * megabyte).stop, "in KB too")
+        t.assertFalse(GuideFetch.memoryCheck(100, 512).stop, "nothing held")
+        t.assertEqual(GuideFetch.memoryCheck(invalid, 512, 999 * megabyte), { known: false, stop: false, availableMB: invalid }, "unknown memory: inactive")
+    end sub
+
+    sub test_observerUsesTheHeldBytesThePipelineSets(t as object)
+        observer = GuideFetchTests.fakeObserver({ limitMB: 512 }, 100)
+        observer.retainedBytes = 40 * 1048576
+        t.assertTrue(observer.tick(1), "fits")
+        observer.fakeMs = 300
+        observer.retainedBytes = 60 * 1048576
+        t.assertFalse(observer.tick(2), "doesn't")
+        t.assertEqual(observer.reason, "memory")
+    end sub
+
+    ' The pipeline sets retainedBytes before each tick: 0 before any programme, more once some are held.
+    sub test_thePipelineTellsTheObserverWhatItHolds(t as object)
+        observer = {
+            seen: [],
+            tick: function(_bytes as dynamic) as boolean
+                m.seen.Push(m.retainedBytes)
+                return true
+            end function
+        }
+        request = GuideFetchTests.fixtureRequest()
+        request.observer = observer
+        request.chunkBytes = 256
+        GuidePipeline.process(request)
+        t.assertEqual(observer.seen[0], 0, "nothing held at first")
+        t.assertTrue(observer.seen[observer.seen.Count() - 1] > 0, "programmes held by the end")
+    end sub
+
+    ' --- Cancel (security M-3) ---
+
+    sub test_observerStopsWhenCancelled(t as object)
+        observer = GuideFetchTests.fakeObserver({}, 100)
+        observer.cancelled = false
+        observer.isCancelled = function() as boolean
+            return m.cancelled
+        end function
+        t.assertTrue(observer.tick(1), "running")
+        observer.cancelled = true
+        t.assertFalse(observer.tick(2), "cancelled")
+        t.assertEqual(observer.reason, "cancel")
+        t.assertFalse(GuideFetch.newObserver({}).isCancelled(), "never cancelled by default")
+    end sub
+
+    ' --- Caps in the pipeline (QA-M2 / security M-2) ---
+
+    sub test_aGuidePastTheProgrammeCapIsShortened(t as object)
+        full = GuidePipeline.process(GuideFetchTests.fixtureRequest())
+        total = 0
+        for each epgID in full.guides[0].programmes
+            total += full.guides[0].programmes[epgID].Count()
+        end for
+        t.assertTrue(total > 3, "guide A has programmes")
+        request = GuideFetchTests.fixtureRequest()
+        request.maxProgrammes = 3
+        result = GuidePipeline.process(request)
+        t.assertEqual(result.guides[0].status, "OK, 17 channels matched (guide shortened)")
+        t.assertTrue(result.guides[0].ok, "still OK")
+        t.assertTrue(result.guides[0].shortened, "shortened")
+        t.assertEqual(result.guides[1].status, "OK, 7 channels matched (guide shortened)", "nothing left for guide B")
+        kept = 0
+        for each entry in result.guides
+            for each epgID in entry.programmes
+                kept += entry.programmes[epgID].Count()
+            end for
+        end for
+        t.assertEqual(kept, 3, "3 in all")
+        t.assertEqual(full.guides[0].status, "OK, 17 channels matched", "no cap: as the golden")
+    end sub
+
+    ' Security L-4: the run's cachefs: budget for inflating; past it the guide is too large.
+    sub test_aGzipGuidePastTheInflateBudgetIsTooLarge(t as object)
+        GuideGoldenTests.writeGzip("pkg:/fixtures/guide-a.xml", "tmp:/budget-a.xml.gz")
+        request = GuideFetchTests.fixtureRequest()
+        request.guides[0] = { url: request.guides[0].url, path: "tmp:/budget-a.xml.gz", xmlPath: "tmp:/budget-a.inflated.xml" }
+        request.canInflate = true
+        request.maxInflatedBytes = 1000
+        result = GuidePipeline.process(request)
+        t.assertEqual(result.guides[0].status, "Too large for this Roku")
+        t.assertFalse(result.guides[0].stopped, "the guide's size, not a stop of the run")
+        t.assertFalse(result.stopped, "the run wasn't stopped")
+        t.assertEqual(result.guides[1].status, "OK, " + GuideFetchTests.guideBAloneMatches().ToStr() + " channels matched", "guide B still read")
+        request.maxInflatedBytes = invalid
+        t.assertTrue(GuidePipeline.process(request).guides[0].ok, "no budget: inflated")
+    end sub
+
+    sub test_downloadLimitIsTheCapOrWhatTheBudgetLeaves(t as object)
+        t.assertEqual(GuideFetch.runBudgetBytes, 314572800)
+        t.assertEqual(GuideFetch.downloadLimit(0), GuideFetch.maximumBytes)
+        t.assertEqual(GuideFetch.downloadLimit(250 * 1048576), 50 * 1048576)
+        t.assertEqual(GuideFetch.downloadLimit(300 * 1048576), 0)
+        t.assertEqual(GuideFetch.downloadLimit(400 * 1048576), 0)
+    end sub
+
+    ' --- Unreadable files (QA minor), by the status rows ---
+
+    sub test_aNewFileThatIsntAGuideFailsAndWaits(t as object)
+        GuideGoldenTests.writeText("this is not XMLTV", "tmp:/not-a-guide.xml")
+        GuideGoldenTests.writeText("<?xml version=" + Chr(34) + "1.0" + Chr(34) + "?><tv></tv>", "tmp:/empty-guide.xml")
+        request = GuideFetchTests.fixtureRequest()
+        request.guides = [{ url: request.guides[0].url, path: "tmp:/not-a-guide.xml" }, { url: request.guides[1].url, path: "tmp:/empty-guide.xml" }]
+        result = GuidePipeline.process(request)
+        outcomes = [{ state: "downloaded" }, { state: "cached" }]
+        t.assertEqual(GuideFetch.markUnreadable(outcomes, result), [0, 1])
+        t.assertEqual(outcomes[1].state, "unreadable")
+        rows = GuideFetch.statusRows(GuideFetchTests.fixtureSources(), outcomes, result)
+        t.assertEqual(rows[0].status, "Failed: iptv.example")
+        t.assertEqual(rows[1].status, "Failed: guides.iptv.example", "no channels: not a guide either")
+        t.assertEqual(rows[1].problem, "failed")
+        t.assertEqual(rows[1].matched, 0)
+    end sub
+
+    sub test_onlyNewOrFreshFilesCountAsUnreadable(t as object)
+        GuideGoldenTests.writeText("this is not XMLTV", "tmp:/not-a-guide.xml")
+        GuideGoldenTests.writeGzip("pkg:/fixtures/guide-a.xml", "tmp:/unread-a.xml.gz")
+        request = GuideFetchTests.fixtureRequest()
+        request.guides = [{ url: request.guides[0].url, path: "tmp:/not-a-guide.xml" }, { url: request.guides[1].url, path: "tmp:/unread-a.xml.gz" }]
+        result = GuidePipeline.process(request)
+        t.assertEqual(GuideFetch.markUnreadable([{ state: "stale" }, { state: "downloaded" }], result), [], "a stale file already waits; a .gz this Roku can't read isn't the file's fault")
+        t.assertEqual(result.guides[1].problem, "gzip")
+        good = GuidePipeline.process(GuideFetchTests.fixtureRequest())
+        t.assertEqual(GuideFetch.markUnreadable([{ state: "downloaded" }, { state: "cached" }], good), [], "readable guides")
+    end sub
+
+    ' Security L-1: a "URL" with no scheme shows no host: the row says "Failed".
+    sub test_aSchemelessSourceShowsNoHost(t as object)
+        request = GuideFetchTests.fixtureRequest()
+        request.guides[0] = { url: "abc123secret", path: "" }
+        result = GuidePipeline.process(request)
+        sources = [{ url: "abc123secret", index: 1, fromPlaylist: false, referrerURL: "" }, GuideFetchTests.fixtureSources()[1]]
+        rows = GuideFetch.statusRows(sources, [{ state: "failed" }, { state: "downloaded" }], result)
+        t.assertEqual(rows[0].host, "")
+        t.assertEqual(rows[0].status, "Failed")
+        t.assertEqual(FormatJson(rows).Instr("secret"), -1, "nothing of it shown")
+    end sub
+
+    ' --- Helpers ---
+
+    ' A GuideFetch observer whose clock is fakeMs and whose memory is fakeMemory (counted in memoryCalls).
+    function fakeObserver(options as object, memory as dynamic) as object
+        observer = GuideFetch.newObserver(options)
+        observer.fakeMs = 0
+        observer.fakeMemory = memory
+        observer.memoryCalls = 0
+        observer.elapsedMs = function() as dynamic
+            return m.fakeMs
+        end function
+        observer.availableMemory = function() as dynamic
+            m.memoryCalls += 1
+            return m.fakeMemory
+        end function
+        return observer
+    end function
+
+    ' Guide A pasted at iptv.example and guide B from a playlist at guides.iptv.example (hosts only matter).
+    function fixtureSources() as object
+        return [
+            { url: "https://user:token@iptv.example/guide-a.xml?token=1", index: 1, fromPlaylist: false, referrerURL: "" },
+            { url: "https://guides.iptv.example/guide-b.xml", index: 2, fromPlaylist: true, referrerURL: "https://iptv.example/list.m3u" }
+        ]
+    end function
+
+    ' Guide B's matches when it's read alone or after an unreadable guide A.
+    function guideBAloneMatches() as integer
+        request = GuideFetchTests.fixtureRequest()
+        request.guides[0].path = ""
+        return GuidePipeline.process(request).guides[1].matched
+    end function
+
+    function fixtureRequest() as object
+        sources = GuideFetchTests.fixtureSources()
+        golden = ParseJson(ReadAsciiFile("pkg:/fixtures/programmes.golden.json"))
+        return {
+            guides: [{ url: sources[0].url, path: "pkg:/fixtures/guide-a.xml" }, { url: sources[1].url, path: "pkg:/fixtures/guide-b.xml" }],
+            channels: GuideSources.matchFields(M3U.makeChannels(M3U.parse(M3U.readFile("pkg:/fixtures/playlist.m3u")).entries)),
+            overrides: SettingsStore.overrideMap(ParseJson(ReadAsciiFile("pkg:/fixtures/overrides.json"))),
+            windowStart: golden.window.start,
+            windowEnd: golden.window.end,
+            canInflate: false,
+            inflateMaxCompressedBytes: invalid
+        }
+    end function
+
+end namespace
