@@ -12,6 +12,7 @@ namespace CapabilitiesTests
         t.assertEqual(caps.guideHours, 36)
         t.assertTrue(caps.logosDefault)
         t.assertInvalid(caps.inflateMaxCompressedBytes, "no limit")
+        t.assertEqual(caps.programmeLimit, 60000)
     end sub
 
     sub test_aLimitAtOrUnder512MBIsLow(t as object)
@@ -21,6 +22,7 @@ namespace CapabilitiesTests
         t.assertEqual(caps.guideHours, 24)
         t.assertFalse(caps.logosDefault)
         t.assertEqual(caps.inflateMaxCompressedBytes, 2097152)
+        t.assertEqual(caps.programmeLimit, 25000)
         t.assertEqual(Capabilities.detect(CapabilitiesTests.device({}), CapabilitiesTests.monitor(513)).deviceClass, "High")
     end sub
 

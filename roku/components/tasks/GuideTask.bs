@@ -1,0 +1,415 @@
+' GuideTask (M12 step 9; fields in GuideTask.xml): the plan's data flow step 3. For each guide in priority order
+' (GuideSources.chooseSources, MMTVL's rule), checks the URL (URLPolicy: a pasted guide with no referrer, a url-tvg
+' guide with the playlist as referrer), reuses its cachefs: file while it's fresh (12 h, GuideSources.isGuideDue),
+' else downloads it with AsyncGetToFile and checks the address the transfer reached (URLPolicy.allowsPeer; the
+' Risks table's redirect residual). Then GuidePipeline.process reads them all, with the memory guard, time limit
+' and cancel check in GuideFetch's observer, and the programmes stay in this node's guideData field: the scene
+' keeps the finished task as their holder (QA-M2 / security M-2: no relay copy). After a Roku reboot cachefs: is
+' usually empty, so every guide is simply downloaded again: no code is needed for that.
+'
+' Failures (GuideSources.readFailure, in <id>.fail): a failed download waits an hour, a refused or too large one
+' 12 h; until then a run reads the guide's last file if there is one, and a waiting "Too large" guide keeps that
+' status. A new or fresh file the pipeline can't read (GuideFetch.markUnreadable) is dropped and waits an hour.
+' Whatever started a run (a guide due, a retry, the sources or the channels changed), it reads and rematches every
+' guide, from cachefs: where fresh: an accepted cost (the coordinator's decision, 2026-11-18), since matching
+' needs every guide's channels.
+'
+' Downloads: http and https only, https with Roku's CA bundle (no client certificate), at most
+' GuideFetch.downloadLimit (120 MB, or what's left of the run's 300 MB cachefs: budget; checked while the file
+' grows and again at the end), GuideFetch.downloadTimeoutSeconds each. No EnableEncodings: the guide hosts serve
+' .gz files as plain bodies (Research: application/octet-stream), and with HTTP gzip decoding on, roUrlTransfer
+' would inflate natively into cachefs: (RAM) faster than the size polls can stop it, a gzip bomb with no bound but
+' the poll interval. Without it the overshoot past the cap is at most what the network brings in one 250 ms poll.
+' A .gz file is inflated by GuidePipeline, whose output the observer and the run's budget stop, piece by piece.
+'
+' Security M-3 of step 9: the scene's watchdog sets cancel (and control "stop"); downloads and the observer check
+' it and give up. This run's .part and .inflated.xml files carry its own token, and leftovers of dead runs are
+' deleted when a run starts (the scene starts one only when no other task is alive).
+' A crash in here still sets { ok: false } (as PlaylistTask), and the scene keeps what it has. Logs: hosts only.
+
+sub init()
+    m.top.functionName = "loadGuides"
+end sub
+
+sub loadGuides()
+    try
+        loadGuidesNow()
+    catch e
+        ' Never the exception's message, which could quote a URL: its number only.
+        Log.error("Guide", "The guide task stopped (error " + errorNumber(e) + ")")
+        m.top.result = { ok: false }
+    end try
+end sub
+
+function errorNumber(e as dynamic) as string
+    if type(e) = "roAssociativeArray"
+        if Refresh.isNumber(e.number) then return e.number.ToStr()
+    end if
+    return "?"
+end function
+
+sub loadGuidesNow()
+    m.token = LCase(Left(CreateObject("roDeviceInfo").GetRandomUUID().Replace("-", ""), 8))
+    m.peerWarned = false
+    store = SettingsStore.load(SettingsStore.deviceRegistry())
+    named = m.top.playlistGuideURLs
+    if type(named) <> "roArray" then named = []
+    sources = GuideSources.chooseSources(store.guides, named, store.settings.usePlaylistGuide, store.source)
+    if sources.Count() <> m.top.expectedGuides
+        Log.warn("Guide", "Expected " + m.top.expectedGuides.ToStr() + " guide(s) but found " + sources.Count().ToStr() + " (the settings or the playlist changed meanwhile?)")
+    end if
+    fs = CreateObject("roFileSystem")
+    if not fs.Exists(GuideSources.cacheDirectory) then fs.CreateDirectory(GuideSources.cacheDirectory)
+    pruneCache(fs, sources)
+
+    fetched = fetchAll(sources)
+    if isCancelled()
+        finishCancelled()
+        return
+    end if
+    readout = readGuides(sources, fetched, store.overrides)
+    for each paths in fetched.paths
+        fs.Delete(paths.inflated)
+    end for
+    if isCancelled()
+        finishCancelled()
+        return
+    end if
+
+    ' Only this local holds the programmes when they go into the field (OS 15's move may refuse a shared value;
+    ' unverified). The scene keeps this node as their holder.
+    data = readout.Lookup("data")
+    readout.Delete("data")
+    if FieldMove.put(m.top, "guideData", data) then how = "moved into" else how = "copied into"
+    Log.info("Guide", "Programmes " + how + " the guide task's field")
+    m.top.result = { ok: true, sourcesKey: GuideSources.sourcesKey(sources), fetchedAt: fetched.fetchedAt, failures: fetched.failures, statuses: readout.rows, note: readout.note, programmeCount: readout.programmeCount }
+end sub
+
+sub finishCancelled()
+    Log.warn("Guide", "The guide task was given up; stopped")
+    m.top.result = { ok: false, cancelled: true }
+end sub
+
+' The scene's watchdog set cancel (security M-3).
+function isCancelled() as boolean
+    return m.top.cancel = true
+end function
+
+' Each guide's file, in priority order: { paths, requestGuides (GuidePipeline's guides), outcomes, fetchedAt,
+' failures, usedBytes }. usedBytes: what the files to read take in cachefs: (the run's budget).
+function fetchAll(sources as object) as object
+    fetched = { paths: [], requestGuides: [], outcomes: [], fetchedAt: {}, failures: {}, usedBytes: 0 }
+    for each source in sources
+        paths = GuideSources.cachePaths(source.url, m.token)
+        outcome = { state: "failed", path: "", fetchedAt: invalid, failure: invalid, bytes: 0 }
+        if not isCancelled() then outcome = fetchGuide(source, paths, fetched.usedBytes)
+        fetched.usedBytes += outcome.bytes
+        fetched.paths.Push(paths)
+        fetched.outcomes.Push(outcome)
+        if outcome.fetchedAt <> invalid then fetched.fetchedAt[paths.id] = outcome.fetchedAt
+        if outcome.failure <> invalid then fetched.failures[paths.id] = outcome.failure
+        fetched.requestGuides.Push({ url: source.url, path: outcome.path, xmlPath: paths.inflated })
+    end for
+    return fetched
+end function
+
+' GuidePipeline.process over the files, window [now - 2 h, now + the class's guide hours), with the observer's
+' cancel check, size cap, time limit and memory guard, the class's programme limit, and what's left of the
+' cachefs: budget for inflating. Then the unreadable files (QA minor) and the rows. { rows, note, programmeCount,
+' data }.
+function readGuides(sources as object, fetched as object, overrides as object) as object
+    deviceCaps = Capabilities.detectDevice()
+    nowSeconds = wallClock()
+    windowStart = nowSeconds - 7200
+    windowEnd = nowSeconds + deviceCaps.guideHours * 3600
+    observer = GuideFetch.newObserver({
+        limitMB: deviceCaps.memoryMB,
+        maxBytes: GuideFetch.maximumBytes,
+        timeLimitMs: GuideFetch.processTimeLimitSeconds * 1000
+    })
+    observer.taskNode = m.top
+    observer.cancelTimer = CreateObject("roTimespan")
+    observer.cancelSeen = false
+    observer.isCancelled = observerCancelled
+    inflateRoom = GuideFetch.runBudgetBytes - fetched.usedBytes
+    if inflateRoom < 0 then inflateRoom = 0
+    timer = CreateObject("roTimespan")
+    processed = GuidePipeline.process({
+        guides: fetched.requestGuides,
+        channels: m.top.channels,
+        overrides: overrides,
+        windowStart: windowStart,
+        windowEnd: windowEnd,
+        canInflate: GuideFetch.inflateEnabled,
+        inflateMaxCompressedBytes: deviceCaps.inflateMaxCompressedBytes,
+        maxProgrammes: deviceCaps.programmeLimit,
+        maxInflatedBytes: inflateRoom,
+        observer: observer
+    })
+
+    for each i in GuideFetch.markUnreadable(fetched.outcomes, processed)
+        paths = fetched.paths[i]
+        deleteCached(paths)
+        fetched.fetchedAt.Delete(paths.id)
+        fetched.failures[paths.id] = recordFailure(paths, "failed")
+        Log.warn("Guide", "Guide " + sources[i].index.ToStr() + " from " + Log.host(sources[i].url) + ": the file isn't a guide this Roku can read; tried again in an hour")
+    end for
+    rows = GuideFetch.statusRows(sources, fetched.outcomes, processed)
+    for each row in rows
+        if row.problem = "" then Log.info("Guide", GuideFetch.logLine(row)) else Log.warn("Guide", GuideFetch.logLine(row))
+    end for
+    note = ""
+    if observer.guardInactive
+        note = GuideFetch.guardInactiveNote
+        Log.warn("Guide", note)
+    end if
+    if observer.stops.Count() > 0 then Log.warn("Guide", "Stopped reading a guide: " + observer.stops.Join(", "))
+    data = GuideFetch.guideData(processed, windowStart, windowEnd)
+    Log.info("Guide", "Read " + sources.Count().ToStr() + " guide(s) in " + (timer.TotalMilliseconds() \ 1000).ToStr() + " s: " + data.programmeCount.ToStr() + " programmes, lowest memory left " + megabytesText(observer.lowestMB))
+    return { rows: rows, note: note, programmeCount: data.programmeCount, data: data }
+end function
+
+' The observer's cancel check (m = the observer): the task's cancel field, read at most every 500 ms (a field read
+' from the task thread waits for the render thread).
+function observerCancelled() as boolean
+    if m.cancelSeen then return true
+    if m.cancelTimer.TotalMilliseconds() < 500 then return false
+    m.cancelTimer.Mark()
+    m.cancelSeen = m.taskNode.cancel = true
+    return m.cancelSeen
+end function
+
+function wallClock() as integer
+    return CreateObject("roDateTime").AsSeconds()
+end function
+
+function megabytesText(value as dynamic) as string
+    if not Refresh.isNumber(value) then return "unknown"
+    return Int(value).ToStr() + " MB"
+end function
+
+' One guide's file: { state, path, fetchedAt, failure, bytes } (states: GuideFetch.statusRows). path is "" when
+' there's nothing to read. fetchedAt: the file's download time when it's fresh, else invalid. failure: { at, kind }
+' while the guide waits after a failure (in <id>.fail), else invalid. bytes: what the file to read takes.
+function fetchGuide(source as object, paths as object, usedBytes as dynamic) as object
+    host = Log.host(source.url)
+    label = "Guide " + source.index.ToStr() + " from " + host
+    outcome = { state: "failed", path: "", fetchedAt: invalid, failure: invalid, bytes: 0 }
+    fs = CreateObject("roFileSystem")
+    now = wallClock()
+    verdict = URLPolicy.allows(source.url, source.referrerURL)
+    if not verdict.ok
+        Log.warn("Guide", label + " not fetched: " + verdict.reason)
+        deleteCached(paths)
+        outcome.state = "refused"
+        outcome.failure = recordFailure(paths, "refused")
+        return outcome
+    end if
+
+    fetched = cachedTime(paths)
+    if fetched <> invalid and not GuideSources.isGuideDue(fetched, now)
+        if not useFile(outcome, paths, usedBytes)
+            Log.warn("Guide", label + ": its file doesn't fit this run's cachefs: budget")
+            outcome.failure = recordFailure(paths, "tooLarge")
+            outcome.state = "tooLarge"
+            return outcome
+        end if
+        Log.info("Guide", label + ": using the file from " + Int((now - fetched) / 60).ToStr() + " min ago")
+        outcome.state = "cached"
+        outcome.fetchedAt = fetched
+        return outcome
+    end if
+
+    failure = failureRecord(paths)
+    if GuideSources.isRetryWaiting(failure, now)
+        Log.info("Guide", label + ": " + failure.kind + " " + Int((now - failure.at) / 60).ToStr() + " min ago; not tried again yet")
+        outcome.failure = failure
+        outcome.state = failure.kind
+        if failure.kind = "failed"
+            if useFile(outcome, paths, usedBytes) then outcome.state = "stale"
+        end if
+        return outcome
+    end if
+
+    limit = GuideFetch.downloadLimit(usedBytes)
+    download = { ok: false, tooLarge: true, refused: false, cancelled: false, reason: "no room left in this run's cachefs: budget", ms: 0 }
+    if limit > 0 then download = downloadGuide(source, paths, limit)
+    if download.cancelled
+        fs.Delete(paths.part)
+        return outcome
+    end if
+    if download.ok
+        fs.Delete(paths.file)
+        if not fs.Rename(paths.part, paths.file)
+            if fs.CopyFile(paths.part, paths.file)
+                fs.Delete(paths.part)
+            else
+                download.ok = false
+                download.reason = "couldn't save the file"
+            end if
+        end if
+    end if
+    if download.ok
+        WriteAsciiFile(paths.time, GuideSources.timeText(now))
+        fs.Delete(paths.fail)
+        useFile(outcome, paths, 0)
+        Log.info("Guide", label + ": downloaded " + megabytesText(outcome.bytes / 1048576) + " in " + (download.ms \ 1000).ToStr() + " s")
+        outcome.state = "downloaded"
+        outcome.fetchedAt = now
+        return outcome
+    end if
+    fs.Delete(paths.part)
+    Log.warn("Guide", label + ": download failed (" + download.reason + ")")
+    if download.tooLarge or download.refused
+        deleteCached(paths)
+        if download.tooLarge then outcome.state = "tooLarge" else outcome.state = "refused"
+        outcome.failure = recordFailure(paths, outcome.state)
+        return outcome
+    end if
+    outcome.failure = recordFailure(paths, "failed")
+    ' As MMTVL keeps a guide's rows when a refresh fails: the last file is read, and the guide waits an hour.
+    if useFile(outcome, paths, usedBytes) then outcome.state = "stale"
+    return outcome
+end function
+
+' Sets outcome.path and outcome.bytes to the guide's file when it exists and fits the run's budget after usedBytes.
+function useFile(outcome as object, paths as object, usedBytes as dynamic) as boolean
+    if not CreateObject("roFileSystem").Exists(paths.file) then return false
+    size = fileBytes(paths.file)
+    if usedBytes + size > GuideFetch.runBudgetBytes then return false
+    outcome.path = paths.file
+    outcome.bytes = size
+    return true
+end function
+
+' The file's download time, when both the file and its time are there; else invalid.
+function cachedTime(paths as object) as dynamic
+    fs = CreateObject("roFileSystem")
+    if not fs.Exists(paths.file) or not fs.Exists(paths.time) then return invalid
+    return GuideSources.readTime(ReadAsciiFile(paths.time))
+end function
+
+' The last failure from <id>.fail ({ at, kind }), or invalid.
+function failureRecord(paths as object) as dynamic
+    if not CreateObject("roFileSystem").Exists(paths.fail) then return invalid
+    return GuideSources.readFailure(ReadAsciiFile(paths.fail))
+end function
+
+' Writes "<now> <kind>" to <id>.fail and returns { at, kind }.
+function recordFailure(paths as object, kind as string) as object
+    now = wallClock()
+    WriteAsciiFile(paths.fail, GuideSources.failureText(now, kind))
+    return { at: now, kind: kind }
+end function
+
+' The guide's files except <id>.fail (its back-off outlives them).
+sub deleteCached(paths as object)
+    fs = CreateObject("roFileSystem")
+    for each path in [paths.file, paths.time, paths.part, paths.inflated]
+        fs.Delete(path)
+    end for
+end sub
+
+' GET source.url into paths.part, at most limit bytes. { ok, tooLarge, refused, cancelled, reason, ms }; reason
+' never holds the URL, a server's text or the peer's address.
+function downloadGuide(source as object, paths as object, limit as dynamic) as object
+    result = { ok: false, tooLarge: false, refused: false, cancelled: false, reason: "", ms: 0 }
+    fs = CreateObject("roFileSystem")
+    fs.Delete(paths.part)
+    port = CreateObject("roMessagePort")
+    transfer = CreateObject("roUrlTransfer")
+    transfer.SetUrl(source.url)
+    transfer.SetPort(port)
+    if LCase(Left(source.url, 8)) = "https://"
+        transfer.SetCertificatesFile("common:/certs/ca-bundle.crt")
+    end if
+    transfer.RetainBodyOnError(false)
+    if not transfer.AsyncGetToFile(paths.part)
+        result.reason = "couldn't start the download"
+        return result
+    end if
+    timer = CreateObject("roTimespan")
+    while true
+        remaining = GuideFetch.downloadTimeoutSeconds * 1000 - timer.TotalMilliseconds()
+        if remaining <= 0
+            transfer.AsyncCancel()
+            result.reason = "timed out"
+            exit while
+        end if
+        if remaining > 250 then remaining = 250
+        msg = Wait(remaining, port)
+        if type(msg) = "roUrlEvent"
+            if msg.GetInt() = 1
+                code = msg.GetResponseCode()
+                if code >= 200 and code < 300
+                    peer = checkPeer(msg, source)
+                    if peer.ok
+                        result.ok = true
+                    else
+                        result.refused = true
+                        result.reason = "it reached an address a guide may not use (" + peer.reason + ")"
+                    end if
+                else if code < 0
+                    result.reason = "network error " + code.ToStr()
+                else
+                    result.reason = "HTTP " + code.ToStr()
+                end if
+                exit while
+            end if
+        end if
+        if isCancelled()
+            transfer.AsyncCancel()
+            result.cancelled = true
+            result.reason = "cancelled"
+            exit while
+        end if
+        if fileBytes(paths.part) > limit
+            transfer.AsyncCancel()
+            result.tooLarge = true
+            exit while
+        end if
+    end while
+    result.ms = timer.TotalMilliseconds()
+    if not result.cancelled and fileBytes(paths.part) > limit then result.tooLarge = true
+    if result.tooLarge
+        result.ok = false
+        result.reason = "larger than " + (limit \ 1048576).ToStr() + " MB (this guide's limit in this run)"
+    end if
+    return result
+end function
+
+' The Risks table's redirect residual (security M-1 of step 8): the address the transfer reached, judged with
+' URLPolicy.allowsPeer (public only for a url-tvg guide from a public playlist). { ok, reason }. Not reported:
+' allowed, with one warning per run (security L-6 of step 9: whether and for which hop a Roku reports it is a
+' device check). Never logs the address.
+function checkPeer(msg as object, source as object) as object
+    peer = msg.GetTargetIpAddress()
+    if not URLPolicy.isText(peer) then peer = ""
+    if peer = ""
+        if not m.peerWarned
+            m.peerWarned = true
+            Log.warn("Guide", "This Roku didn't report the address a guide download reached, so it wasn't checked")
+        end if
+        return { ok: true, reason: "" }
+    end if
+    return URLPolicy.allowsPeer(peer, GuideFetch.publicChain(source))
+end function
+
+' At the start of a run (no other run alive): deletes from cachefs:/guides what no current guide uses, and the
+' .part and .inflated.xml files dead runs left (GuideFetch.prunable).
+sub pruneCache(fs as object, sources as object)
+    names = fs.GetDirectoryListing(GuideSources.cacheDirectory)
+    stale = GuideFetch.prunable(names, sources)
+    for each name in stale
+        fs.Delete(GuideSources.cacheDirectory + "/" + name)
+    end for
+    if stale.Count() > 0 then Log.info("Guide", "Deleted " + stale.Count().ToStr() + " cached guide file(s) no longer in use or left by an earlier run")
+end sub
+
+' The file's size so far, 0 when there's none yet.
+function fileBytes(path as string) as dynamic
+    info = CreateObject("roFileSystem").Stat(path)
+    if type(info) <> "roAssociativeArray" then return 0
+    if Refresh.isNumber(info.size) then return info.size
+    return 0
+end function

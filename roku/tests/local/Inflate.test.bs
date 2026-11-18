@@ -86,6 +86,52 @@ namespace InflateTests
         t.assertEqual(observer.ticks, 1)
     end sub
 
+    ' Security M-1 of step 9: about 1 MB of non-final empty stored blocks makes no output, so only an input tick
+    ' can stop it; an observer that says stop at its first tick stops before the input is read.
+    sub test_aStreamOfEmptyBlocksStillAsksTheObserver(t as object)
+        ' 13,107 blocks of 5 bytes each (header 00, LEN 0000, NLEN FFFF): 65,535 bytes.
+        block = CreateObject("roByteArray")
+        for i = 1 to 13107
+            block.Push(0)
+            block.Push(0)
+            block.Push(0)
+            block.Push(255)
+            block.Push(255)
+        end for
+        header = CreateObject("roByteArray")
+        header.FromHexString("1f8b0800000000000003")
+        source = { header: header, block: block, calls: 0, last: 17, next: function() as dynamic
+                m.calls++
+                if m.calls = 1 then return m.header
+                if m.calls <= m.last then return m.block
+                return invalid
+            end function }
+        observer = { ticks: 0, tick: function(_outputBytes as dynamic) as boolean
+                m.ticks++
+                return false
+            end function }
+        result = Inflate.gunzip(source, InflateTests.collector(), observer)
+        t.assertTrue(result.stopped, "stopped")
+        t.assertFalse(result.ok, "ok")
+        t.assertEqual(result.error, "")
+        t.assertEqual(observer.ticks, 1)
+        t.assertTrue(source.calls < 17, "stopped before reading it all (" + source.calls.ToStr() + " reads)")
+
+        ' With an observer that goes on, such a stream reads to the end (a truncated member: no final block); a
+        ' shorter one here (2 chunks), to keep the test quick.
+        source.calls = 0
+        source.last = 3
+        goOn = { ticks: 0, tick: function(_outputBytes as dynamic) as boolean
+                m.ticks++
+                return true
+            end function }
+        whole = Inflate.gunzip(source, InflateTests.collector(), goOn)
+        t.assertFalse(whole.stopped, "not stopped")
+        t.assertEqual(whole.error, "Truncated")
+        t.assertEqual(goOn.ticks, 3, "one tick per input chunk")
+        t.assertEqual(whole.inputBytes, 10 + 2 * 65535)
+    end sub
+
     sub test_failsOnATruncatedStream(t as object)
         hex = InflateFixtures.dynamic().hex
         result = InflateTests.inflate(Left(hex, Len(hex) - 400), 7).result

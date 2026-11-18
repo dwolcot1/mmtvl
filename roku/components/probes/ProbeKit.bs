@@ -94,7 +94,10 @@ namespace ProbeKit
 
     ' A typed tuner address → its host ("192.168.x.x", "hdhomerun.local"), or "" if it isn't one on the LAN.
     function tunerHost(text as string) as string
-        host = Log.host(text.Trim())
+        typed = text.Trim()
+        ' Log.host needs a scheme (security L-1 of step 9); a typed address may have none.
+        if Instr(1, typed, "://") = 0 then typed = "http://" + typed
+        host = Log.host(typed)
         if host = "" then return ""
         if ProbeKit.isLanHost(host) then return host
         return ""
