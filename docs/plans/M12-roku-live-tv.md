@@ -7,6 +7,12 @@
 | Master plan decisions used | D9, D23, D26, D48, D49, D52; new D54, D55, D56 |
 | Planned | 2026-11-18 |
 
+## Next session starts here
+
+- **Phase 0:** steps 2 and 3 are done, on branch `m12-phase0`, PR open. Steps 1 and 4 wait for the remote tester's Roku. The probe build is `cd roku && npm run build` → `roku/out/mmtvl-live-tv.zip`. **Ask the user before sending it.**
+- **Next: Phase 1** on branch `m12-phase1`, cut from `m12-phase0`, or from `master` once that PR is merged. Step 5 (parity fixtures, Swift), then steps 6–8, all testable here with `npm run test:local`. Step 9 depends on step 4's inflate decision: build it with inflate behind a capability flag until then.
+- Gates for every Roku step: `cd roku && npm run build && npm run lint && npm run test:local`. No simulator runs with network access.
+
 ## Goal
 
 MMTVL's Live TV, rebuilt as a **standalone Roku app** that is sideloaded in developer mode. On the TV, the user opens it from the Roku home screen and gets:
