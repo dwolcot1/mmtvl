@@ -9,6 +9,17 @@ namespace LogTests
         t.assertEqual(Log.host("http://[fd00::1]:5004/auto/v5.1"), "fd00::1")
     end sub
 
+    ' Security L-4 of step 8: an authority with a backslash, a space or a control character gives no host.
+    sub test_returnsNoHostForAnAuthorityWithABackslashSpaceOrControlCharacter(t as object)
+        shown = Log.host("http://host\live\user\pass")
+        t.assertEqual(shown, "")
+        t.assertEqual(Instr(1, shown, "user"), 0, "no user")
+        t.assertEqual(Log.host("http://host user:pass@x.example/"), "")
+        t.assertEqual(Log.host("http://host" + Chr(9) + "x.example/"), "")
+        t.assertEqual(Log.host("http://host" + Chr(1) + "x.example/"), "")
+        t.assertEqual(Log.host("http://iptv.example/path\with\backslash"), "iptv.example", "a backslash after the authority")
+    end sub
+
     sub test_returnsAnEmptyHostForAnEmptyString(t as object)
         t.assertEqual(Log.host(""), "")
     end sub

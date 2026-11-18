@@ -1,0 +1,346 @@
+' Lineup (M12 step 8): MMTVL's ChannelLineupTests (16), line for line, on the same playlist (IPTVFixtures.playlist)
+' and antenna channels (AntennaFixtures.liveChannels, built by hand until step 21), plus the two ChannelListTests
+' group checks step 6 left for this step, and a 5,000-channel timing. Runs off-device: npm run test:local.
+namespace LineupTests
+
+    ' MARK: ChannelLineupTests
+
+    sub test_noPreferencesKeepsTheGroups(t as object)
+        built = Lineup.build(LineupTests.channels(), {})
+        t.assertEqual(built.groups, ["My Teams", "All Channels", "Live Channels", "NBA Games"])
+        t.assertEqual(built.favorites, [])
+        t.assertEqual(built.visibleChannels.Count(), 5)
+        t.assertEqual(Lineup.channelsIn(built, "All Channels").Count(), 5)
+        t.assertEqual(LineupTests.names(Lineup.channelsIn(built, "NBA Games")), ["Lakers @ Celtics", "Knicks @ Heat"])
+        t.assertEqual(Lineup.channelsIn(built, "Nope"), [])
+    end sub
+
+    sub test_favoritesComeFirstInTheOrderAdded(t as object)
+        built = Lineup.build(LineupTests.channels(), { favorites: [LineupTests.nba(), LineupTests.nfl()] })
+        t.assertEqual(built.groups, ["Favorites", "My Teams", "All Channels", "Live Channels", "NBA Games"])
+        t.assertEqual(LineupTests.names(Lineup.channelsIn(built, "Favorites")), ["NBA TV", "NFL Network"])
+    end sub
+
+    sub test_hiddenFavoriteIsNotAFavorite(t as object)
+        prefs = { favorites: [LineupTests.nba(), LineupTests.nfl()], hiddenChannels: [LineupTests.nba()] }
+        built = Lineup.build(LineupTests.channels(), prefs)
+        t.assertEqual(LineupTests.names(built.favorites), ["NFL Network"])
+        t.assertFalse(Lineup.isVisible(built, LineupTests.nba()))
+        t.assertTrue(Lineup.isVisible(built, LineupTests.nfl()))
+        t.assertFalse(LineupTests.containsID(built.visibleChannels, LineupTests.nba()), "not visible")
+        t.assertFalse(LineupTests.containsID(Lineup.channelsIn(built, "Live Channels"), LineupTests.nba()), "not in its group")
+    end sub
+
+    sub test_hidingAGroup(t as object)
+        built = Lineup.build(LineupTests.channels(), { hiddenGroups: ["NBA Games"] })
+        ' One visible group left, so no All Channels.
+        t.assertEqual(built.groups, ["My Teams", "Live Channels"])
+        t.assertEqual(LineupTests.names(built.visibleChannels), ["NFL Network", "NBA TV", "Red Zone"])
+        t.assertEqual(Lineup.channelsIn(built, "NBA Games"), [])
+    end sub
+
+    sub test_unknownFavoritesAreIgnored(t as object)
+        built = Lineup.build(LineupTests.channels(), { favorites: ["id:gone", LineupTests.redZone()] })
+        t.assertEqual(LineupTests.names(built.favorites), ["Red Zone"])
+        none = Lineup.build(LineupTests.channels(), { favorites: ["id:gone"] })
+        t.assertEqual(none.groups[0], "My Teams")
+    end sub
+
+    ' MARK: M7l 8b: live team games top Favorites
+
+    sub test_teamChannelsComeFirstInFavorites(t as object)
+        all = LineupTests.channels()
+        games = []
+        for each channel in all
+            if channel.group = "NBA Games" then games.Push(channel.id)
+        end for
+        prefs = { favorites: [LineupTests.nba(), LineupTests.nfl()] }
+        built = Lineup.build(all, prefs, games)
+        t.assertEqual([built.groups[0], built.groups[1], built.groups[2]], ["Favorites", "My Teams", "All Channels"])
+        t.assertEqual(LineupTests.names(Lineup.channelsIn(built, "Favorites")), ["Lakers @ Celtics", "Knicks @ Heat", "NBA TV", "NFL Network"])
+        ' The My Teams group and the saved favorites are unchanged.
+        t.assertEqual(LineupTests.ids(Lineup.channelsIn(built, "My Teams")), games)
+        t.assertEqual(LineupTests.names(built.favorites), ["NBA TV", "NFL Network"])
+        t.assertEqual(prefs.favorites, [LineupTests.nba(), LineupTests.nfl()])
+    end sub
+
+    sub test_aTeamChannelThatIsAFavoriteShowsOnceAtTheTop(t as object)
+        prefs = { favorites: [LineupTests.nba(), LineupTests.redZone(), LineupTests.nfl()] }
+        built = Lineup.build(LineupTests.channels(), prefs, [LineupTests.nfl()])
+        t.assertEqual(LineupTests.names(Lineup.channelsIn(built, "Favorites")), ["NFL Network", "NBA TV", "Red Zone"])
+        t.assertEqual(LineupTests.names(built.favorites), ["NBA TV", "Red Zone", "NFL Network"])
+    end sub
+
+    sub test_liveTeamGamesAloneMakeAFavoritesGroup(t as object)
+        built = Lineup.build(LineupTests.channels(), {}, [LineupTests.redZone()])
+        t.assertEqual([built.groups[0], built.groups[1]], ["Favorites", "My Teams"])
+        t.assertEqual(LineupTests.names(Lineup.channelsIn(built, "Favorites")), ["Red Zone"])
+        t.assertEqual(built.favorites, [])
+        ' Hidden team channels don't count.
+        hidden = Lineup.build(LineupTests.channels(), { hiddenChannels: [LineupTests.redZone()] }, [LineupTests.redZone()])
+        t.assertFalse(LineupTests.containsText(hidden.groups, "Favorites"))
+    end sub
+
+    sub test_withoutTeamGamesFavoritesIsAsBefore(t as object)
+        prefs = { favorites: [LineupTests.nba(), LineupTests.nfl()] }
+        built = Lineup.build(LineupTests.channels(), prefs, [])
+        t.assertEqual(built, Lineup.build(LineupTests.channels(), prefs), "same as with no team games")
+        t.assertEqual(built.groups, ["Favorites", "My Teams", "All Channels", "Live Channels", "NBA Games"])
+        t.assertEqual(LineupTests.names(Lineup.channelsIn(built, "Favorites")), ["NBA TV", "NFL Network"])
+        t.assertEqual(Lineup.channelsIn(built, "Favorites"), built.favorites)
+    end sub
+
+    ' ChannelPreferences' tolerant decoding: here SettingsStore normalizes the stored prefs, and the lineup reads
+    ' a missing or wrong-typed field as [] too.
+    sub test_tolerantDecoding(t as object)
+        json = ParseJson("{" + Chr(34) + "favorites" + Chr(34) + ": 3, " + Chr(34) + "hiddenGroups" + Chr(34) + ": [" + Chr(34) + "x" + Chr(34) + "]}")
+        t.assertEqual(SettingsStore.normalize("prefs", json), { favorites: [], hiddenChannels: [], hiddenGroups: ["x"], teams: [] })
+        t.assertEqual(SettingsStore.normalize("prefs", ParseJson("{}")), { favorites: [], hiddenChannels: [], hiddenGroups: [], teams: [] })
+        all = LineupTests.channels()
+        t.assertEqual(Lineup.build(all, json), Lineup.build(all, { hiddenGroups: ["x"] }), "raw prefs")
+        t.assertEqual(Lineup.build(all, invalid), Lineup.build(all, {}), "no prefs")
+    end sub
+
+    ' MARK: M7j L3: the Antenna group
+
+    sub test_antennaGroupComesAfterMyTeams(t as object)
+        all = LineupTests.channels()
+        all.Append(LineupTests.antennaChannels(6))
+        built = Lineup.build(all, {})
+        t.assertEqual(built.groups, ["My Teams", "Antenna", "All Channels", "Live Channels", "NBA Games"])
+        antenna = Lineup.channelsIn(built, "Antenna")
+        t.assertEqual(LineupTests.names(antenna), ["WSB-HD", "WAGA-HD", "WXIA-HD"])
+        numbers = []
+        for each channel in antenna
+            numbers.Push(Lineup.displayNumber(channel))
+        end for
+        t.assertEqual(numbers, ["2.1", "5.1", "11.1"])
+        favorites = Lineup.build(all, { favorites: [LineupTests.nba()] })
+        t.assertEqual([favorites.groups[0], favorites.groups[1], favorites.groups[2]], ["Favorites", "My Teams", "Antenna"])
+    end sub
+
+    sub test_allChannelsListsPlaylistThenAntenna(t as object)
+        playlist = LineupTests.channels()
+        all = []
+        all.Append(playlist)
+        all.Append(LineupTests.antennaChannels(6))
+        built = Lineup.build(all, {})
+        expected = LineupTests.ids(playlist)
+        expected.Append(["antenna:2.1", "antenna:5.1", "antenna:11.1"])
+        t.assertEqual(LineupTests.ids(Lineup.channelsIn(built, "All Channels")), expected)
+        numbers = []
+        for each channel in Lineup.channelsIn(built, "All Channels")
+            numbers.Push(channel.number)
+        end for
+        t.assertEqual(numbers, [1, 2, 3, 4, 5, 6, 7, 8])
+    end sub
+
+    sub test_antennaOnlyHasMyTeamsAndAntenna(t as object)
+        built = Lineup.build(LineupTests.antennaChannels(1), {})
+        t.assertEqual(built.groups, ["My Teams", "Antenna"])
+        t.assertEqual(Lineup.channelsIn(built, "Antenna").Count(), 3)
+        t.assertEqual(Lineup.channelsIn(built, "All Channels"), [])
+    end sub
+
+    sub test_hiddenAntennaGroupHidesThemEverywhere(t as object)
+        all = LineupTests.channels()
+        all.Append(LineupTests.antennaChannels(6))
+        prefs = { favorites: ["antenna:5.1", LineupTests.nba()], hiddenGroups: ["Antenna"] }
+        built = Lineup.build(all, prefs, ["antenna:2.1"])
+        t.assertEqual(built.groups, ["Favorites", "My Teams", "All Channels", "Live Channels", "NBA Games"])
+        for each channel in built.visibleChannels
+            t.assertFalse(Lineup.isAntenna(channel), channel.id + " visible")
+        end for
+        t.assertEqual(Lineup.channelsIn(built, "All Channels").Count(), 5)
+        t.assertEqual(Lineup.channelsIn(built, "Antenna"), [])
+        t.assertEqual(LineupTests.names(Lineup.channelsIn(built, "Favorites")), ["NBA TV"])
+        t.assertEqual(Lineup.channelsIn(built, "My Teams"), [])
+        t.assertFalse(Lineup.isVisible(built, "antenna:5.1"))
+    end sub
+
+    sub test_playlistGroupNamedAntennaMergesAfterTheTuners(t as object)
+        localNews = { id: "name:local news", number: 6, name: "Local News", group: "Antenna", url: LineupTests.streamURL(6), tvgID: invalid, tvgName: invalid, logo: invalid }
+        all = LineupTests.channels()
+        all.Push(localNews)
+        all.Append(LineupTests.antennaChannels(7))
+        built = Lineup.build(all, {})
+        t.assertEqual(built.groups, ["My Teams", "Antenna", "All Channels", "Live Channels", "NBA Games"])
+        t.assertEqual(LineupTests.names(Lineup.channelsIn(built, "Antenna")), ["WSB-HD", "WAGA-HD", "WXIA-HD", "Local News"])
+        ' A playlist with only an "Antenna" group: one group, no All Channels.
+        alone = Lineup.build([localNews], {})
+        t.assertEqual(alone.groups, ["My Teams", "Antenna"])
+        t.assertEqual(LineupTests.names(Lineup.channelsIn(alone, "Antenna")), ["Local News"])
+    end sub
+
+    sub test_antennaFavoritesShowInFavorites(t as object)
+        all = LineupTests.channels()
+        all.Append(LineupTests.antennaChannels(6))
+        built = Lineup.build(all, { favorites: ["antenna:5.1", LineupTests.nba()] })
+        t.assertEqual(LineupTests.names(Lineup.channelsIn(built, "Favorites")), ["WAGA-HD", "NBA TV"])
+        t.assertEqual(LineupTests.ids(built.favorites), ["antenna:5.1", LineupTests.nba()])
+    end sub
+
+    ' MARK: ChannelListTests' group checks (moved here from step 6)
+
+    sub test_groupsInFirstAppearanceOrder(t as object)
+        result = LineupTests.grouped([["a", "Live"], ["b", "NBA"], ["c", "Live"], ["d", "NHL"]])
+        t.assertEqual(Lineup.groupsOf(result), ["Live", "NBA", "NHL"])
+        t.assertEqual(Lineup.guideGroups(result), ["All Channels", "Live", "NBA", "NHL"])
+        t.assertEqual(LineupTests.names(Lineup.channelsInGroup("Live", result)), ["a", "c"])
+        t.assertEqual(LineupTests.names(Lineup.channelsInGroup("All Channels", result)), ["a", "b", "c", "d"])
+    end sub
+
+    sub test_singleGroupHasNoAllChannels(t as object)
+        result = LineupTests.grouped([["a", "Live"], ["b", "Live"]])
+        t.assertEqual(Lineup.guideGroups(result), ["Live"])
+    end sub
+
+    ' MARK: beyond MMTVL's tests
+
+    ' Ids and group names compare case-sensitively, as in Swift (BrightScript's AAs don't, by default).
+    sub test_idsAndGroupsAreCaseSensitive(t as object)
+        built = Lineup.build(LineupTests.channels(), { favorites: ["ID:NBATV.US"], hiddenGroups: ["nba games"] })
+        t.assertEqual(built.favorites, [])
+        t.assertEqual(built.groups, ["My Teams", "All Channels", "Live Channels", "NBA Games"])
+    end sub
+
+    sub test_aRememberedTeamsGroupReadsAsMyTeams(t as object)
+        built = Lineup.build(LineupTests.channels(), {})
+        t.assertEqual(Lineup.resolvedGroup(built, "Teams"), "My Teams")
+        t.assertEqual(Lineup.resolvedGroup(built, "NBA Games"), "NBA Games")
+        t.assertInvalid(Lineup.resolvedGroup(built, invalid))
+        withTeams = Lineup.build(LineupTests.grouped([["a", "Teams"], ["b", "Live"]]), {})
+        t.assertEqual(Lineup.resolvedGroup(withTeams, "Teams"), "Teams")
+    end sub
+
+    ' Linear: 5,000 channels in 20 groups, 200 favorites, 100 hidden channels, a hidden group and 10 team games
+    ' (all visible).
+    ' Prints the time; no threshold (brs-node isn't a Roku).
+    sub test_fiveThousandChannels(t as object)
+        all = []
+        for i = 0 to 4999
+            all.Push({ id: "id:c" + i.ToStr(), number: i + 1, name: "Channel " + i.ToStr(), group: "Group " + (i mod 20).ToStr(), url: LineupTests.streamURL(i), tvgID: invalid, tvgName: invalid, logo: invalid })
+        end for
+        favorites = []
+        for i = 0 to 199
+            favorites.Push("id:c" + (i * 3).ToStr())
+        end for
+        hidden = []
+        for i = 0 to 99
+            hidden.Push("id:c" + (i * 2).ToStr())
+        end for
+        games = []
+        for i = 0 to 9
+            games.Push("id:c" + (i * 20 + 1).ToStr())
+        end for
+        timer = CreateObject("roTimespan")
+        built = Lineup.build(all, { favorites: favorites, hiddenChannels: hidden, hiddenGroups: ["Group 3"] }, games)
+        buildMs = timer.TotalMilliseconds()
+        listed = 0
+        for each group in built.groups
+            listed = listed + Lineup.channelsIn(built, group).Count()
+        end for
+        print "Lineup: 5000 channels built in " + buildMs.ToStr() + " ms, every group listed in " + (timer.TotalMilliseconds() - buildMs).ToStr() + " ms"
+        ' Group 3 (250) and the even ids below 200 (100, none in Group 3) are hidden.
+        t.assertEqual(built.visibleChannels.Count(), 4650)
+        t.assertEqual(built.groups.Count(), 22, "Favorites, My Teams, All Channels and 19 groups")
+        t.assertEqual(built.teams.Count(), 10)
+        t.assertTrue(listed > 4650 * 2, "every group listed")
+    end sub
+
+    ' MARK: fixtures
+
+    ' IPTVFixtures.playlist: three live channels and two games, in two groups.
+    function channels() as object
+        text = [
+            "#EXTM3U",
+            "#EXTINF:0 tvg-id=`nflnetwork.us` tvg-name=`NFL Network` group-title=`Live Channels`,NFL Network",
+            LineupTests.streamURL(1),
+            "#EXTINF:0 tvg-id=`nbatv.us` tvg-name=`NBA TV` group-title=`Live Channels`,NBA TV",
+            LineupTests.streamURL(2),
+            "#EXTINF:0 tvg-id=`` tvg-name=`Red Zone` group-title=`Live Channels`,Red Zone",
+            LineupTests.streamURL(3),
+            "#EXTINF:0 tvg-type=`movie` tvg-id=`Lakers @ Celtics` group-title=`NBA Games`,Lakers @ Celtics",
+            LineupTests.streamURL(4),
+            "#EXTINF:0 tvg-type=`movie` tvg-id=`Knicks @ Heat` group-title=`NBA Games`,Knicks @ Heat",
+            LineupTests.streamURL(5)
+        ].Join(Chr(10)).Replace("`", Chr(34))
+        return M3U.makeChannels(M3U.parse(text).entries)
+    end function
+
+    function streamURL(n as integer) as string
+        return "https://cdn.example/t/channel/" + n.ToStr() + "/chunks.m3u8"
+    end function
+
+    ' AntennaFixtures.liveChannels: the tuner's three channels, numbered from firstNumber, as step 21 will mark them.
+    function antennaChannels(firstNumber as integer) as object
+        result = []
+        for each pair in [["2.1", "WSB-HD"], ["5.1", "WAGA-HD"], ["11.1", "WXIA-HD"]]
+            result.Push({
+                id: "antenna:" + pair[0],
+                number: firstNumber + result.Count(),
+                name: pair[1],
+                group: "Antenna",
+                url: "http://tuner.example:5004/auto/v" + pair[0],
+                tvgID: invalid,
+                tvgName: invalid,
+                logo: invalid,
+                source: "antenna",
+                guideNumber: pair[0]
+            })
+        end for
+        return result
+    end function
+
+    ' Channels from [name, group] pairs (ChannelListTests' entry helper).
+    function grouped(pairs as object) as object
+        entries = []
+        for each pair in pairs
+            entries.Push({ name: pair[0], attributes: {}, group: pair[1], url: "http://host.example/" + pair[0] })
+        end for
+        return M3U.makeChannels(entries)
+    end function
+
+    function nfl() as string
+        return "id:nflnetwork.us"
+    end function
+
+    function nba() as string
+        return "id:nbatv.us"
+    end function
+
+    function redZone() as string
+        return "name:red zone"
+    end function
+
+    function names(list as object) as object
+        result = []
+        for each channel in list
+            result.Push(channel.name)
+        end for
+        return result
+    end function
+
+    function ids(list as object) as object
+        result = []
+        for each channel in list
+            result.Push(channel.id)
+        end for
+        return result
+    end function
+
+    function containsID(list as object, id as string) as boolean
+        for each channel in list
+            if channel.id = id then return true
+        end for
+        return false
+    end function
+
+    function containsText(list as object, value as string) as boolean
+        for each item in list
+            if item = value then return true
+        end for
+        return false
+    end function
+
+end namespace

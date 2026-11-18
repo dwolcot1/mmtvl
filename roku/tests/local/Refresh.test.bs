@@ -1,0 +1,28 @@
+' Refresh (M12 step 8): when the playlist loads again (MMTVL's refreshPlaylistIfStale, D40). Off-device.
+namespace RefreshTests
+
+    sub test_nothingLoadedYetIsDue(t as object)
+        t.assertTrue(Refresh.isDue(invalid, 1000, Refresh.playlistMaxAgeSeconds))
+        t.assertTrue(Refresh.isDue("1000", 1000, Refresh.playlistMaxAgeSeconds), "not a number")
+    end sub
+
+    sub test_dueOnlyWhenOlderThanTheMaximumAge(t as object)
+        t.assertFalse(Refresh.isDue(1000, 1000, 600), "just loaded")
+        t.assertFalse(Refresh.isDue(1000, 1599, 600), "599 s")
+        t.assertFalse(Refresh.isDue(1000, 1600, 600), "exactly 600 s isn't stale (MMTVL compares with >)")
+        t.assertTrue(Refresh.isDue(1000, 1601, 600), "601 s")
+        t.assertTrue(Refresh.isDue(1000.5, 1600.75, 600), "floats, as UpTime gives")
+    end sub
+
+    sub test_aClockThatWentBackIsDue(t as object)
+        t.assertTrue(Refresh.isDue(5000, 1000, 600))
+    end sub
+
+    sub test_mmtvlsCadence(t as object)
+        t.assertEqual(Refresh.playlistMaxAgeSeconds, 600)
+        t.assertEqual(Refresh.intervalSeconds, 900)
+        ' Each 15-minute tick finds a load from the last tick stale.
+        t.assertTrue(Refresh.isDue(0, Refresh.intervalSeconds, Refresh.playlistMaxAgeSeconds))
+    end sub
+
+end namespace
