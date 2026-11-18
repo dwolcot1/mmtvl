@@ -1,0 +1,21 @@
+{
+  "rootDir": ".",
+  "files": [
+    "manifest",
+    "source/**/*",
+    "components/**/*",
+    "images/**/*",
+    {
+      "src": "out/probe-assets/*",
+      "dest": "probes"
+    }
+  ],
+  "stagingDir": "out/staging",
+  "retainStagingDir": true,
+  "createPackage": true,
+  "outFile": "out/mmtvl-live-tv.zip",
+  "autoImportComponentScript": true,
+  "plugins": [
+    "@rokucommunity/bslint"
+  ]
+}

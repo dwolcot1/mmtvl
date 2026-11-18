@@ -1,0 +1,256 @@
+' XMLTVScan (M12 step 3): the channel pass, the programme pass and its window, text decoding as MMTVL's
+' XMLTVParser (Foundation's XMLParser) gives it, and elements split across chunks.
+namespace XMLTVScanTests
+
+    sub test_channelPassLowercasesIdsAndNamesAndStopsAtTheFirstProgramme(t as object)
+        pass = XMLTVScanTests.scanText(XMLTVScan.newChannelPass(), XMLTVScanTests.guide(), 0)
+        t.assertEqual(pass.order, ["ch1.example", "ch2.example"])
+        t.assertEqual(pass.channels["ch1.example"], ["news one", "5.1", "n&w"])
+        t.assertEqual(pass.channels["ch2.example"], ["sports two"])
+        t.assertTrue(pass.done, "done at the first programme")
+        t.assertEqual(pass.error, "")
+    end sub
+
+    sub test_channelPassMergesRepeatedIdsWithNewNamesOnly(t as object)
+        xml = "<tv><channel id=" + XMLTVScanTests.q("A.example") + "><display-name>One</display-name><display-name>Two</display-name></channel>"
+        xml += "<channel id=" + XMLTVScanTests.q("b.example") + "><display-name>Bee</display-name></channel>"
+        xml += "<channel id=" + XMLTVScanTests.q("a.EXAMPLE") + "><display-name>two</display-name><display-name>Three</display-name></channel></tv>"
+        pass = XMLTVScanTests.scanText(XMLTVScan.newChannelPass(), xml, 0)
+        t.assertEqual(pass.order, ["a.example", "b.example"])
+        t.assertEqual(pass.channels["a.example"], ["one", "two", "three"])
+    end sub
+
+    sub test_channelPassKeepsAtMostSixteenNames(t as object)
+        xml = "<tv><channel id=" + XMLTVScanTests.q("x") + ">"
+        for i = 1 to 20
+            xml += "<display-name>Name " + i.ToStr() + "</display-name>"
+        end for
+        xml += "</channel><channel id=" + XMLTVScanTests.q("x") + "><display-name>Late</display-name></channel></tv>"
+        pass = XMLTVScanTests.scanText(XMLTVScan.newChannelPass(), xml, 0)
+        t.assertEqual(pass.channels["x"].Count(), 16)
+        t.assertEqual(pass.channels["x"][15], "name 16")
+    end sub
+
+    sub test_programmePassKeepsOnlyWantedChannelsInTheWindow(t as object)
+        pass = XMLTVScan.newProgrammePass({ "ch1.example": true }, XMLTVScanTests.at("20261118100000"), XMLTVScanTests.at("20261118140000"))
+        pass = XMLTVScanTests.scanText(pass, XMLTVScanTests.guide(), 0)
+        list = pass.programmes["ch1.example"]
+        t.assertEqual(pass.kept, 3)
+        t.assertEqual(list.Count(), 3)
+        t.assertEqual(list[0].title, "Morning & News")
+        t.assertEqual(list[0].subtitle, "Part <1>")
+        t.assertEqual(list[0].summary, "Line one" + Chr(10) + "line two " + Chr(233) + Chr(9786))
+        t.assertEqual(list[0].category, "News")
+        t.assertEqual(list[0].episode, "S3 E5")
+        t.assertEqual(list[0].start, XMLTVScanTests.at("20261118100000"))
+        t.assertEqual(list[0].stop, XMLTVScanTests.at("20261118110000"))
+        t.assertEqual(list[1].title, "Midday")
+        t.assertEqual(list[1].episode, "S2 E1")
+        t.assertInvalid(list[1].subtitle, "no sub-title")
+        t.assertEqual(pass.programmes["ch2.example"], invalid)
+        t.assertEqual(pass.scanned, 7)
+        t.assertEqual(pass.matched, 5)
+    end sub
+
+    sub test_programmePassFillsAMissingStopFromTheNextProgrammeOrThirtyMinutes(t as object)
+        pass = XMLTVScan.newProgrammePass({ "ch1.example": true }, XMLTVScanTests.at("20261118100000"), XMLTVScanTests.at("20261118140000"))
+        pass = XMLTVScanTests.scanText(pass, XMLTVScanTests.guide(), 0)
+        list = pass.programmes["ch1.example"]
+        ' "Afternoon" has no stop: the next start on the channel ("Evening", outside the window) ends it.
+        t.assertEqual(list[2].title, "Afternoon")
+        t.assertEqual(list[2].stop, XMLTVScanTests.at("20261118150000"))
+        last = XMLTVScan.newProgrammePass({ "ch1.example": true }, XMLTVScanTests.at("20261118150000"), XMLTVScanTests.at("20261118160000"))
+        last = XMLTVScanTests.scanText(last, XMLTVScanTests.guide(), 0)
+        t.assertEqual(last.programmes["ch1.example"][0].title, "Evening")
+        t.assertEqual(last.programmes["ch1.example"][0].stop, XMLTVScanTests.at("20261118153000"))
+    end sub
+
+    sub test_givesTheSameResultForAnyChunkSize(t as object)
+        whole = XMLTVScan.newProgrammePass({ "ch1.example": true }, 0, XMLTVScanTests.at("20300101000000"))
+        whole = XMLTVScanTests.scanText(whole, XMLTVScanTests.guide(), 0)
+        for each size in [1, 2, 5, 13, 64]
+            pass = XMLTVScan.newProgrammePass({ "ch1.example": true }, 0, XMLTVScanTests.at("20300101000000"))
+            pass = XMLTVScanTests.scanText(pass, XMLTVScanTests.guide(), size)
+            t.assertEqual(pass.programmes, whole.programmes, "chunks of " + size.ToStr())
+            channels = XMLTVScanTests.scanText(XMLTVScan.newChannelPass(), XMLTVScanTests.guide(), size)
+            t.assertEqual(channels.channels["ch1.example"], ["news one", "5.1", "n&w"], "channels, chunks of " + size.ToStr())
+        end for
+        t.assertEqual(whole.kept, 5)
+    end sub
+
+    sub test_readsCrlfFilesWithoutCuttingCharactersAcrossChunks(t as object)
+        xml = XMLTVScanTests.guide().Replace(Chr(10), Chr(13) + Chr(10))
+        bytes = CreateObject("roByteArray")
+        bytes.FromAsciiString(xml)
+        bytes.WriteFile("tmp:/scan-crlf.xml")
+        for each size in [7, 64, 100000]
+            pass = XMLTVScan.newProgrammePass({ "CH1.example": true }, 0, XMLTVScanTests.at("20300101000000"))
+            result = XMLTVScan.scanFile("tmp:/scan-crlf.xml", pass, size)
+            label = "chunks of " + size.ToStr()
+            t.assertTrue(result.ok, label + " ok")
+            t.assertEqual(result.bytes, bytes.Count(), label + " bytes")
+            t.assertEqual(pass.kept, 5, label + " kept")
+            t.assertEqual(pass.programmes["ch1.example"][1].summary, "Line one" + Chr(10) + "line two " + Chr(233) + Chr(9786), label + " summary")
+            channels = XMLTVScan.newChannelPass()
+            XMLTVScan.scanFile("tmp:/scan-crlf.xml", channels, size)
+            t.assertEqual(channels.order, ["ch1.example", "ch2.example"], label + " channels")
+        end for
+    end sub
+
+    sub test_stopsWhenTheObserverSaysSo(t as object)
+        bytes = CreateObject("roByteArray")
+        bytes.FromAsciiString(XMLTVScanTests.guide())
+        bytes.WriteFile("tmp:/scan-stop.xml")
+        observer = { tick: function(_bytes as integer) as boolean
+                return false
+            end function }
+        result = XMLTVScan.scanFile("tmp:/scan-stop.xml", XMLTVScan.newProgrammePass({}, 0, 1), 16, observer)
+        t.assertFalse(result.ok, "ok")
+        t.assertTrue(result.stopped, "stopped")
+        t.assertEqual(result.bytes, 16)
+        t.assertFalse(XMLTVScan.scanFile("tmp:/missing.xml", XMLTVScan.newChannelPass()).ok, "missing file")
+    end sub
+
+    sub test_findsCompleteUtf8Characters(t as object)
+        bytes = CreateObject("roByteArray")
+        bytes.FromAsciiString("ab" + Chr(233)) ' 61 62 c3 a9
+        t.assertEqual(XMLTVScan.utf8CompleteLength(bytes), 4)
+        bytes.Pop()
+        t.assertEqual(XMLTVScan.utf8CompleteLength(bytes), 2)
+        bytes.FromAsciiString("a" + Chr(9786)) ' 61 e2 98 ba
+        bytes.Pop()
+        t.assertEqual(XMLTVScan.utf8CompleteLength(bytes), 1)
+    end sub
+
+    sub test_refusesAnElementThatNeverEnds(t as object)
+        pass = XMLTVScan.newProgrammePass({ "x": true }, 0, 1)
+        XMLTVScan.feed(pass, "<programme channel=" + XMLTVScanTests.q("x") + ">")
+        filler = String(4096, "a")
+        for i = 1 to 300
+            XMLTVScan.feed(pass, filler)
+        end for
+        t.assertEqual(pass.error, "An element is too long")
+    end sub
+
+    sub test_parsesXmltvDates(t as object)
+        t.assertEqual(XMLTVScan.parseDate("20261118120000 +0000"), 1795003200&)
+        t.assertEqual(XMLTVScan.parseDate("20261118120000"), 1795003200&)
+        t.assertEqual(XMLTVScan.parseDate("202611181200"), 1795003200&)
+        t.assertEqual(XMLTVScan.parseDate("20261118070000 -0500"), 1795003200&)
+        t.assertEqual(XMLTVScan.parseDate("20261118130000+0100"), 1795003200&)
+        t.assertEqual(XMLTVScan.parseDate("19700101000000"), 0&)
+        t.assertEqual(XMLTVScan.parseDate("20240229000000"), 1709164800&)
+        t.assertInvalid(XMLTVScan.parseDate("2026111812"), "too short")
+        t.assertInvalid(XMLTVScan.parseDate("20261318120000"), "month 13")
+        t.assertInvalid(XMLTVScan.parseDate("20261118120000 GMT"), "named zone")
+        t.assertInvalid(XMLTVScan.parseDate("20261118120000 +01"), "short offset")
+    end sub
+
+    sub test_decodesTextAsXmlParserDoes(t as object)
+        t.assertEqual(XMLTVScan.decodeText("  A &amp; B &lt;&#233;&#x263A;&apos;&quot;  "), "A & B <" + Chr(233) + Chr(9786) + "'" + Chr(34))
+        t.assertEqual(XMLTVScan.decodeText("pre <![CDATA[Cd & <x>]]> post"), "pre Cd & <x> post")
+        t.assertEqual(XMLTVScan.decodeText(Chr(13) + Chr(10) + " crlf " + Chr(13) + "x" + Chr(13) + Chr(10)), "crlf " + Chr(10) + "x")
+        t.assertEqual(XMLTVScan.decodeText("&unknown; & &#xZZ;"), "&unknown; & &#xZZ;")
+    end sub
+
+    sub test_readsWholeAttributeNamesOnly(t as object)
+        tag = "<programme pdc-start=" + XMLTVScanTests.q("1") + Chr(10) + "  start = '2' channel=" + XMLTVScanTests.q("a&amp;b") + ">"
+        t.assertEqual(XMLTVScan.attribute(tag, "start"), "2")
+        t.assertEqual(XMLTVScan.attribute(tag, "channel"), "a&b")
+        t.assertInvalid(XMLTVScan.attribute(tag, "stop"))
+    end sub
+
+    sub test_formatsXmltvNsEpisodes(t as object)
+        t.assertEqual(XMLTVScan.episodeText("1.0.0/1"), "S2 E1")
+        t.assertEqual(XMLTVScan.episodeText(".4."), "E5")
+        t.assertEqual(XMLTVScan.episodeText("2/5 . 9/10 . "), "S3 E10")
+        t.assertInvalid(XMLTVScan.episodeText(".."))
+        ' Q3: Swift's split on "/" drops empty parts, so "/1" reads as 1 (S2), and " /1" as " " (no number).
+        t.assertEqual(XMLTVScan.episodeText("/1.2"), "S2 E3")
+        t.assertEqual(XMLTVScan.episodeText("//4/9.//"), "S5")
+        t.assertInvalid(XMLTVScan.episodeText(" /1."))
+    end sub
+
+    sub test_fillsMissingStopsWhenProgrammesAreOutOfOrder(t as object)
+        dq = Chr(34)
+        xml = "<tv>"
+        for each start in ["20261118120000", "20261118100000", "20261118110000", "20261118103000"]
+            xml += "<programme start=" + dq + start + dq + " channel=" + dq + "x" + dq + "><title>" + start + "</title></programme>"
+        end for
+        xml += "</tv>"
+        pass = XMLTVScanTests.scanText(XMLTVScan.newProgrammePass({ "x": true }, 0, XMLTVScanTests.at("20300101000000")), xml, 0)
+        list = pass.programmes["x"]
+        t.assertEqual(list.Count(), 4)
+        t.assertEqual(list[0].stop, XMLTVScanTests.at("20261118123000"), "last: +30 min")
+        t.assertEqual(list[1].stop, XMLTVScanTests.at("20261118103000"))
+        t.assertEqual(list[2].stop, XMLTVScanTests.at("20261118120000"))
+        t.assertEqual(list[3].stop, XMLTVScanTests.at("20261118110000"))
+    end sub
+
+    ' --- Helpers ---
+
+    ' Feeds text in chunks of size characters (0: all at once), then finishes the pass.
+    function scanText(pass as object, text as string, size as integer) as object
+        if size = 0
+            XMLTVScan.feed(pass, text)
+        else
+            cursor = 1
+            while cursor <= Len(text)
+                XMLTVScan.feed(pass, Mid(text, cursor, size))
+                cursor += size
+            end while
+        end if
+        XMLTVScan.finish(pass)
+        return pass
+    end function
+
+    function at(text as string) as dynamic
+        return XMLTVScan.parseDate(text)
+    end function
+
+    function q(text as string) as string
+        return Chr(34) + text + Chr(34)
+    end function
+
+    function guide() as string
+        dq = Chr(34)
+        lines = [
+            "<?xml version=" + dq + "1.0" + dq + " encoding=" + dq + "UTF-8" + dq + "?>",
+            "<!DOCTYPE tv SYSTEM " + dq + "xmltv.dtd" + dq + ">",
+            "<tv generator-info-name=" + dq + "synthetic" + dq + ">",
+            "  <channel id=" + dq + "CH1.example" + dq + ">",
+            "    <display-name lang=" + dq + "en" + dq + ">News One</display-name>",
+            "    <display-name>5.1</display-name>",
+            "    <display-name>  </display-name>",
+            "    <display-name>N&amp;W</display-name>",
+            "    <icon src=" + dq + "https://img.example/1.png" + dq + " />",
+            "  </channel>",
+            "  <channel id=" + dq + "ch2.example" + dq + "><display-name>Sports Two</display-name></channel>",
+            "  <programme start=" + dq + "20261118090000 +0000" + dq + " stop=" + dq + "20261118100000 +0000" + dq + " channel=" + dq + "ch1.example" + dq + ">",
+            "    <title>Too Early</title>",
+            "  </programme>",
+            "  <programme start=" + dq + "20261118100000 +0000" + dq + " stop=" + dq + "20261118110000 +0000" + dq + " channel=" + dq + "CH1.Example" + dq + ">",
+            "    <title lang=" + dq + "en" + dq + ">Morning &amp; News</title>",
+            "    <sub-title>Part &lt;1&gt;</sub-title>",
+            "    <desc>Line one",
+            "line two " + Chr(233) + "&#x263A;</desc>",
+            "    <credits><actor>Someone</actor></credits>",
+            "    <category>News</category><category>Talk</category>",
+            "    <episode-num system=" + dq + "xmltv_ns" + dq + ">1.0.</episode-num>",
+            "    <episode-num system=" + dq + "onscreen" + dq + ">S3 E5</episode-num>",
+            "  </programme>",
+            "  <programme start=" + dq + "20261118110000 +0000" + dq + " stop=" + dq + "20261118120000 +0000" + dq + " channel=" + dq + "ch2.example" + dq + "><title>Other Channel</title></programme>",
+            "  <programme start=" + dq + "20261118110000 +0000" + dq + " stop=" + dq + "20261118123000 +0000" + dq + " channel=" + dq + "ch1.example" + dq + ">",
+            "    <title></title><title>Midday</title><sub-title></sub-title>",
+            "    <episode-num system=" + dq + "xmltv_ns" + dq + ">1.0.0/1</episode-num>",
+            "  </programme>",
+            "  <programme start=" + dq + "20261118123000 +0000" + dq + " channel=" + dq + "ch1.example" + dq + "><title>Afternoon</title></programme>",
+            "  <programme start=" + dq + "20261118150000 +0000" + dq + " channel=" + dq + "ch1.example" + dq + "><title>Evening</title></programme>",
+            "  <programme start=" + dq + "bad" + dq + " channel=" + dq + "ch1.example" + dq + "><title>Bad Start</title></programme>",
+            "</tv>",
+            ""
+        ]
+        return lines.Join(Chr(10))
+    end function
+
+end namespace

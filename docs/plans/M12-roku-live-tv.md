@@ -2,10 +2,16 @@
 
 | | |
 |---|---|
-| Status | Planned |
+| Status | In progress |
 | Depends on | M4, M6b, M7j, M7l, M7m, M7n (the Live TV behaviour it clones) |
 | Master plan decisions used | D9, D23, D26, D48, D49, D52; new D54, D55, D56 |
 | Planned | 2026-11-18 |
+
+## Next session starts here
+
+- **Phase 0:** steps 2 and 3 are done, on branch `m12-phase0`, PR open. Steps 1 and 4 wait for the remote tester's Roku. The probe build is `cd roku && npm run build` → `roku/out/mmtvl-live-tv.zip`. **Ask the user before sending it.**
+- **Next: Phase 1** on branch `m12-phase1`, cut from `m12-phase0`, or from `master` once that PR is merged. Step 5 (parity fixtures, Swift), then steps 6–8, all testable here with `npm run test:local`. Step 9 depends on step 4's inflate decision: build it with inflate behind a capability flag until then.
+- Gates for every Roku step: `cd roku && npm run build && npm run lint && npm run test:local`. No simulator runs with network access.
 
 ## Goal
 
@@ -253,7 +259,7 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
   - Record each device's model, Roku OS version, and Settings → System → Advanced → Control by mobile apps setting under *Deviations & questions*.
   - Optional: apply to Roku's developer beta program for `roMultiDecode` documentation (Q30).
   - Done when: the installer page loads in a browser with the password, and the record is in this plan.
-- [ ] **2. Scaffold** `[implementer]`, files: `roku/**` (layout above), `.gitignore` (`roku/.env`, `roku/out/`, `roku/node_modules/`)
+- [x] **2. Scaffold** `[implementer]`, files: `roku/**` (layout above), `.gitignore` (`roku/.env`, `roku/out/`, `roku/node_modules/`)
   - npm scripts:
     - `build`: bsc into `out/staging`, then a zip in `out/`.
     - `lint`: bslint.
@@ -263,7 +269,7 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
   - A `MainScene` that shows "MMTVL Live TV" and the version.
   - An app icon and splash from the `Logo` asset (exported PNGs: `mm_icon_focus_fhd` 540 × 405, splash 1920 × 1080).
   - Done when: `npm run build` and `npm run lint` are clean; with a device, `npm run deploy` shows the scene and one passing Rooibos sample test. `git status` shows no `.env` or `node_modules`.
-- [ ] **3. Probes build** `[implementer]`, files: `roku/components/probes/**`, `roku/source/lib/Inflate.bs` (first version), `roku/source/lib/XMLTVScan.bs` (first version)
+- [x] **3. Probes build** `[implementer]`, files: `roku/components/probes/**`, `roku/source/lib/Inflate.bs` (first version), `roku/source/lib/XMLTVScan.bs` (first version)
 
   DEBUG-only (L8). Each probe logs `[PROBE] <name> <result>` and never a URL. Test URLs are typed into the Probes screen, or come through the migration contentId as a test, never committed.
   - **a. HLS start:** play one provider channel URL. Log the time from `control=play` to `state=playing`, whether the redirect was followed, and the time for a second channel with `prebuffer` and `asyncStopSemantics`.
@@ -479,7 +485,24 @@ Steps 4, 15 and 23 on the devices (three device sessions: probes, build A, build
 | ECP launch blocked under Limited | Probe i | The script tells the user to set Control by mobile apps to Enabled for the import, then back. |
 | Roku disables dev mode | The installer page is gone | The app has no store path; out of our hands. |
 | MMTVL's matching changes later | `RokuParityTests` fails | Update the golden file and the Roku port together. |
+| Developer mode exposes the app to the LAN: the BrightScript console on port 8085 has no authentication (Ctrl-C breaks into the debugger, where the registry can be read), and dev-mode ECP queries may show node fields | Security review of step 3 (M-1, 2026-11-18); check `curl http://<roku>:8060/query/app-ui` and port 8085 on the first device session | Inherent to sideloading. Use the Roku on a trusted network only (README and tester instructions say so). The probe build erases typed URLs when Probes closes. The app never puts a URL in a node field it doesn't need, and the risk is re-assessed in step 24. |
 
 ## Deviations & questions
 
 Executors append here when the plan is wrong or ambiguous: the date, the step, what happened, and what they need. Do not silently diverge.
+
+- **2026-11-18, all device steps (1, 3, 4, 15, 23, and the "with a device" parts of other steps): no Roku here; a remote tester has one.** The user has no Roku. Test builds go to a remote tester, model unknown, who uses the **same provider** with their **own playlist**, typed in on the Roku. No Mac with MMTVL is on the tester's network. User decisions (2026-11-18):
+  - **Off-device logic tests.** `brs-node` (an npm devDependency, an off-device BrightScript interpreter) runs the tests for the pure logic in `source/lib/` on this Mac with `npm run test:local`. That is the QA gate for the `lib` steps. Rooibos suites stay for node and key logic, run whenever someone has a device on the LAN. Every "pass as Rooibos tests" in steps 6–9, 17 and 19–21 is met by `test:local` for `lib` code.
+  - **The probe build reports on screen.** The Probes screen shows a results table the tester photographs, plus a short summary code the user pastes back. It never shows a URL. Console `[PROBE]` lines stay. This changes L8.
+  - **Big-guide probes (3d, 3e) don't need the dev Mac.** The probe generates a synthetic US2-sized XMLTV in `cachefs:` (77 MB, about 80,000 programmes) to time the scan, and inflate is timed on a small synthetic `.gz` in the package. In addition, the tester can type one of their own guide URLs (same provider, so likely US2 itself) for a real download, inflate and scan.
+  - **Not testable remotely, deferred until the user has a Roku on their own network:** migration (step 14's device part, step 15.1), probe 3i (ECP launch needs a computer on the Roku's network), and 3j's `curl` (the user can run 3j on this Mac at any time, since it needs only the guide URLs). Probe 3b (antenna) runs only if the tester has an HDHomeRun.
+- **2026-11-18, step 2 (done; QA PASS, build/lint/test:local clean, no device run).** As built, beyond the layout:
+  - `roku/tools/roku.mjs` runs `deploy`, `test`, `console` and `test-local`, reads `roku/.env` (a one-line message and exit 1 when it's missing), and passes the password to Rooibos by environment, never argv.
+  - The Rooibos build is `bsconfig.test.json` (extends `bsconfig.json`, specs staged as `source/tests`). The off-device build is `bsconfig.local.json`. Local suites are `tests/local/<Suite>.test.bs` with `namespace <Suite>Tests` and `sub test_<name>(t)`, run by `tests/local/support/LocalTest.bs`, and `npm run test:local` exits 1 on any failure. `npm run lint` covers all three projects.
+  - Also: HD icon and splash variants, and `bs_const=DEBUG=true` in the manifest. **The release build must set DEBUG=false** (QA minor): owed by whichever step adds packaging; no `package` script yet.
+  - **`npm audit`: 43 high, accepted as dev-only.** zod via brs-node's jimp, picomatch (no patched release exists) and decode-uri-component. Nothing from npm ships in the app (L1). Re-check at step 24.
+  - Device checks owed to the first device session: `npm run deploy` shows the scene and version, the icon and splash look right, and the Rooibos sample passes.
+- **2026-11-18, step 3 review (security L-2), carried to steps 6, 8, 9 and 21:** the app fetches whatever the playlist names: its `url-tvg` guide, and its stream URLs. Carry over the equivalent of MMTVL's `RelayURLPolicy`, so public entries never reach loopback, link-local, LAN or the Roku's own addresses.
+- **2026-11-18, step 3, for step 9: display-name case.** Step 3's `XMLTVScan` lowercases display-names, as *Research* says, but MMTVL's `XMLTVParser.add` keeps names as written, de-duplicated exactly. So "ESPN" and "espn" stay two names when ids merge. Matching folds case either way. Step 9 follows MMTVL, and the parity fixtures decide.
+- **2026-11-18, step 3 (done; QA PASS, security review: 1 medium + lows, all fixed or carried).** Built as the deviations above say: the Probes screen (DEBUG only, OK or `*` on the main scene) with on-screen results, a details page and a summary code. Typed entries go in registry section `mmtvl-probe` and are erased when Run all ends or the screen closes, and a release build deletes that section at launch. The own guide is the typed one, else the playlist's `url-tvg` (`src=typed|tvg|-`). `npm run build:release` (`bsconfig.release.json`, DEBUG=false) checks itself for probe code. `source/lib/Inflate.bs` checks ISIZE, not CRC-32 (too slow per byte in BrightScript; add `GetCRC32` per piece if step 4 keeps inflate), and `XMLTVScan.bs` exists in its first version. `test:local`: 40 passed, 0 failed. Fixes: QA Q1–Q4 (raw memory-call values with types in h, a "guard inactive" note, `xmltv_ns` empty parts as in Swift, a permanent 256 KB inflate test) and security M-1, L-1, L-3, L-4, L-6, L-7. Accepted: L-5 (dotless names pass `safeText` in error text only) and L-8 ("US2" is a guide file name, already in the plans).
+  - **Not verified (device):** everything the probes measure; the units of the `ifAppMemoryMonitor` calls; `ReadFile`/`AppendFile` with offsets; whether `cachefs:` holds 77 MB; `roDataGramSocket` broadcast; `StandardKeyboardDialog`; whether `ToAsciiString` decodes UTF-8; whether a stopped Task keeps running.
