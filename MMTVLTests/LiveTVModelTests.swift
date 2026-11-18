@@ -27,9 +27,7 @@ struct LiveTVModelTests {
         #expect(model.mode == .setupNeeded)
         #expect(model.handle(.down) == .handled)
         #expect(model.handle(.select) == .openSettings)
-        // M7m L1: Back doesn't leave; only Home does.
-        #expect(model.handle(.back) == .handled)
-        #expect(model.mode == .setupNeeded)
+        #expect(model.handle(.back) == .leave)
         #expect(player.played.isEmpty)
     }
 
@@ -74,9 +72,7 @@ struct LiveTVModelTests {
         let model = LiveTVModel(player: FakePlayer(), makePlayer: { FakePlayer() }, library: fixture.library)
         await open(model)
         #expect(model.mode == .unavailable("The playlist has no channels"))
-        // M7m L1: Back doesn't leave; only Home does.
-        #expect(model.handle(.back) == .handled)
-        #expect(model.mode == .unavailable("The playlist has no channels"))
+        #expect(model.handle(.back) == .leave)
     }
 
     @Test func failedPlaylistIsUnavailableAndSelectRetries() async throws {

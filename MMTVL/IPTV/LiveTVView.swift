@@ -72,7 +72,7 @@ struct LiveTVRootView: View {
         case .setupNeeded:
             LiveTVMessageView(title: "Live TV isn't set up",
                               message: "Paste a playlist URL in Settings → Live TV, or connect an HDHomeRun tuner.",
-                              hint: "Select: open Settings · Home: leave Live TV")
+                              hint: "Select: open Settings · Back: return")
         case .loading:
             VStack(spacing: 32) {
                 ProgressView().controlSize(.large)
@@ -81,7 +81,7 @@ struct LiveTVRootView: View {
                     .foregroundStyle(Theme.secondaryText)
             }
         case .unavailable(let message):
-            LiveTVMessageView(title: "Can't load channels", message: message, hint: "Select: try again · Home: leave Live TV")
+            LiveTVMessageView(title: "Can't load channels", message: message, hint: "Select: try again · Back: return")
         }
     }
 }

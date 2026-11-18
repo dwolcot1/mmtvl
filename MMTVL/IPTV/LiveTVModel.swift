@@ -446,17 +446,19 @@ final class LiveTVModel: LiveTVHosting {
         case .setupNeeded:
             switch command {
             case .select: return .openSettings
-            default: return .handled   // M7m L1 (D49): Back stays; only Home leaves Live TV.
+            case .back: return .leave
+            default: return .handled
             }
         case .unavailable:
             switch command {
             case .select:
                 open()
                 return .handled
-            default: return .handled   // M7m L1 (D49): Back stays; only Home leaves Live TV.
+            case .back: return .leave
+            default: return .handled
             }
         case .loading:
-            return .handled   // M7m L1 (D49): Back stays; only Home leaves Live TV.
+            return .handled   // M7m L1 (D49): Back stays while loading (a stray press mustn't drop you out); only Home leaves.
         case .player:
             return handlePlayer(command)
         case .guide:
