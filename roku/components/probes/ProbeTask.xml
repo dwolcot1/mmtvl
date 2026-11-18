@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Runs one probe off the render thread (M12 step 3, DEBUG builds only; L8). Set input, then probe, then
+     control = "run"; result arrives as { status, text, code, data }. data is for the Probes screen only (it may
+     hold stream or tuner URLs, which are never shown or logged). -->
+<component name="ProbeTask" extends="Task">
+    <interface>
+        <field id="probe" type="string" />
+        <field id="input" type="assocarray" />
+        <field id="progress" type="string" />
+        <field id="result" type="assocarray" />
+        <!-- Set by the screen when it gives up on this run (watchdog, Back): loops stop at the next chunk. -->
+        <field id="cancel" type="boolean" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Inflate.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/XMLTVScan.bs" />
+    <script type="text/brighterscript" uri="pkg:/components/probes/ProbeKit.bs" />
+    <script type="text/brighterscript" uri="pkg:/components/probes/ProbeSynthetic.bs" />
+</component>

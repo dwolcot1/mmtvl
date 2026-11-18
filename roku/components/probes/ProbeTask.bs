@@ -1,0 +1,520 @@
+' ProbeTask (M12 step 3, DEBUG builds only): the probes that need no Video node, one per run, each inside
+' try/catch so a failing probe reports "failed" instead of stopping the app. Results never contain a URL, host,
+' stream name or tuner address; addresses the screen needs go in result.data and are never shown or logged.
+' Files go to cachefs: only, and are deleted when the probe ends (the own guide's after probe e).
+
+sub init()
+    m.top.functionName = "runProbe"
+end sub
+
+sub runProbe()
+    probe = m.top.probe
+    input = m.top.input
+    if input = invalid then input = {}
+    result = invalid
+    try
+        if probe = "h"
+            result = probeLimits()
+        else if probe = "f"
+            result = probeDiscovery()
+        else if probe = "playlist"
+            result = probePlaylist(input)
+        else if probe = "lineup"
+            result = probeLineup(input)
+        else if probe = "multidecode"
+            result = probeMultiDecode()
+        else if probe = "d"
+            result = probeInflate(input)
+        else if probe = "e"
+            result = probeScan(input)
+        else
+            result = taskResult("failed", "Unknown probe", "?", {})
+        end if
+    catch e
+        result = taskResult("failed", ProbeKit.crashText(e), "crash", {})
+    end try
+    Log.info("Probe", probe + " " + result.status)
+    m.top.result = result
+end sub
+
+function taskResult(status as string, text as string, code as string, data as object) as object
+    return { status: status, text: text, code: code, data: data }
+end function
+
+function probeFolder() as string
+    folder = "cachefs:/mmtvlprobe"
+    CreateObject("roFileSystem").CreateDirectory(folder)
+    return folder
+end function
+
+' --- h: device and limits ------------------------------------------------------------------------------
+
+function probeLimits() as object
+    info = CreateObject("roDeviceInfo")
+    model = ProbeKit.safeText(info.GetModel(), 20)
+    name = ProbeKit.safeText(info.GetModelDisplayName(), 30)
+    os = "?"
+    try
+        version = info.GetOSVersion()
+        os = ProbeKit.toText(version.major) + "." + ProbeKit.toText(version.minor) + "." + ProbeKit.toText(version.revision) + "." + ProbeKit.toText(version.build)
+    catch e
+        os = ProbeKit.safeText(info.GetVersion(), 20)
+    end try
+    ui = info.GetUIResolution()
+    uiName = LCase(ProbeKit.toText(ui.name))
+    uiSize = ProbeKit.toText(ui.width) + "x" + ProbeKit.toText(ui.height)
+    videoMode = ProbeKit.safeText(info.GetVideoMode(), 20)
+    ' QA Q1: the memory calls' units and shapes are undocumented or unverified, so each raw return value is shown
+    ' with its type ("err" when the call fails, "none" without roAppMemoryMonitor), whatever its shape.
+    limit = "none"
+    available = "none"
+    percent = "none"
+    monitor = CreateObject("roAppMemoryMonitor")
+    if monitor <> invalid
+        try
+            limit = ProbeKit.rawValue(monitor.GetChannelMemoryLimit())
+        catch e
+            limit = "err"
+        end try
+        try
+            available = ProbeKit.rawValue(monitor.GetChannelAvailableMemory())
+        catch e
+            available = "err"
+        end try
+        try
+            percent = ProbeKit.rawValue(monitor.GetMemoryLimitPercent())
+        catch e
+            percent = "err"
+        end try
+    end if
+    text = name + " (" + model + "), Roku OS " + os + ", UI " + uiName + " " + uiSize + ", video " + videoMode
+    text += "; raw memory calls (value + type): GetChannelMemoryLimit " + limit + ", GetChannelAvailableMemory " + available + ", GetMemoryLimitPercent " + percent
+    code = "h m=" + model + " os=" + os + " ui=" + uiName + " v=" + videoMode + " lim=" + limit + " av=" + available + " pct=" + percent
+    return taskResult("done", text, code, {})
+end function
+
+' --- f: tuner discovery ----------------------------------------------------------------------------------
+
+function probeDiscovery() as object
+    data = {}
+    udpCode = "x"
+    udpText = "UDP not available"
+    hosts = {}
+    socket = CreateObject("roDataGramSocket")
+    if socket <> invalid
+        port = CreateObject("roMessagePort")
+        socket.SetMessagePort(port)
+        broadcastOK = false
+        try
+            broadcastOK = socket.SetBroadcast(true)
+        catch e
+            broadcastOK = false
+        end try
+        socket.NotifyReadable(true)
+        packet = CreateObject("roByteArray")
+        packet.FromHexString("0002000c0104ffffffff0204ffffffff73cc7d8f")
+        targets = ["255.255.255.255"]
+        ips = CreateObject("roDeviceInfo").GetIPAddrs()
+        for each name in ips
+            parts = ProbeKit.toText(ips[name]).Split(".")
+            if parts.Count() = 4 then targets.Push(parts[0] + "." + parts[1] + "." + parts[2] + ".255")
+        end for
+        sent = 0
+        timer = CreateObject("roTimespan")
+        for round = 1 to 2
+            for each target in targets
+                address = CreateObject("roSocketAddress")
+                address.SetAddress(target + ":65001")
+                socket.SetSendToAddress(address)
+                if socket.Send(packet, 0, packet.Count()) = packet.Count() then sent++
+            end for
+            while timer.TotalMilliseconds() < round * 750
+                msg = Wait(100, port)
+                if type(msg) = "roSocketEvent" and socket.IsReadable()
+                    buffer = CreateObject("roByteArray")
+                    buffer[1499] = 0
+                    count = socket.Receive(buffer, 0, 1500)
+                    if count >= 8 and buffer[0] = 0 and buffer[1] = 3
+                        host = ProbeKit.toText(socket.GetReceivedFromAddress().GetAddress()).Split(":")[0]
+                        if ProbeKit.isLanHost(host) then hosts[host] = true
+                    end if
+                end if
+            end while
+        end for
+        socket.Close()
+        found = hosts.Count()
+        udpCode = found.ToStr()
+        if sent = 0 then udpCode = "e"
+        udpText = "UDP broadcast: " + found.ToStr() + " tuner(s) answered (" + sent.ToStr() + " packets sent, broadcast option " + ProbeKit.toText(broadcastOK) + ")"
+        for each host in hosts
+            data.tuner = host
+            exit for
+        end for
+    end if
+    mdns = ProbeKit.getText("http://hdhomerun.local/discover.json", 3000)
+    mdnsCode = "n"
+    if mdns.ok
+        mdnsCode = "y"
+        if data.tuner = invalid then data.tuner = "hdhomerun.local"
+    end if
+    text = udpText + "; hdhomerun.local answered: " + mdnsCode
+    return taskResult("done", text, "f udp=" + udpCode + " mdns=" + mdnsCode, data)
+end function
+
+' --- a, c: the playlist ----------------------------------------------------------------------------------
+
+function probePlaylist(input as object) as object
+    url = ProbeKit.toText(input.playlist)
+    if url = "" then return taskResult("skipped", "No playlist entered", "-", {})
+    download = ProbeKit.getText(url, 30000)
+    if not download.ok
+        return taskResult("failed", "Playlist download failed: HTTP " + download.code.ToStr() + " " + download.reason, "ch=E" + download.code.ToStr(), {})
+    end if
+    read = ProbeKit.m3uEntries(download.text, 3)
+    if not read.isPlaylist then return taskResult("failed", "That address didn't return a playlist", "ch=np", {})
+    guide = "n"
+    if read.namesGuide then guide = "y"
+    text = "Playlist: " + read.entries.ToStr() + " entries, " + read.live.ToStr() + " live, read in " + ProbeKit.seconds(download.ms) + " s; names a guide: " + guide
+    return taskResult("done", text, "ch=" + read.live.ToStr() + " tvg=" + guide, { urls: read.urls })
+end function
+
+' --- b: the tuner's lineup -------------------------------------------------------------------------------
+
+function probeLineup(input as object) as object
+    tuner = ProbeKit.toText(input.tuner)
+    if tuner = "" or not ProbeKit.isLanHost(tuner) then return taskResult("skipped", "No tuner found or typed", "-", {})
+    download = ProbeKit.getText("http://" + tuner + "/lineup.json", 8000)
+    if not download.ok then return taskResult("failed", "Lineup download failed: HTTP " + download.code.ToStr(), "tn=E" + download.code.ToStr(), {})
+    lineup = ParseJson(download.text)
+    if type(lineup) <> "roArray" then return taskResult("failed", "The lineup isn't a list", "tn=bad", {})
+    data = { h264: "", mpeg2: "", other: "" }
+    for each entry in lineup
+        if type(entry) = "roAssociativeArray"
+            url = ProbeKit.toText(entry.URL)
+            drm = ProbeKit.toText(entry.DRM)
+            if url <> "" and drm <> "1" and ProbeKit.isLanHost(Log.host(url))
+                codec = UCase(ProbeKit.toText(entry.VideoCodec))
+                if codec = "H264" and data.h264 = ""
+                    data.h264 = url
+                else if codec = "MPEG2" and data.mpeg2 = ""
+                    data.mpeg2 = url
+                else if codec = "" and data.other = ""
+                    data.other = url
+                end if
+            end if
+        end if
+    end for
+    has = function(value as string) as string
+        if value <> "" then return "y"
+        return "n"
+    end function
+    text = "Lineup: " + lineup.Count().ToStr() + " channels; H.264 " + has(data.h264) + ", MPEG-2 " + has(data.mpeg2) + ", codec not listed " + has(data.other)
+    return taskResult("done", text, "tn=" + lineup.Count().ToStr(), data)
+end function
+
+' --- c: roMultiDecode ------------------------------------------------------------------------------------
+
+function probeMultiDecode() as object
+    decoder = invalid
+    try
+        decoder = CreateObject(multiDecodeName())
+    catch e
+        decoder = invalid
+    end try
+    if decoder = invalid then return taskResult("done", "roMultiDecode (task thread): not available", "md=n", {})
+    found = []
+    for each name in ["ifMultiDecode", "ifSetMessagePort", "ifGetMessagePort", "ifToStr", "ifSGNodeField", "ifAssociativeArray"]
+        if GetInterface(decoder, name) <> invalid then found.Push(name)
+    end for
+    text = "roMultiDecode (task thread): " + type(decoder) + ", interfaces " + found.Join(", ")
+    return taskResult("done", text, "md=y:" + found.Count().ToStr(), {})
+end function
+
+' --- d: inflate -------------------------------------------------------------------------------------------
+' Files are named per run (input.runId), and every loop checks m.top.cancel, so a task the screen gave up on
+' (watchdog, Back) can't overwrite the next probe's files (security L-4).
+
+const ownGuideMaxBytes = 209715200 ' 200 MB downloaded (security L-3)
+const inflateMaxBytes = 419430400 ' 400 MB inflated (security L-3)
+
+function runFile(folder as string, name as string, input as object, extension as string) as string
+    return folder + "/" + name + "-" + ProbeKit.toText(input.runId) + extension
+end function
+
+function cancelled() as boolean
+    return ProbeKit.isTrue(m.top.cancel)
+end function
+
+function probeInflate(input as object) as object
+    folder = probeFolder()
+    fs = CreateObject("roFileSystem")
+    texts = []
+    codes = []
+    guards = []
+    status = "done"
+
+    samplePath = "pkg:/probes/sample-guide.xml.gz"
+    if fs.Exists(samplePath)
+        m.top.progress = "d: inflating the sample guide"
+        target = runFile(folder, "sample", input, ".xml")
+        part = inflateFile(samplePath, target, "d sample")
+        fs.Delete(target)
+        texts.Push("Sample: " + part.text)
+        codes.Push("s=" + part.code)
+        guards.Push(part.guardInactive)
+        if part.stopped then status = "stopped"
+    else
+        texts.Push("Sample: not in this build")
+        codes.Push("s=-")
+    end if
+
+    guide = resolveGuide(input)
+    data = { guideSource: guide.source }
+    codes.Push("src=" + guide.source)
+    if cancelled()
+        texts.Push("Own guide: cancelled")
+        codes.Push("o=cancel")
+    else if guide.url = ""
+        texts.Push("Own guide: " + guide.text)
+        codes.Push("o=-")
+    else
+        xml = runFile(folder, "own", input, ".xml")
+        own = ownGuide(guide.url, folder, xml, input)
+        texts.Push("Own guide (" + guide.text + "): " + own.text)
+        codes.Push("o=" + own.code)
+        guards.Push(own.guardInactive)
+        if own.stopped then status = "stopped"
+        data.ownReady = own.ok
+        data.ownPath = xml
+    end if
+    texts.Push(guardText(guards))
+    codes.Push(guardCode(guards))
+    return taskResult(status, texts.Join(" · "), "d " + codes.Join(" "), data)
+end function
+
+' QA Q2: whether the memory guard could work (mg=on), or GetMemoryLimitPercent gave nothing (mg=off).
+function guardText(guards as object) as string
+    for each inactive in guards
+        if inactive then return "memory guard inactive (GetMemoryLimitPercent gave nothing)"
+    end for
+    if guards.Count() = 0 then return "memory guard not used"
+    return "memory guard active"
+end function
+
+function guardCode(guards as object) as string
+    for each inactive in guards
+        if inactive then return "mg=off"
+    end for
+    if guards.Count() = 0 then return "mg=-"
+    return "mg=on"
+end function
+
+' Inflates path into target: stops after 10 minutes, at 400 MB of output, on the memory guard or when cancelled.
+' { ok, stopped, code, text, bytes, guardInactive }.
+function inflateFile(path as string, target as string, label as string) as object
+    observer = ProbeKit.observer(600000, true, m.top, label, inflateMaxBytes)
+    sink = Inflate.fileSink(target)
+    timer = CreateObject("roTimespan")
+    result = Inflate.gunzip(Inflate.fileSource(path, 65536), sink, observer)
+    ms = timer.TotalMilliseconds()
+    if ms < 1 then ms = 1
+    rate = Int(result.outputBytes / 1024 / (ms / 1000))
+    lowest = lowestText(observer)
+    state = "ok"
+    if result.stopped then state = stopState(observer)
+    if not result.ok and not result.stopped then state = "err"
+    if sink.failed then state = "wf"
+    sizes = ProbeKit.megabytes(result.inputBytes) + " → " + ProbeKit.megabytes(result.outputBytes) + " MB"
+    text = state + ", " + sizes + " in " + ProbeKit.seconds(ms) + " s (" + rate.ToStr() + " KB/s of output), lowest free memory " + lowest + " MB"
+    if result.error <> "" then text += ", error: " + result.error
+    if sink.failed then text += ", a write to cachefs: failed"
+    if result.stopped then text += ", stopped (" + stopReasonText(observer) + ")"
+    code = state + "/" + ProbeKit.megabytes(result.outputBytes) + "M/" + ProbeKit.seconds(ms) + "s/" + rate.ToStr() + "kps/fr" + lowest
+    return { ok: result.ok and not sink.failed, stopped: result.stopped, code: code, text: text, bytes: result.outputBytes, guardInactive: observer.guardInactive }
+end function
+
+function lowestText(observer as object) as string
+    if observer.lowestKB < 0 then return "?"
+    return (observer.lowestKB \ 1024).ToStr()
+end function
+
+' The guide d and e download: the typed one ("typed"), else the first http(s) guide the playlist's header names
+' ("tvg", the playlist is downloaded again for it, at most 4 MB), else none ("-"). { url, source, text }; the URL
+' is never shown.
+function resolveGuide(input as object) as object
+    typed = ProbeKit.toText(input.guide)
+    if typed <> "" then return { url: typed, source: "typed", text: "typed" }
+    playlist = ProbeKit.toText(input.playlist)
+    if playlist = "" then return { url: "", source: "-", text: "none entered, and no playlist to take one from" }
+    m.top.progress = "Reading the playlist's header for its guide"
+    download = ProbeKit.getText(playlist, 30000, 4194304, m.top)
+    if not download.ok then return { url: "", source: "-", text: "none entered; the playlist didn't download (HTTP " + download.code.ToStr() + " " + download.reason + ")" }
+    named = ProbeKit.m3uEntries(download.text, 0).guideURL
+    if named = "" then return { url: "", source: "-", text: "none entered, and the playlist names none" }
+    return { url: named, source: "tvg", text: "from the playlist's header" }
+end function
+
+' Downloads the guide (at most 200 MB) and inflates it if it is gzip (by its first two bytes, not its name),
+' leaving xml. { ok, stopped, code, text, guardInactive }.
+function ownGuide(url as string, folder as string, xml as string, input as object) as object
+    fs = CreateObject("roFileSystem")
+    raw = runFile(folder, "own", input, ".bin")
+    fs.Delete(xml)
+    m.top.progress = "Downloading the guide"
+    download = ProbeKit.getFile(url, raw, 600000, ownGuideMaxBytes, m.top)
+    if not download.ok
+        fs.Delete(raw)
+        code = "dl:E" + download.code.ToStr()
+        if download.tooLarge then code = "dl:big"
+        if download.cancelled then code = "dl:cancel"
+        return { ok: false, stopped: download.cancelled, code: code, text: "download failed: HTTP " + download.code.ToStr() + " " + download.reason, guardInactive: false }
+    end if
+    text = "downloaded " + ProbeKit.megabytes(download.bytes) + " MB in " + ProbeKit.seconds(download.ms) + " s into cachefs:"
+    code = "dl:ok/" + ProbeKit.megabytes(download.bytes) + "M/" + ProbeKit.seconds(download.ms) + "s"
+    magic = CreateObject("roByteArray")
+    isGzip = false
+    if magic.ReadFile(raw, 0, 2) and magic.Count() = 2 then isGzip = magic[0] = 31 and magic[1] = 139
+    if not isGzip
+        fs.Rename(raw, xml)
+        return { ok: fs.Exists(xml), stopped: false, code: code + ",xml", text: text + ", plain XML", guardInactive: false }
+    end if
+    part = inflateFile(raw, xml, "inflating the guide")
+    fs.Delete(raw)
+    if not part.ok then fs.Delete(xml)
+    return { ok: part.ok, stopped: part.stopped, code: code + ",gz,inf:" + part.code, text: text + ", gzip; inflate " + part.text, guardInactive: part.guardInactive }
+end function
+
+' --- e: scan ---------------------------------------------------------------------------------------------
+
+function probeScan(input as object) as object
+    folder = probeFolder()
+    fs = CreateObject("roFileSystem")
+    now = CreateObject("roDateTime").AsSeconds()
+    windowStart = now - 2 * 3600
+    windowEnd = now + 36 * 3600
+    texts = []
+    codes = []
+    guards = []
+    status = "done"
+
+    ' (i) The synthetic US2-sized guide.
+    synthetic = runFile(folder, "synthetic", input, ".xml")
+    observer = ProbeKit.observer(1800000, true, m.top, "e writing")
+    timer = CreateObject("roTimespan")
+    written = ProbeSynthetic.write(synthetic, now, observer)
+    writeMs = timer.TotalMilliseconds()
+    guards.Push(observer.guardInactive)
+    held = "n"
+    if written.held then held = "y"
+    state = "ok"
+    if written.stopped then state = stopState(observer)
+    if written.error <> "" then state = "wf"
+    texts.Push("Synthetic guide: " + state + ", wrote " + ProbeKit.megabytes(written.bytes) + " MB (" + written.programmes.ToStr() + " programmes) in " + ProbeKit.seconds(writeMs) + " s, cachefs: held it " + held + ", lowest free memory " + lowestText(observer) + " MB" + errorSuffix(written.error))
+    codes.Push("g=" + state + "/" + ProbeKit.megabytes(written.bytes) + "M/" + ProbeKit.seconds(writeMs) + "s/kept:" + held)
+    if written.ok
+        ids = []
+        stride = written.channels \ 60
+        for i = 0 to 59
+            ids.Push("ch" + (1 + i * stride).ToStr() + ".example")
+        end for
+        part = scanGuide(synthetic, ids, windowStart, windowEnd, "e scanning")
+        guards.Push(part.guardInactive)
+        texts.Push("Scan: " + part.text)
+        codes.Push("s=" + part.code)
+        if part.stopped then status = "stopped"
+    else
+        codes.Push("s=-")
+        if written.stopped then status = "stopped"
+    end if
+    fs.Delete(synthetic)
+
+    ' (ii) The tester's own guide: d's file when d made it from the same source, else downloaded again.
+    guide = resolveGuide(input)
+    codes.Push("src=" + guide.source)
+    if cancelled()
+        texts.Push("Own guide: cancelled")
+        codes.Push("o=cancel")
+    else if guide.url = ""
+        texts.Push("Own guide: " + guide.text)
+        codes.Push("o=-")
+    else
+        ownXML = ProbeKit.toText(input.ownPath)
+        ready = ownXML <> "" and ProbeKit.isTrue(input.ownReady) and ProbeKit.toText(input.ownSource) = guide.source and fs.Exists(ownXML)
+        prefix = ""
+        if not ready
+            ownXML = runFile(folder, "own", input, ".xml")
+            own = ownGuide(guide.url, folder, ownXML, input)
+            guards.Push(own.guardInactive)
+            texts.Push("Own guide (" + guide.text + "): " + own.text)
+            prefix = own.code + ","
+            ready = own.ok
+        end if
+        if ready
+            channels = XMLTVScan.newChannelPass()
+            channelObserver = ProbeKit.observer(1800000, true, m.top, "e reading the guide's channels")
+            XMLTVScan.scanFile(ownXML, channels, 65536, channelObserver)
+            guards.Push(channelObserver.guardInactive)
+            ids = []
+            for each id in channels.order
+                if ids.Count() < 60 then ids.Push(id)
+            end for
+            part = scanGuide(ownXML, ids, windowStart, windowEnd, "e scanning own guide")
+            guards.Push(part.guardInactive)
+            texts.Push("Own guide (" + guide.text + ") scan (" + channels.order.Count().ToStr() + " channels, first " + ids.Count().ToStr() + " matched): " + part.text)
+            codes.Push("o=" + prefix + "ch" + channels.order.Count().ToStr() + "/" + part.code)
+            if part.stopped then status = "stopped"
+        else
+            codes.Push("o=" + prefix + "-")
+        end if
+        fs.Delete(ownXML)
+    end if
+    texts.Push(guardText(guards))
+    codes.Push(guardCode(guards))
+    return taskResult(status, texts.Join(" · "), "e " + codes.Join(" "), {})
+end function
+
+' Both passes over path, the programme pass for ids. { ok, stopped, code, text, guardInactive }.
+function scanGuide(path as string, ids as object, windowStart as dynamic, windowEnd as dynamic, label as string) as object
+    observer = ProbeKit.observer(1800000, true, m.top, label)
+    timer = CreateObject("roTimespan")
+    channels = XMLTVScan.newChannelPass()
+    first = XMLTVScan.scanFile(path, channels, 65536, observer)
+    channelMs = timer.TotalMilliseconds()
+    wanted = {}
+    for each id in ids
+        wanted[id] = true
+    end for
+    pass = XMLTVScan.newProgrammePass(wanted, windowStart, windowEnd)
+    result = first
+    if first.ok then result = XMLTVScan.scanFile(path, pass, 65536, observer)
+    ms = timer.TotalMilliseconds()
+    if ms < 1 then ms = 1
+    rate = Int(result.bytes / 1024 / (ms / 1000))
+    state = "ok"
+    if result.stopped then state = stopState(observer)
+    if not result.ok and not result.stopped then state = "err"
+    text = state + ", " + ProbeKit.megabytes(result.bytes) + " MB in " + ProbeKit.seconds(ms) + " s (channels " + ProbeKit.seconds(channelMs) + " s; " + rate.ToStr() + " KB/s), " + pass.kept.ToStr() + " programmes kept of " + pass.scanned.ToStr() + ", lowest free memory " + lowestText(observer) + " MB, highest use " + observer.highestPercent.ToStr() + " %" + errorSuffix(result.error)
+    if result.stopped then text += ", stopped (" + stopReasonText(observer) + ")"
+    code = state + "/" + ProbeKit.seconds(ms) + "s/" + pass.kept.ToStr() + "p/" + rate.ToStr() + "kps/fr" + lowestText(observer)
+    return { ok: result.ok, stopped: result.stopped, code: code, text: text, guardInactive: observer.guardInactive }
+end function
+
+function stopReasonText(observer as object) as string
+    reasons = { time: "time limit", size: "too large", memory: "memory guard: 15 % of the limit left", cancel: "cancelled" }
+    reason = reasons[observer.reason]
+    if reason = invalid then reason = "stopped"
+    return reason
+end function
+
+function stopState(observer as object) as string
+    if observer.reason = "memory" then return "mem"
+    if observer.reason = "time" then return "time"
+    if observer.reason = "size" then return "big"
+    if observer.reason = "cancel" then return "cancel"
+    return "stop"
+end function
+
+function errorSuffix(errorText as string) as string
+    if errorText = "" then return ""
+    return ", error: " + errorText
+end function

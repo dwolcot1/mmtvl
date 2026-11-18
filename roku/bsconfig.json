@@ -4,7 +4,11 @@
     "manifest",
     "source/**/*",
     "components/**/*",
-    "images/**/*"
+    "images/**/*",
+    {
+      "src": "out/probe-assets/*",
+      "dest": "probes"
+    }
   ],
   "stagingDir": "out/staging",
   "retainStagingDir": true,

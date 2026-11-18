@@ -39,4 +39,5 @@ regexes = [
   '''(?i)https?://[a-z0-9.-]*\.example([/:?"]|$)''',
   '''(AAAAbbbb1111|CCCCdddd2222|ab_cd-ef12345|ab%5Fcd%2Def12345)''',
   '''user:secret@meet\.google\.com/home\?calling=1&token=abc''',
+  '''user:secret@IPTV\.example:8080/get\.php\?token=abc#x''',
 ]

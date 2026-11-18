@@ -1,0 +1,410 @@
+' Helpers shared by the Probes screen and ProbeTask (M12 step 3, DEBUG builds only; L8).
+' Nothing here ever returns a URL, host, stream name or tuner address in text meant for the screen or the log.
+namespace ProbeKit
+
+    const memoryGuardPercent = 85
+
+    ' --- Text that is safe to show ------------------------------------------------------------------------
+
+    ' Drops every word that could be a URL, host, address or path, and shortens the rest.
+    function safeText(text as dynamic, maxLength = 60 as integer) as string
+        if text = invalid then return ""
+        words = []
+        for each word in ProbeKit.toText(text).Split(" ")
+            if word <> ""
+                if ProbeKit.looksLikeAnAddress(word)
+                    if words.Count() = 0 or words[words.Count() - 1] <> "…" then words.Push("…")
+                else
+                    words.Push(word)
+                end if
+            end if
+        end for
+        result = words.Join(" ")
+        if Len(result) > maxLength then result = Left(result, maxLength - 1) + "…"
+        return result
+    end function
+
+    function looksLikeAnAddress(word as string) as boolean
+        for each marker in ["://", "/", "@", "?", "=", "\", ":"]
+            if Instr(1, word, marker) > 0 then return true
+        end for
+        ' a.b with letters or digits on both sides of a dot: a host name or an IPv4 address
+        dot = Instr(1, word, ".")
+        while dot > 0
+            if dot > 1 and dot < Len(word)
+                before = Mid(word, dot - 1, 1)
+                after = Mid(word, dot + 1, 1)
+                if ProbeKit.isAlphanumeric(before) and ProbeKit.isAlphanumeric(after) then return true
+            end if
+            dot = Instr(dot + 1, word, ".")
+        end while
+        return false
+    end function
+
+    function isAlphanumeric(c as string) as boolean
+        code = Asc(c)
+        return (code >= 48 and code <= 57) or (code >= 65 and code <= 90) or (code >= 97 and code <= 122)
+    end function
+
+    function toText(value as dynamic) as string
+        if value = invalid then return ""
+        kind = LCase(type(value))
+        if kind = "string" or kind = "rostring" then return value
+        if kind = "roboolean" or kind = "boolean"
+            if value then return "true"
+            return "false"
+        end if
+        if GetInterface(value, "ifToStr") <> invalid then return value.ToStr()
+        return ""
+    end function
+
+    ' "Crashed: <message> (in <function> line <n>)" from a catch: no file paths.
+    function crashText(e as dynamic) as string
+        text = "Crashed"
+        if type(e) <> "roAssociativeArray" then return text
+        text += ": " + ProbeKit.safeText(e.message, 50)
+        trace = e.backtrace
+        if type(trace) = "roArray" and trace.Count() > 0
+            frame = trace[trace.Count() - 1]
+            if type(frame) = "roAssociativeArray" then text += " (in " + ProbeKit.safeText(frame.function, 40) + " line " + ProbeKit.toText(frame.line_number) + ")"
+        end if
+        return text
+    end function
+
+    ' True only for a boolean true (comparing invalid with true is a runtime error in BrightScript).
+    function isTrue(value as dynamic) as boolean
+        kind = LCase(type(value))
+        if kind <> "boolean" and kind <> "roboolean" then return false
+        return value
+    end function
+
+    ' 1834 → "1.8"
+    function seconds(ms as dynamic) as string
+        tenths = Int((ms + 50) / 100)
+        return (tenths \ 10).ToStr() + "." + (tenths mod 10).ToStr()
+    end function
+
+    ' 6815744 → "6.5" (MB, one decimal)
+    function megabytes(bytes as dynamic) as string
+        tenths = Int(bytes / 104857.6 + 0.5)
+        return (tenths \ 10).ToStr() + "." + (tenths mod 10).ToStr()
+    end function
+
+    ' --- Addresses (kept in memory only) -------------------------------------------------------------------
+
+    ' A typed tuner address → its host ("192.168.x.x", "hdhomerun.local"), or "" if it isn't one on the LAN.
+    function tunerHost(text as string) as string
+        host = Log.host(text.Trim())
+        if host = "" then return ""
+        if ProbeKit.isLanHost(host) then return host
+        return ""
+    end function
+
+    ' A private or link-local IPv4 address, or a .local name.
+    function isLanHost(host as string) as boolean
+        name = LCase(host)
+        if Len(name) > 6 and Right(name, 6) = ".local" then return true
+        parts = name.Split(".")
+        if parts.Count() <> 4 then return false
+        numbers = []
+        for each part in parts
+            if part = "" or Len(part) > 3 then return false
+            for i = 1 to Len(part)
+                code = Asc(Mid(part, i, 1))
+                if code < 48 or code > 57 then return false
+            end for
+            value = Val(part, 10)
+            if value > 255 then return false
+            numbers.Push(value)
+        end for
+        a = numbers[0]
+        b = numbers[1]
+        if a = 10 then return true
+        if a = 172 and b >= 16 and b <= 31 then return true
+        if a = 192 and b = 168 then return true
+        if a = 169 and b = 254 then return true
+        return false
+    end function
+
+    function isHttpURL(text as string) as boolean
+        lower = LCase(text.Trim())
+        return (Left(lower, 7) = "http://" and Len(lower) > 7) or (Left(lower, 8) = "https://" and Len(lower) > 8)
+    end function
+
+    ' --- A minimal M3U read (the full parser is step 6) -------------------------------------------------
+
+    ' The first max live http(s) entries that aren't VOD (MMTVL's ChannelList rule): their URLs, plus counts.
+    function m3uEntries(text as string, max as integer) as object
+        result = { urls: [], entries: 0, live: 0, isPlaylist: false, namesGuide: false, guideURL: "" }
+        body = text
+        if Left(body, 1) = Chr(65279) then body = Mid(body, 2)
+        afterInfo = { waiting: false } ' an #EXTINF line was read and its URL hasn't come yet
+        for each rawLine in body.Split(Chr(10))
+            line = rawLine.Trim()
+            if line = ""
+                ' nothing
+            else if Left(line, 7) = "#EXTM3U"
+                result.isPlaylist = true
+                if result.guideURL = "" then result.guideURL = ProbeKit.headerGuide(line)
+                if result.guideURL <> "" then result.namesGuide = true
+            else if Left(line, 8) = "#EXTINF:"
+                result.isPlaylist = true
+                afterInfo.waiting = true
+            else if Left(line, 1) = "#"
+                ' other tags
+            else if afterInfo.waiting
+                afterInfo.waiting = false
+                result.entries++
+                if ProbeKit.isLiveStream(line)
+                    result.live++
+                    if result.urls.Count() < max then result.urls.Push(line)
+                end if
+            end if
+        end for
+        return result
+    end function
+
+    ' The first http(s) guide an #EXTM3U line names: url-tvg's comma-separated values, then x-tvg-url's, in
+    ' MMTVL's order (M3UParser: attributes key="value", keys matched ignoring case, the first of a key wins). "" if none.
+    function headerGuide(line as string) as string
+        lower = LCase(line)
+        for each key in ["url-tvg", "x-tvg-url"]
+            value = ProbeKit.headerAttribute(line, lower, key)
+            for each part in value.Split(",")
+                candidate = part.Trim()
+                if ProbeKit.isHttpURL(candidate) then return candidate
+            end for
+        end for
+        return ""
+    end function
+
+    ' The value of key="…" in line (lower is LCase(line)); the key must not be the end of a longer name.
+    function headerAttribute(line as string, lower as string, key as string) as string
+        needle = key + "=" + Chr(34)
+        at = Instr(1, lower, needle)
+        while at > 0
+            before = ""
+            if at > 1 then before = Mid(lower, at - 1, 1)
+            isNamePart = before <> "" and (ProbeKit.isAlphanumeric(before) or before = "-" or before = "_")
+            if not isNamePart
+                start = at + Len(needle)
+                close = Instr(start, line, Chr(34))
+                if close = 0 then return ""
+                return Mid(line, start, close - start)
+            end if
+            at = Instr(at + 1, lower, needle)
+        end while
+        return ""
+    end function
+
+    function isLiveStream(url as string) as boolean
+        if not ProbeKit.isHttpURL(url) then return false
+        lower = LCase(url)
+        path = Mid(lower, Instr(1, lower, "://") + 3)
+        slash = Instr(1, path, "/")
+        if slash = 0 then path = "/" else path = Mid(path, slash)
+        for each stopper in ["?", "#"]
+            cut = Instr(1, path, stopper)
+            if cut > 0 then path = Left(path, cut - 1)
+        end for
+        if Instr(1, path, "/movie/") > 0 or Instr(1, path, "/series/") > 0 then return false
+        for each extension in [".mp4", ".mkv", ".avi", ".mov"]
+            if Len(path) > Len(extension) and Right(path, Len(extension)) = extension then return false
+        end for
+        return true
+    end function
+
+    ' --- Memory ----------------------------------------------------------------------------------------
+
+    ' { availableKB, percent } from roAppMemoryMonitor; -1 where this Roku OS doesn't have the call or it fails.
+    function memory() as object
+        info = { availableKB: -1, percent: -1 }
+        monitor = CreateObject("roAppMemoryMonitor")
+        if monitor = invalid then return info
+        try
+            info.availableKB = monitor.GetChannelAvailableMemory()
+        catch e
+            info.availableKB = -1
+        end try
+        try
+            info.percent = monitor.GetMemoryLimitPercent()
+        catch e
+            info.percent = -1
+        end try
+        if not ProbeKit.isNumber(info.availableKB) then info.availableKB = -1
+        if not ProbeKit.isNumber(info.percent) then info.percent = -1
+        return info
+    end function
+
+    function isNumber(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "integer" or kind = "roint" or kind = "rointeger" or kind = "longinteger" or kind = "rolonginteger" or kind = "float" or kind = "rofloat" or kind = "double" or kind = "rodouble"
+    end function
+
+    ' A raw value with its type, compact enough for the summary code (QA Q1): 524288i (Integer), 3L (LongInteger),
+    ' 1.5f, 2d, b:true, s:<text>, inv, or {key=value,…} for an associative array (maxForegroundMemory → fg,
+    ' maxBackgroundMemory → bg, maxRokuManagedHeapMemory → heap; other keys cut to 8 characters).
+    function rawValue(value as dynamic) as string
+        kind = LCase(type(value))
+        if kind = "roassociativearray"
+            names = { maxforegroundmemory: "fg", maxbackgroundmemory: "bg", maxrokumanagedheapmemory: "heap" }
+            keys = value.Keys()
+            keys.Sort()
+            parts = []
+            for each key in keys
+                name = names[LCase(key)]
+                if name = invalid then name = Left(key, 8)
+                parts.Push(name + "=" + ProbeKit.rawValue(value[key]))
+            end for
+            return "{" + parts.Join(",") + "}"
+        end if
+        if kind = "integer" or kind = "roint" or kind = "rointeger" then return value.ToStr() + "i"
+        if kind = "longinteger" or kind = "rolonginteger" then return value.ToStr() + "L"
+        if kind = "float" or kind = "rofloat" then return Str(value).Trim() + "f"
+        if kind = "double" or kind = "rodouble" then return Str(value).Trim() + "d"
+        if kind = "boolean" or kind = "roboolean" then return "b:" + ProbeKit.toText(value)
+        if kind = "string" or kind = "rostring" then return "s:" + ProbeKit.safeText(value, 20)
+        if kind = "invalid" or kind = "roinvalid" or kind = "<uninitialized>" then return "inv"
+        return kind
+    end function
+
+    ' An observer for Inflate.gunzip, XMLTVScan.scanFile and the synthetic guide. It stops (reason in brackets)
+    ' after limitMs ("time"; 0: no limit), past maxBytes ("size"; 0: no limit), when node.cancel is set ("cancel",
+    ' a probe the screen gave up on, security L-4) or, with guardMemory, when the app uses memoryGuardPercent of its
+    ' limit ("memory": 15 % left). guardInactive is true when the guard was asked for but GetMemoryLimitPercent
+    ' gave nothing (QA Q2). Samples the lowest available memory; reports progress to node.progress once a second.
+    function observer(limitMs as integer, guardMemory as boolean, node as dynamic, label as string, maxBytes = 0 as dynamic) as object
+        return {
+            timer: CreateObject("roTimespan"),
+            lastReport: 0,
+            limitMs: limitMs,
+            maxBytes: maxBytes,
+            guardMemory: guardMemory,
+            guardInactive: false,
+            node: node,
+            label: label,
+            reason: "",
+            lowestKB: -1,
+            highestPercent: -1,
+            tick: function(done as dynamic) as boolean
+                info = ProbeKit.memory()
+                if info.availableKB >= 0 and (m.lowestKB < 0 or info.availableKB < m.lowestKB) then m.lowestKB = info.availableKB
+                if info.percent > m.highestPercent then m.highestPercent = info.percent
+                if m.guardMemory and info.percent < 0 then m.guardInactive = true
+                elapsed = m.timer.TotalMilliseconds()
+                if m.node <> invalid
+                    if ProbeKit.isTrue(m.node.cancel)
+                        m.reason = "cancel"
+                        return false
+                    end if
+                    if elapsed - m.lastReport >= 1000
+                        m.lastReport = elapsed
+                        m.node.progress = m.label + ": " + ProbeKit.megabytes(done) + " MB, " + (elapsed \ 1000).ToStr() + " s"
+                    end if
+                end if
+                if m.limitMs > 0 and elapsed > m.limitMs
+                    m.reason = "time"
+                    return false
+                end if
+                if m.maxBytes > 0 and done > m.maxBytes
+                    m.reason = "size"
+                    return false
+                end if
+                if m.guardMemory and info.percent >= memoryGuardPercent
+                    m.reason = "memory"
+                    return false
+                end if
+                return true
+            end function
+        }
+    end function
+
+    ' --- HTTP (ProbeTask only) ---------------------------------------------------------------------------
+
+    function transfer(url as string, port as object) as object
+        xfer = CreateObject("roUrlTransfer")
+        xfer.SetUrl(url)
+        xfer.SetPort(port)
+        if LCase(Left(url, 8)) = "https://"
+            xfer.SetCertificatesFile("common:/certs/ca-bundle.crt")
+            xfer.InitClientCertificates()
+        end if
+        xfer.EnableEncodings(true)
+        xfer.RetainBodyOnError(false)
+        return xfer
+    end function
+
+    ' GET into a string, at most maxBytes (security L-3: 4 MB, as step 8's playlist limit). Goes through a file
+    ' in tmp: so the size can be checked while it downloads. { ok, code, text, ms, reason, tooLarge, cancelled }.
+    function getText(url as string, timeoutMs as integer, maxBytes = 4194304 as dynamic, node = invalid as dynamic) as object
+        path = "tmp:/mmtvlprobe-" + CreateObject("roDeviceInfo").GetRandomUUID() + ".txt"
+        result = ProbeKit.getFile(url, path, timeoutMs, maxBytes, node)
+        result.text = ""
+        if result.ok then result.text = ReadAsciiFile(path)
+        CreateObject("roFileSystem").Delete(path)
+        return result
+    end function
+
+    ' GET into a file, at most maxBytes (0: no limit; checked every half second while it downloads, and at the end).
+    ' node.cancel set aborts it. { ok, code, bytes, ms, reason, tooLarge, cancelled }.
+    function getFile(url as string, path as string, timeoutMs as integer, maxBytes = 0 as dynamic, node = invalid as dynamic) as object
+        fs = CreateObject("roFileSystem")
+        fs.Delete(path)
+        port = CreateObject("roMessagePort")
+        xfer = ProbeKit.transfer(url, port)
+        timer = CreateObject("roTimespan")
+        result = { ok: false, code: 0, bytes: 0, ms: 0, reason: "", tooLarge: false, cancelled: false }
+        if not xfer.AsyncGetToFile(path)
+            result.reason = "Couldn't start"
+            return result
+        end if
+        while true
+            remaining = timeoutMs - timer.TotalMilliseconds()
+            if remaining <= 0
+                xfer.AsyncCancel()
+                result.reason = "Timed out"
+                exit while
+            end if
+            if remaining > 500 then remaining = 500
+            msg = Wait(remaining, port)
+            if type(msg) = "roUrlEvent" and msg.GetInt() = 1
+                result.code = msg.GetResponseCode()
+                result.ok = result.code = 200
+                if not result.ok then result.reason = ProbeKit.safeText(msg.GetFailureReason(), 40)
+                exit while
+            end if
+            if node <> invalid and ProbeKit.isTrue(node.cancel)
+                xfer.AsyncCancel()
+                result.cancelled = true
+                result.reason = "Cancelled"
+                exit while
+            end if
+            if maxBytes > 0 and ProbeKit.fileSize(path) > maxBytes
+                xfer.AsyncCancel()
+                result.tooLarge = true
+                exit while
+            end if
+        end while
+        result.ms = timer.TotalMilliseconds()
+        result.bytes = ProbeKit.fileSize(path)
+        if maxBytes > 0 and result.bytes > maxBytes then result.tooLarge = true
+        if result.tooLarge
+            result.ok = false
+            result.reason = "Too large (over " + ProbeKit.megabytes(maxBytes) + " MB)"
+        end if
+        if not result.ok then fs.Delete(path)
+        return result
+    end function
+
+    function fileSize(path as string) as dynamic
+        info = CreateObject("roFileSystem").Stat(path)
+        if info = invalid or info.size = invalid then return 0
+        return info.size
+    end function
+
+end namespace
+
+' The undocumented component probe c looks for (OS 14.6+, Q30). A function, so bsc doesn't refuse an unknown name.
+function multiDecodeName() as string
+    return "ro" + "MultiDecode"
+end function

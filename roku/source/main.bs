@@ -1,8 +1,19 @@
 ' MMTVL Live TV for Roku (M12): shows MainScene and runs until the screen closes. Launch args are read from step 14.
-sub Main(_args as dynamic)
+sub Main(args as dynamic)
     screen = CreateObject("roSGScreen")
     port = CreateObject("roMessagePort")
     screen.SetMessagePort(port)
+    #if DEBUG
+        ' Probe i (M12 step 3): whether a contentId arrives by Main(args) or roInput, and its length only.
+        probeGlobal = screen.GetGlobalNode()
+        probeGlobal.AddField("probeLaunch", "assocarray", false)
+        probeGlobal.probeLaunch = { mainLength: probeContentIdLength(args), inputLength: -1 }
+        probeInput = CreateObject("roInput")
+        probeInput.SetMessagePort(port)
+    #else
+        ' A release build removes what a probe build may have left (typed test URLs; security L-6).
+        CreateObject("roRegistry").Delete("mmtvl-probe")
+    #end if
     screen.CreateScene("MainScene")
     screen.Show()
     Log.info("App", "Started")
@@ -10,5 +21,22 @@ sub Main(_args as dynamic)
     while true
         msg = Wait(0, port)
         if type(msg) = "roSGScreenEvent" and msg.IsScreenClosed() then return
+        #if DEBUG
+            if type(msg) = "roInputEvent"
+                launch = probeGlobal.probeLaunch
+                launch.inputLength = probeContentIdLength(msg.GetInfo())
+                probeGlobal.probeLaunch = launch
+            end if
+        #end if
     end while
 end sub
+
+#if DEBUG
+    ' The length of a launch's contentId, or -1 without one. The value itself is never kept or logged.
+    function probeContentIdLength(launchArgs as dynamic) as integer
+        if type(launchArgs) <> "roAssociativeArray" then return -1
+        contentId = launchArgs.contentId
+        if contentId = invalid then return -1
+        return Len(contentId.ToStr())
+    end function
+#end if

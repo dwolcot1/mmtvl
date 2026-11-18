@@ -2,6 +2,20 @@ sub init()
     versionText = appVersionText()
     m.top.findNode("version").text = versionText
     Log.info("App", "Showing " + versionText)
+    #if DEBUG
+        ' M12 step 3 (L8, until the About page of step 13): DEBUG builds open the Probes screen with OK or *.
+        ' Release builds (bs_const DEBUG=false) have none of this, and no probe files (bsconfig.release.json).
+        m.probes = invalid
+        hint = CreateObject("roSGNode", "Label")
+        hint.text = "Probe build · press OK to open Probes"
+        hint.font = "font:SmallSystemFont"
+        hint.color = "0xFFFFFFCC"
+        hint.width = 1920
+        hint.horizAlign = "center"
+        hint.translation = [0, 640]
+        m.top.appendChild(hint)
+        m.top.setFocus(true)
+    #end if
 end sub
 
 ' "Version <major>.<minor> Build <build>", from the manifest.
@@ -9,3 +23,28 @@ function appVersionText() as string
     info = CreateObject("roAppInfo")
     return "Version " + info.GetValue("major_version") + "." + info.GetValue("minor_version") + " Build " + info.GetValue("build_version")
 end function
+
+#if DEBUG
+    function onKeyEvent(key as string, press as boolean) as boolean
+        if press and m.probes = invalid and (key = "OK" or key = "options")
+            openProbes()
+            return true
+        end if
+        return false
+    end function
+
+    sub openProbes()
+        m.probes = CreateObject("roSGNode", "ProbesScreen")
+        m.probes.observeField("closed", "onProbesClosed")
+        m.top.appendChild(m.probes)
+        m.probes.setFocus(true)
+    end sub
+
+    sub onProbesClosed()
+        if m.probes = invalid then return
+        m.probes.unobserveField("closed")
+        m.top.removeChild(m.probes)
+        m.probes = invalid
+        m.top.setFocus(true)
+    end sub
+#end if
