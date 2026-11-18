@@ -1,0 +1,222 @@
+' The guide pipeline (M12 step 9, the plan's data flow step 3), over guides already downloaded to files: pure, no
+' nodes and no network, so GuideTask only downloads, calls GuidePipeline.process, and hands the result on.
+'
+'   1. Per guide, in priority order: a gzip file (by its magic bytes 1F 8B, not its name) is inflated to
+'      guide.xmlPath (default path + ".xml") when request.canInflate allows it and the compressed size is at most
+'      request.inflateMaxCompressedBytes (invalid: no limit; Capabilities' value), else the guide is "Can't read
+'      .gz on this Roku"; then XMLTVScan's channel pass. "Too large for this Roku" is only the observer's stop.
+'   2. EPGMatcher.match over every guide that got through 1 (D26: rule by rule, then guide by guide).
+'   3. Per guide with matched channels, XMLTVScan's programme pass for only the ids matched to that guide, kept
+'      that overlap [windowStart, windowEnd) (start < windowEnd and stop > windowStart, as MMTVL).
+' A guide that fails in 1 has no channels for matching; one that fails in 3 keeps its matches with no programmes.
+'
+' request: {
+'   guides: [{ url, path, xmlPath (optional) }]   path: the downloaded file, "" or invalid if the download failed;
+'                                                  url is used only for its host in "Failed: <host>".
+'   channels: M3U.makeChannels' channels, overrides: { key: EPG id or "" } (SettingsStore's overrides),
+'   windowStart, windowEnd: seconds since 1970,
+'   canInflate: boolean, inflateMaxCompressedBytes: integer or invalid,
+'   observer (optional): observer.tick(bytes) after each piece read or inflated; false stops that guide (the
+'     memory guard, at 15 % of the limit: GuideTask's observer). Before each tick the pipeline sets
+'     observer.retainedBytes: its estimate of the programmes held so far (XMLTVScan's), for the guard's
+'     "retained × 2" check. chunkBytes (optional): the scan's read size.
+'   maxProgrammes (optional): at most this many programmes across all guides (Capabilities' programmeLimit);
+'     a guide that reaches it keeps what it has and is "OK, N channels matched (guide shortened)", as is one
+'     with a channel past XMLTVScan.maximumPerChannel. invalid: no limit.
+'   maxInflatedBytes (optional): at most this many bytes inflated across all guides (GuideTask's cachefs: budget
+'     after its downloads); a .gz that would pass it is "Too large for this Roku". invalid: no limit.
+' }
+' result: {
+'   guides: [{ status, ok, problem, matched, channels, programmes, xmlPath, stopped, shortened }]   in request order:
+'     status   for Settings → Guides: "OK, N channels matched" (1: "channel"; " (guide shortened)" added when a cap
+'              cut it), "Can't read .gz on this Roku", "Too large for this Roku" or "Failed: <host>"
+'     problem  "" (ok), "gzip", "tooLarge" or "failed"
+'     matched  how many playlist channels this guide gives the guide for (after every guide's rules)
+'     channels [{ id, names }] from the channel pass (Match Guide's names), [] when step 1 failed
+'     programmes { epgID: [{ start, stop, title, subtitle?, summary?, category?, episode? }] }, each in file order
+'     xmlPath  the readable XML (the inflated file for a gzip guide), "" if none; never a URL
+'     stopped  the observer stopped this guide
+'   matches: { channel id: { guide, sourceID, epgID } }   (sourceID: the guide's index as a string)
+'   stopped: true when the observer stopped any guide
+' }
+' Never logs or returns a URL: statuses carry Log.host only.
+namespace GuidePipeline
+
+    const okPrefix = "OK, "
+    const gzipStatus = "Can't read .gz on this Roku"
+    const tooLargeStatus = "Too large for this Roku"
+    const failedPrefix = "Failed: "
+    const shortenedSuffix = " (guide shortened)"
+
+    function process(request as object) as object
+        observer = request.observer
+        chunkBytes = 65536
+        if request.chunkBytes <> invalid then chunkBytes = request.chunkBytes
+        results = []
+        sources = []
+        stopped = false
+        budget = { inflatedLeft: request.maxInflatedBytes, retained: 0 }
+        for i = 0 to request.guides.Count() - 1
+            guide = request.guides[i]
+            entry = GuidePipeline.readChannels(guide, request, chunkBytes, observer, budget)
+            if entry.stopped then stopped = true
+            results.Push(entry)
+            sources.Push({ sourceID: i.ToStr(), channels: entry.channels })
+        end for
+
+        matches = EPGMatcher.match(request.channels, sources, request.overrides)
+        wanted = []
+        for i = 0 to results.Count() - 1
+            wanted.Push(EPGMatcher.newSet())
+        end for
+        for each channelID in matches
+            ref = matches[channelID]
+            wanted[ref.guide][ref.epgID] = true
+            results[ref.guide].matched += 1
+        end for
+
+        programmesLeft = request.maxProgrammes
+        for i = 0 to results.Count() - 1
+            entry = results[i]
+            if entry.ok and wanted[i].Count() > 0
+                pass = XMLTVScan.newProgrammePass(wanted[i], request.windowStart, request.windowEnd, programmesLeft)
+                scan = XMLTVScan.scanFile(entry.xmlPath, pass, chunkBytes, GuidePipeline.watch(observer, pass, budget.retained, invalid))
+                if scan.ok
+                    entry.programmes = pass.programmes
+                    entry.shortened = pass.shortened
+                    budget.retained += pass.retainedBytes
+                    if programmesLeft <> invalid then programmesLeft -= pass.kept
+                else if scan.stopped
+                    stopped = true
+                    entry.stopped = true
+                    GuidePipeline.markTooLarge(entry)
+                else
+                    GuidePipeline.markFailed(entry, request.guides[i], "programmes: " + scan.error)
+                end if
+            end if
+            if entry.ok
+                entry.status = GuidePipeline.okStatus(entry.matched)
+                if entry.shortened then entry.status += GuidePipeline.shortenedSuffix
+            end if
+        end for
+        return { guides: results, matches: matches, stopped: stopped }
+    end function
+
+    ' The programmes a channel shows: its match's guide and EPG id. invalid when it has no guide or none kept.
+    function programmesFor(result as object, channelID as string) as dynamic
+        ref = result.matches[channelID]
+        if ref = invalid then return invalid
+        return result.guides[ref.guide].programmes[ref.epgID]
+    end function
+
+    ' Step 1 for one guide: inflate if needed, then the channel pass.
+    ' budget: { inflatedLeft (bytes, or invalid: no limit), retained (bytes held so far) }.
+    function readChannels(guide as object, request as object, chunkBytes as integer, observer as dynamic, budget as object) as object
+        programmes = EPGMatcher.newSet()
+        entry = { status: "", ok: true, problem: "", matched: 0, channels: [], programmes: programmes, xmlPath: "", stopped: false, shortened: false }
+        path = guide.path
+        if path = invalid or path = "" then return GuidePipeline.markFailed(entry, guide, "not downloaded")
+        info = CreateObject("roFileSystem").Stat(path)
+        if info = invalid or info.size = invalid then return GuidePipeline.markFailed(entry, guide, "no file")
+
+        xmlPath = path
+        if GuidePipeline.isGzip(path)
+            ' Inflate off, or this .gz over the device's limit: the Roku can't read it (not the memory guard).
+            limit = request.inflateMaxCompressedBytes
+            if not GuidePipeline.isTrue(request.canInflate) or (limit <> invalid and info.size > limit)
+                entry.ok = false
+                entry.problem = "gzip"
+                entry.status = GuidePipeline.gzipStatus
+                return entry
+            end if
+            xmlPath = guide.xmlPath
+            if xmlPath = invalid or xmlPath = "" then xmlPath = path + ".xml"
+            sink = Inflate.fileSink(xmlPath)
+            watcher = GuidePipeline.watch(observer, invalid, budget.retained, budget.inflatedLeft)
+            inflated = Inflate.gunzip(Inflate.fileSource(path), sink, watcher)
+            if budget.inflatedLeft <> invalid then budget.inflatedLeft -= inflated.outputBytes
+            if inflated.stopped
+                ' Past the inflate budget is this guide's size, not a stop of the run.
+                if watcher = invalid or not watcher.overLimit then entry.stopped = true
+                return GuidePipeline.markTooLarge(entry)
+            end if
+            if not inflated.ok or sink.failed
+                reason = inflated.error
+                if sink.failed then reason = "couldn't write"
+                return GuidePipeline.markFailed(entry, guide, "inflate: " + reason)
+            end if
+        end if
+        entry.xmlPath = xmlPath
+
+        pass = XMLTVScan.newChannelPass()
+        scan = XMLTVScan.scanFile(xmlPath, pass, chunkBytes, GuidePipeline.watch(observer, invalid, budget.retained, invalid))
+        if scan.stopped
+            entry.stopped = true
+            return GuidePipeline.markTooLarge(entry)
+        end if
+        if not scan.ok then return GuidePipeline.markFailed(entry, guide, "channels: " + scan.error)
+        entry.channels = XMLTVScan.channelList(pass)
+        return entry
+    end function
+
+    ' The observer as one scan or inflate sees it: sets observer.retainedBytes (base plus what pass holds so far)
+    ' before each tick, and stops past byteLimit (overLimit set; invalid: no limit). invalid when there's neither
+    ' an observer nor a limit.
+    function watch(observer as dynamic, pass as dynamic, base as dynamic, byteLimit as dynamic) as dynamic
+        if observer = invalid and byteLimit = invalid then return invalid
+        return {
+            inner: observer, pass: pass, base: base, byteLimit: byteLimit, overLimit: false,
+            tick: function(bytes as dynamic) as boolean
+                if m.byteLimit <> invalid
+                    if bytes > m.byteLimit
+                        m.overLimit = true
+                        return false
+                    end if
+                end if
+                if m.inner = invalid then return true
+                held = m.base
+                if m.pass <> invalid then held += m.pass.retainedBytes
+                m.inner.retainedBytes = held
+                return m.inner.tick(bytes)
+            end function
+        }
+    end function
+
+    ' Whether a file starts with gzip's magic bytes.
+    function isGzip(path as string) as boolean
+        bytes = CreateObject("roByteArray")
+        if not bytes.ReadFile(path, 0, 2) then return false
+        return bytes.Count() = 2 and bytes[0] = 31 and bytes[1] = 139
+    end function
+
+    function isTrue(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return (kind = "boolean" or kind = "roboolean") and value
+    end function
+
+    function okStatus(matched as integer) as string
+        if matched = 1 then return GuidePipeline.okPrefix + "1 channel matched"
+        return GuidePipeline.okPrefix + matched.ToStr() + " channels matched"
+    end function
+
+    function markTooLarge(entry as object) as object
+        entry.ok = false
+        entry.problem = "tooLarge"
+        entry.status = GuidePipeline.tooLargeStatus
+        entry.programmes = EPGMatcher.newSet()
+        return entry
+    end function
+
+    ' "Failed: <host>" ("Failed" when the URL has no host). why is logged (a reason, never a URL), not shown.
+    function markFailed(entry as object, guide as object, why as string) as object
+        host = ""
+        if guide.url <> invalid then host = Log.host(guide.url)
+        Log.warn("Guide", "Guide from " + host + " failed (" + why + ")")
+        entry.ok = false
+        entry.problem = "failed"
+        if host = "" then entry.status = "Failed" else entry.status = GuidePipeline.failedPrefix + host
+        entry.programmes = EPGMatcher.newSet()
+        return entry
+    end function
+
+end namespace

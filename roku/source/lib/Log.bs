@@ -17,25 +17,45 @@ namespace Log
         print "[MMTVL][" + category + "] Error: " + text
     end sub
 
-    ' Only the host of a URL, lowercased: no scheme, user info, port, path, query or fragment.
+    ' Text to show with a host: "text (host)", or just text when there's no host (Log.host gave ""), never "()".
+    function withHost(text as string, hostName as string) as string
+        if hostName = "" then return text
+        return text + " (" + hostName + ")"
+    end function
+
+    ' Only the host of a URL, lowercased: no scheme, user info, port, path, query or fragment. "" when:
+    '   - the text has no "://" (security L-1 of step 9: as URLPolicy.hostOf, so a bare token or path is never
+    '     logged as if it were a host);
+    '   - the authority holds a backslash, a space or a control character (security L-4 of step 8: such a URL may
+    '     be read with other separators elsewhere, and its "host" could carry a path or credentials);
+    '   - the host is longer than 253 characters or holds a non-ASCII character (security L-2 of step 9: no
+    '     DNS name is, so it's no host to show).
     function host(url as string) as string
-        rest = url
-        schemeEnd = Instr(1, rest, "://")
-        if schemeEnd > 0 then rest = Mid(rest, schemeEnd + 3)
+        schemeEnd = Instr(1, url, "://")
+        if schemeEnd = 0 then return ""
+        rest = Mid(url, schemeEnd + 3)
         for each stopper in ["/", "?", "#"]
             cut = Instr(1, rest, stopper)
             if cut > 0 then rest = Left(rest, cut - 1)
+        end for
+        for i = 1 to Len(rest)
+            code = Asc(Mid(rest, i, 1))
+            if code <= 32 or code = 92 or code = 127 then return ""
         end for
         at = rest.Split("@")
         if at.Count() = 0 then return ""
         rest = at[at.Count() - 1]
         if Left(rest, 1) = "["
             close = Instr(1, rest, "]")
-            if close > 0 then return LCase(Mid(rest, 2, close - 2))
-            return ""
+            if close > 0 then rest = Mid(rest, 2, close - 2) else return ""
+        else
+            colon = Instr(1, rest, ":")
+            if colon > 0 then rest = Left(rest, colon - 1)
         end if
-        colon = Instr(1, rest, ":")
-        if colon > 0 then rest = Left(rest, colon - 1)
+        if Len(rest) > 253 then return ""
+        for i = 1 to Len(rest)
+            if Asc(Mid(rest, i, 1)) > 127 then return ""
+        end for
         return LCase(rest)
     end function
 

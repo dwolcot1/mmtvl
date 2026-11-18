@@ -1,23 +1,26 @@
-' XMLTVScan (M12 step 3): the channel pass, the programme pass and its window, text decoding as MMTVL's
-' XMLTVParser (Foundation's XMLParser) gives it, and elements split across chunks.
+' XMLTVScan (M12 steps 3 and 9): the channel pass, the programme pass and its window, text decoding as MMTVL's
+' XMLTVParser (Foundation's XMLParser) gives it, and elements split across chunks. Step 9: display-names keep
+' their case (step 5's settled rule); MMTVL's own XMLTVTests cases are in XMLTV.test.bs.
 namespace XMLTVScanTests
 
-    sub test_channelPassLowercasesIdsAndNamesAndStopsAtTheFirstProgramme(t as object)
+    sub test_channelPassLowercasesIdsKeepsNamesAndStopsAtTheFirstProgramme(t as object)
         pass = XMLTVScanTests.scanText(XMLTVScan.newChannelPass(), XMLTVScanTests.guide(), 0)
         t.assertEqual(pass.order, ["ch1.example", "ch2.example"])
-        t.assertEqual(pass.channels["ch1.example"], ["news one", "5.1", "n&w"])
-        t.assertEqual(pass.channels["ch2.example"], ["sports two"])
+        t.assertEqual(pass.channels["ch1.example"], ["News One", "5.1", "N&W"])
+        t.assertEqual(pass.channels["ch2.example"], ["Sports Two"])
+        t.assertEqual(XMLTVScan.channelList(pass), [{ id: "ch1.example", names: ["News One", "5.1", "N&W"] }, { id: "ch2.example", names: ["Sports Two"] }])
         t.assertTrue(pass.done, "done at the first programme")
         t.assertEqual(pass.error, "")
     end sub
 
+    ' Only exact repeats are dropped when ids merge: "two" stays next to "Two".
     sub test_channelPassMergesRepeatedIdsWithNewNamesOnly(t as object)
         xml = "<tv><channel id=" + XMLTVScanTests.q("A.example") + "><display-name>One</display-name><display-name>Two</display-name></channel>"
         xml += "<channel id=" + XMLTVScanTests.q("b.example") + "><display-name>Bee</display-name></channel>"
         xml += "<channel id=" + XMLTVScanTests.q("a.EXAMPLE") + "><display-name>two</display-name><display-name>Three</display-name></channel></tv>"
         pass = XMLTVScanTests.scanText(XMLTVScan.newChannelPass(), xml, 0)
         t.assertEqual(pass.order, ["a.example", "b.example"])
-        t.assertEqual(pass.channels["a.example"], ["one", "two", "three"])
+        t.assertEqual(pass.channels["a.example"], ["One", "Two", "two", "Three"])
     end sub
 
     sub test_channelPassKeepsAtMostSixteenNames(t as object)
@@ -28,7 +31,7 @@ namespace XMLTVScanTests
         xml += "</channel><channel id=" + XMLTVScanTests.q("x") + "><display-name>Late</display-name></channel></tv>"
         pass = XMLTVScanTests.scanText(XMLTVScan.newChannelPass(), xml, 0)
         t.assertEqual(pass.channels["x"].Count(), 16)
-        t.assertEqual(pass.channels["x"][15], "name 16")
+        t.assertEqual(pass.channels["x"][15], "Name 16")
     end sub
 
     sub test_programmePassKeepsOnlyWantedChannelsInTheWindow(t as object)
@@ -73,7 +76,7 @@ namespace XMLTVScanTests
             pass = XMLTVScanTests.scanText(pass, XMLTVScanTests.guide(), size)
             t.assertEqual(pass.programmes, whole.programmes, "chunks of " + size.ToStr())
             channels = XMLTVScanTests.scanText(XMLTVScan.newChannelPass(), XMLTVScanTests.guide(), size)
-            t.assertEqual(channels.channels["ch1.example"], ["news one", "5.1", "n&w"], "channels, chunks of " + size.ToStr())
+            t.assertEqual(channels.channels["ch1.example"], ["News One", "5.1", "N&W"], "channels, chunks of " + size.ToStr())
         end for
         t.assertEqual(whole.kept, 5)
     end sub
@@ -133,17 +136,17 @@ namespace XMLTVScanTests
     end sub
 
     sub test_parsesXmltvDates(t as object)
-        t.assertEqual(XMLTVScan.parseDate("20261118120000 +0000"), 1795003200&)
-        t.assertEqual(XMLTVScan.parseDate("20261118120000"), 1795003200&)
-        t.assertEqual(XMLTVScan.parseDate("202611181200"), 1795003200&)
-        t.assertEqual(XMLTVScan.parseDate("20261118070000 -0500"), 1795003200&)
-        t.assertEqual(XMLTVScan.parseDate("20261118130000+0100"), 1795003200&)
-        t.assertEqual(XMLTVScan.parseDate("19700101000000"), 0&)
-        t.assertEqual(XMLTVScan.parseDate("20240229000000"), 1709164800&)
-        t.assertInvalid(XMLTVScan.parseDate("2026111812"), "too short")
-        t.assertInvalid(XMLTVScan.parseDate("20261318120000"), "month 13")
-        t.assertInvalid(XMLTVScan.parseDate("20261118120000 GMT"), "named zone")
-        t.assertInvalid(XMLTVScan.parseDate("20261118120000 +01"), "short offset")
+        t.assertEqual(XMLTVDate.parse("20261118120000 +0000"), 1795003200&)
+        t.assertEqual(XMLTVDate.parse("20261118120000"), 1795003200&)
+        t.assertEqual(XMLTVDate.parse("202611181200"), 1795003200&)
+        t.assertEqual(XMLTVDate.parse("20261118070000 -0500"), 1795003200&)
+        t.assertEqual(XMLTVDate.parse("20261118130000+0100"), 1795003200&)
+        t.assertEqual(XMLTVDate.parse("19700101000000"), 0&)
+        t.assertEqual(XMLTVDate.parse("20240229000000"), 1709164800&)
+        t.assertInvalid(XMLTVDate.parse("2026111812"), "too short")
+        t.assertInvalid(XMLTVDate.parse("20261318120000"), "month 13")
+        t.assertInvalid(XMLTVDate.parse("20261118120000 GMT"), "named zone")
+        t.assertInvalid(XMLTVDate.parse("20261118120000 +01"), "short offset")
     end sub
 
     sub test_decodesTextAsXmlParserDoes(t as object)
@@ -190,6 +193,111 @@ namespace XMLTVScanTests
     ' --- Helpers ---
 
     ' Feeds text in chunks of size characters (0: all at once), then finishes the pass.
+    ' --- Caps (QA-M2 / security M-2 of step 9) ---
+
+    sub test_textIsClippedToMMTVLsReadingLengths(t as object)
+        long = String(500, "t")
+        desc = String(1200, "d")
+        xml = "<tv><programme start=" + XMLTVScanTests.q("20261118100000 +0000") + " stop=" + XMLTVScanTests.q("20261118110000 +0000") + " channel=" + XMLTVScanTests.q("c") + ">"
+        xml += "<title>" + long + "</title><sub-title>" + long + "</sub-title><desc>" + desc + "</desc><category>" + long + "</category></programme></tv>"
+        pass = XMLTVScanTests.scanText(XMLTVScan.newProgrammePass({ "c": true }, XMLTVScanTests.at("20261118000000"), XMLTVScanTests.at("20261119000000")), xml, 0)
+        item = pass.programmes["c"][0]
+        t.assertEqual(Len(item.title), 400, "title")
+        t.assertEqual(Len(item.subtitle), 400, "sub-title")
+        t.assertEqual(Len(item.category), 400, "category")
+        t.assertEqual(Len(item.summary), 1000, "desc")
+        t.assertTrue(pass.retainedBytes >= 2200, "the estimate counts the text")
+    end sub
+
+    sub test_displayNamesAreClippedTo200(t as object)
+        xml = "<tv><channel id=" + XMLTVScanTests.q("x") + "><display-name>" + String(250, "n") + "</display-name></channel></tv>"
+        pass = XMLTVScanTests.scanText(XMLTVScan.newChannelPass(), xml, 0)
+        t.assertEqual(Len(pass.channels["x"][0]), 200)
+    end sub
+
+    ' UTF-16 units, as Swift counts: a character above U+FFFF is 2, and is never cut in half.
+    sub test_clipCountsUTF16UnitsAndNeverSplitsACharacter(t as object)
+        finder = Unicode.newNonASCIIFinder()
+        emoji = Chr(128512)
+        t.assertEqual(XMLTVScan.clip("abc", 2, finder), "ab")
+        t.assertEqual(XMLTVScan.clip("abc", 3, finder), "abc")
+        t.assertEqual(XMLTVScan.clip(emoji + emoji + "a", 4, finder), emoji + emoji, "two emoji are 4 units")
+        t.assertEqual(XMLTVScan.clip(emoji + emoji + "a", 3, finder), emoji, "not half of the second")
+        t.assertEqual(XMLTVScan.clip("a" + emoji, 2, finder), "a", "1 + 2 units")
+        t.assertEqual(XMLTVScan.clip(Chr(233) + Chr(233), 2, finder), Chr(233) + Chr(233), "BMP characters are 1 unit")
+    end sub
+
+    ' clip's per-character decision, fed code points: a Roku's UTF-8 Mid gives a code point above U+FFFF (2 units,
+    ' 1 character), an interpreter's UTF-16 Mid a high surrogate (2 units over 2), anything else 1 unit.
+    sub test_charWidthForEachStringModel(t as object)
+        t.assertEqual(XMLTVScan.charWidth(128512), { units: 2, stride: 1 }, "U+1F600 as a Roku gives it")
+        t.assertEqual(XMLTVScan.charWidth(65536), { units: 2, stride: 1 }, "U+10000")
+        t.assertEqual(XMLTVScan.charWidth(1114111), { units: 2, stride: 1 }, "U+10FFFF")
+        t.assertEqual(XMLTVScan.charWidth(65535), { units: 1, stride: 1 }, "U+FFFF")
+        t.assertEqual(XMLTVScan.charWidth(55357), { units: 2, stride: 2 }, "a high surrogate (UTF-16 strings)")
+        t.assertEqual(XMLTVScan.charWidth(56320), { units: 1, stride: 1 }, "a low surrogate alone")
+        t.assertEqual(XMLTVScan.charWidth(233), { units: 1, stride: 1 }, "é")
+        t.assertEqual(XMLTVScan.charWidth(65), { units: 1, stride: 1 }, "A")
+    end sub
+
+    sub test_atMost300ProgrammesPerChannel(t as object)
+        parts = ["<tv>"]
+        for i = 0 to 309
+            start = XMLTVScanTests.stamp(i * 300)
+            parts.Push("<programme start=" + XMLTVScanTests.q(start) + " stop=" + XMLTVScanTests.q(XMLTVScanTests.stamp(i * 300 + 300)) + " channel=" + XMLTVScanTests.q("c") + "><title>P" + i.ToStr() + "</title></programme>")
+        end for
+        parts.Push("</tv>")
+        pass = XMLTVScanTests.scanText(XMLTVScan.newProgrammePass({ "c": true }, XMLTVScanTests.at("20261118000000"), XMLTVScanTests.at("20261120000000")), parts.Join(""), 0)
+        t.assertEqual(pass.programmes["c"].Count(), 300)
+        t.assertEqual(pass.programmes["c"][299].title, "P299", "the first 300, in file order")
+        t.assertTrue(pass.shortened, "shortened")
+        t.assertEqual(XMLTVScan.maximumPerChannel, 300)
+    end sub
+
+    sub test_theTotalCapStopsAddingAndSaysShortened(t as object)
+        parts = ["<tv>"]
+        for i = 0 to 9
+            for each id in ["a", "b"]
+                parts.Push("<programme start=" + XMLTVScanTests.q(XMLTVScanTests.stamp(i * 600)) + " stop=" + XMLTVScanTests.q(XMLTVScanTests.stamp(i * 600 + 600)) + " channel=" + XMLTVScanTests.q(id) + "><title>T</title></programme>")
+            end for
+        end for
+        parts.Push("</tv>")
+        pass = XMLTVScanTests.scanText(XMLTVScan.newProgrammePass({ "a": true, "b": true }, XMLTVScanTests.at("20261118000000"), XMLTVScanTests.at("20261120000000"), 7), parts.Join(""), 0)
+        t.assertEqual(pass.kept, 7)
+        t.assertTrue(pass.shortened, "shortened")
+        whole = XMLTVScanTests.scanText(XMLTVScan.newProgrammePass({ "a": true, "b": true }, XMLTVScanTests.at("20261118000000"), XMLTVScanTests.at("20261120000000")), parts.Join(""), 0)
+        t.assertEqual(whole.kept, 20, "no cap")
+        t.assertFalse(whole.shortened, "not shortened")
+    end sub
+
+    ' A programme starting at or after the window's end is skipped before its text is read (and doesn't count).
+    sub test_programmesAfterTheWindowDontCount(t as object)
+        parts = ["<tv>"]
+        for i = 0 to 9
+            parts.Push("<programme start=" + XMLTVScanTests.q(XMLTVScanTests.stamp(86400 + i * 600)) + " channel=" + XMLTVScanTests.q("a") + "><title>Later</title></programme>")
+        end for
+        parts.Push("</tv>")
+        pass = XMLTVScanTests.scanText(XMLTVScan.newProgrammePass({ "a": true }, XMLTVScanTests.at("20261118000000"), XMLTVScanTests.at("20261118120000"), 3), parts.Join(""), 0)
+        t.assertEqual(pass.kept, 0)
+        t.assertFalse(pass.shortened, "nothing counted")
+        t.assertEqual(pass.retainedBytes, 0)
+    end sub
+
+    ' An XMLTV time offset seconds from 2026-11-18 00:00 UTC.
+    function stamp(offset as integer) as string
+        date = CreateObject("roDateTime")
+        date.FromSeconds(XMLTVScanTests.at("20261118000000") + offset)
+        return XMLTVScanTests.pad(date.GetYear(), 4) + XMLTVScanTests.pad(date.GetMonth(), 2) + XMLTVScanTests.pad(date.GetDayOfMonth(), 2) + XMLTVScanTests.pad(date.GetHours(), 2) + XMLTVScanTests.pad(date.GetMinutes(), 2) + XMLTVScanTests.pad(date.GetSeconds(), 2) + " +0000"
+    end function
+
+    function pad(value as integer, width as integer) as string
+        text = value.ToStr()
+        while Len(text) < width
+            text = "0" + text
+        end while
+        return text
+    end function
+
     function scanText(pass as object, text as string, size as integer) as object
         if size = 0
             XMLTVScan.feed(pass, text)
@@ -205,7 +313,7 @@ namespace XMLTVScanTests
     end function
 
     function at(text as string) as dynamic
-        return XMLTVScan.parseDate(text)
+        return XMLTVDate.parse(text)
     end function
 
     function q(text as string) as string

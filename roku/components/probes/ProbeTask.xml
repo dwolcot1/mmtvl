@@ -13,6 +13,8 @@
     </interface>
     <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/Inflate.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Unicode.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/XMLTVDate.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/XMLTVScan.bs" />
     <script type="text/brighterscript" uri="pkg:/components/probes/ProbeKit.bs" />
     <script type="text/brighterscript" uri="pkg:/components/probes/ProbeSynthetic.bs" />

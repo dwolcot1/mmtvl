@@ -9,8 +9,43 @@ namespace LogTests
         t.assertEqual(Log.host("http://[fd00::1]:5004/auto/v5.1"), "fd00::1")
     end sub
 
+    ' Security L-4 of step 8: an authority with a backslash, a space or a control character gives no host.
+    sub test_returnsNoHostForAnAuthorityWithABackslashSpaceOrControlCharacter(t as object)
+        shown = Log.host("http://host\live\user\pass")
+        t.assertEqual(shown, "")
+        t.assertEqual(Instr(1, shown, "user"), 0, "no user")
+        t.assertEqual(Log.host("http://host user:pass@x.example/"), "")
+        t.assertEqual(Log.host("http://host" + Chr(9) + "x.example/"), "")
+        t.assertEqual(Log.host("http://host" + Chr(1) + "x.example/"), "")
+        t.assertEqual(Log.host("http://iptv.example/path\with\backslash"), "iptv.example", "a backslash after the authority")
+    end sub
+
     sub test_returnsAnEmptyHostForAnEmptyString(t as object)
         t.assertEqual(Log.host(""), "")
+    end sub
+
+    ' Security L-1 of step 9: no "://", no host (a token or path is never shown as one).
+    sub test_returnsNoHostWithoutAScheme(t as object)
+        t.assertEqual(Log.host("abc123secret"), "")
+        t.assertEqual(Log.host("iptv.example/get.php?password=p"), "")
+        t.assertEqual(Log.host("/live/user/pass/1.ts"), "")
+    end sub
+
+    ' Security L-2 of step 9: a host over 253 characters or with a non-ASCII character isn't shown.
+    sub test_returnsNoHostWhenItIsTooLongOrNotASCII(t as object)
+        long = String(254, "a")
+        t.assertEqual(Log.host("http://" + long + "/x"), "")
+        t.assertEqual(Log.host("http://" + String(253, "a") + "/x"), String(253, "a"), "253 is fine")
+        t.assertEqual(Log.host("http://bücher.example/x"), "")
+        t.assertEqual(Log.host("http://user:pässword@iptv.example/x"), "iptv.example", "only the host counts")
+        t.assertEqual(Log.host("http://iptv.example/päth"), "iptv.example", "the path doesn't count")
+    end sub
+
+    ' QA minor of step 9: no "()" when there's no host to show.
+    sub test_withHostLeavesOutAnEmptyHost(t as object)
+        t.assertEqual(Log.withHost("Couldn't load the playlist", "iptv.example"), "Couldn't load the playlist (iptv.example)")
+        t.assertEqual(Log.withHost("Couldn't load the playlist", ""), "Couldn't load the playlist")
+        t.assertEqual(Log.withHost("Couldn't load the playlist", Log.host("abc123secret")), "Couldn't load the playlist", "a source with no scheme")
     end sub
 
 end namespace

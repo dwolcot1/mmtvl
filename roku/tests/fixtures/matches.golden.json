@@ -1,0 +1,140 @@
+{
+  "guides" : [
+    "guide-a.xml",
+    "guide-b.xml"
+  ],
+  "matches" : {
+    "id:both.guides.us" : null,
+    "id:both.guides.us#2" : {
+      "epgID" : "both.guides.us",
+      "file" : "guide-a.xml",
+      "guide" : 0
+    },
+    "id:fallthrough.tvg" : null,
+    "id:key.by.tvg" : {
+      "epgID" : "override.target.a",
+      "file" : "guide-a.xml",
+      "guide" : 0
+    },
+    "id:only.in.b.us" : {
+      "epgID" : "only.in.b.us",
+      "file" : "guide-b.xml",
+      "guide" : 1
+    },
+    "id:sports.one.us" : {
+      "epgID" : "sports.one.us",
+      "file" : "guide-a.xml",
+      "guide" : 0
+    },
+    "id:sports.one.us#2" : {
+      "epgID" : "sports.one.us",
+      "file" : "guide-a.xml",
+      "guide" : 0
+    },
+    "id:sports.plus.us" : {
+      "epgID" : "sports.plus.us",
+      "file" : "guide-a.xml",
+      "guide" : 0
+    },
+    "id:tvg.loses" : {
+      "epgID" : "only.in.b.us",
+      "file" : "guide-b.xml",
+      "guide" : 1
+    },
+    "id:upper.key.us" : null,
+    "name:a&e" : {
+      "epgID" : "a.and.e.us",
+      "file" : "guide-a.xml",
+      "guide" : 0
+    },
+    "name:café télé fhd" : {
+      "epgID" : "cafe.tele.fr",
+      "file" : "guide-a.xml",
+      "guide" : 0
+    },
+    "name:channel 7" : null,
+    "name:cinema max sd hevc" : {
+      "epgID" : "cinema.max.us",
+      "file" : "guide-a.xml",
+      "guide" : 0
+    },
+    "name:fallback name" : {
+      "epgID" : "fallback.a",
+      "file" : "guide-a.xml",
+      "guide" : 0
+    },
+    "name:kids zone" : {
+      "epgID" : "kids.a",
+      "file" : "guide-a.xml",
+      "guide" : 0
+    },
+    "name:kids zone#2" : {
+      "epgID" : "kids.a",
+      "file" : "guide-a.xml",
+      "guide" : 0
+    },
+    "name:kids zone#3" : {
+      "epgID" : "kids.a",
+      "file" : "guide-a.xml",
+      "guide" : 0
+    },
+    "name:lions @ -h" : null,
+    "name:lions @ bears-a" : null,
+    "name:lions @ bears-h" : {
+      "epgID" : "lions.bears.b",
+      "file" : "guide-b.xml",
+      "guide" : 1
+    },
+    "name:lions @ bears-x" : null,
+    "name:local news" : {
+      "epgID" : "local.news.b",
+      "file" : "guide-b.xml",
+      "guide" : 1
+    },
+    "name:many 16" : {
+      "epgID" : "many.names.us",
+      "file" : "guide-a.xml",
+      "guide" : 0
+    },
+    "name:many 17" : null,
+    "name:merge two" : {
+      "epgID" : "merge.us",
+      "file" : "guide-a.xml",
+      "guide" : 0
+    },
+    "name:movie channel" : null,
+    "name:nandu deportes uhd" : {
+      "epgID" : "nandu.deportes.b",
+      "file" : "guide-b.xml",
+      "guide" : 1
+    },
+    "name:newsroom-h" : null,
+    "name:no group channel" : null,
+    "name:odd channel tvg-logo=\"https://logo.example/odd.png\"" : null,
+    "name:override both" : {
+      "epgID" : "both.guides.us",
+      "file" : "guide-a.xml",
+      "guide" : 0
+    },
+    "name:plain name a" : {
+      "epgID" : "ticker.b",
+      "file" : "guide-b.xml",
+      "guide" : 1
+    },
+    "name:shared name" : {
+      "epgID" : "name.first.a",
+      "file" : "guide-a.xml",
+      "guide" : 0
+    },
+    "name:sports+ hd" : {
+      "epgID" : "sports.plus.us",
+      "file" : "guide-a.xml",
+      "guide" : 0
+    },
+    "name:talk time, late edition" : {
+      "epgID" : "hello.world.b",
+      "file" : "guide-b.xml",
+      "guide" : 1
+    }
+  }
+}

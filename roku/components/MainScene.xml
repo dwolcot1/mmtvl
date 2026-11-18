@@ -1,7 +1,37 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<!-- The screen router (M12). Step 2: the app's name and version only. -->
+<!-- The screen router (M12). Step 2: the app's name and version. Step 8: loads the settings and the playlist
+     (PlaylistTask) at launch, then every 15 minutes when stale, and shows the playlist's status. Step 9: after
+     each playlist load and on the 15-minute tick, reads the guides (GuideTask) when one is due (12 h) or the
+     guide sources changed. Screens come with steps 10-13 and read the fields below. -->
 <component name="MainScene" extends="Scene">
+    <interface>
+        <!-- Lineup.build's result for the last playlist that loaded (kept when a later load fails). -->
+        <field id="lineup" type="assocarray" />
+        <!-- The playlist's url-tvg guides, as URLPolicy allows them (for the guide task, step 9). -->
+        <field id="playlistGuideURLs" type="array" />
+        <!-- "" after a load, else what to show: "Couldn't load the playlist (<host>)", or without "(<host>)" when there is none. -->
+        <field id="playlistStatus" type="string" />
+        <!-- Step 9, Settings → Guides: one row per guide in priority order, no URLs (security L-3):
+             { index, host, status, problem, matched, fromPlaylist, stale } (GuideFetch.statusRows). Kept when a
+             guide task fails. -->
+        <field id="guideStatuses" type="array" />
+        <!-- "" or a note on the last guide run ("Memory guard inactive: …"). -->
+        <field id="guideNote" type="string" />
+        <!-- QA-M2 / security M-2 of step 9: the finished GuideTask that holds the programmes in its guideData field
+             (GuideFetch.guideData's shape, see GuideFetch.bs: { windowStart, windowEnd, programmeCount, matches,
+             guides: [{ programmes, channels }] }; read with GuidePipeline.programmesFor(data, channelID)). The scene
+             never copies or relays them. Step 12: when guideRevision changes, read guideHolder.guideData once
+             with a plain field get (one copy, in the screen's own logic) and keep it in the screen's m; never
+             MoveFromField (it would empty the holder for other readers), never read it per row. invalid until a
+             run finishes. -->
+        <field id="guideHolder" type="node" />
+        <!-- Goes up by 1 each time guideHolder and guideStatuses are replaced; observe this. -->
+        <field id="guideRevision" type="integer" value="0" />
+    </interface>
     <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/SettingsStore.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Refresh.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/GuideSources.bs" />
     <children>
         <Rectangle id="background" width="1920" height="1080" color="0x1C1C1EFF" />
         <Label
@@ -19,5 +49,12 @@
             width="1920"
             horizAlign="center"
             translation="[0, 560]" />
+        <Label
+            id="status"
+            font="font:SmallSystemFont"
+            color="0xFFFFFFCC"
+            width="1920"
+            horizAlign="center"
+            translation="[0, 700]" />
     </children>
 </component>

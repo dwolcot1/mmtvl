@@ -1,0 +1,269 @@
+' The guide task's pure parts beyond GuideSources (M12 step 9): the download limits, the address check's chain,
+' the memory guard, and the shapes handed to the scene. No nodes and no network, so they run in local tests;
+' GuideTask (components/tasks/GuideTask.bs) downloads and calls them.
+'
+'   publicChain(source) -> whether the address a download reached must be public (URLPolicy.allowsPeer): a url-tvg
+'     guide named by a playlist that isn't itself on the LAN (URLPolicy.isLANHop). A pasted guide is the user's,
+'     like the playlist, so a LAN address is fine for it (loopback, link-local and the Roku's own never are).
+'   memoryCheck(availableRaw, limitMB, retainedBytes) -> { known, stop, availableMB }: the memory guard (below).
+'   newObserver(options) -> the observer GuidePipeline.process calls (tick(bytes)): stops when cancelled, at the
+'     size cap, the time limit, or the memory guard. Its clock, memory reader and cancel check are replaceable.
+'   downloadLimit(usedBytes) -> the most the next download may take: maximumBytes, or what's left of the run's
+'     cachefs: budget (security L-4 of step 9), whichever is less; 0 when nothing is left.
+'   markUnreadable(outcomes, result) -> the guides whose new or fresh file the pipeline couldn't read (QA minor of
+'     step 9): their outcome state becomes "unreadable"; the task then records a failure and drops the file.
+'   statusRows(sources, outcomes, result) -> Settings → Guides' rows, no URLs (below).
+'   guideData(result, windowStart, windowEnd) -> what the guide screen reads (below).
+'   prunable(names, sources) -> the files in cachefs:/guides to delete when a run starts (no other run alive).
+'   logLine(row) -> "Guide <i> from <host>: <status>".
+namespace GuideFetch
+
+    ' The largest guide download, compressed or plain, and the largest inflated .gz (the observer's size cap):
+    ' 120 MB. US2, the biggest guide seen, is 6.5 MB gzipped and 77 MB as XML (Research), so this is about 1.5
+    ' times its plain size. cachefs: is RAM that doesn't count toward the app's memory but is evicted under
+    ' pressure; whether a stick holds 77 MB there is probe 3e's question, and step 4 may lower this per class.
+    const maximumBytes = 125829120
+    ' A download is given up after this long (MMTVL's request timeout is 120 s between bytes; this is the whole
+    ' transfer): 77 MB in 180 s needs about 0.45 MB/s.
+    const downloadTimeoutSeconds = 180
+    ' Inflating and scanning every guide (GuidePipeline.process) stops after this long, and the guide it was on is
+    ' "Too large for this Roku" (so are any after it). Probe 3d's 10-minute stop; step 4's numbers may lower it.
+    const processTimeLimitSeconds = 600
+    ' What one run may put in cachefs: (RAM) in all: its downloads, cached files included, plus inflated copies.
+    ' A guide that would pass it is "Too large for this Roku" (security L-4 of step 9; provisional until step 4).
+    const runBudgetBytes = 314572800
+    ' The memory guard stops a guide when less than this percentage of the app's limit is left (plan step 9).
+    const memoryGuardPercent = 15
+    ' How often the observer asks roAppMemoryMonitor (ms); tick is called after every 64 KB read or inflated.
+    const memorySampleMs = 250
+    ' Whether .gz guides are inflated at all (D55): step 4 decides from probe 3d; until then on, within
+    ' Capabilities' per-class limit (inflateMaxCompressedBytes). Off: every .gz guide is "Can't read .gz on this Roku".
+    const inflateEnabled = true
+    const guardInactiveNote = "Memory guard inactive: this Roku didn't report its memory"
+
+    function publicChain(source as object) as boolean
+        if not GuideSources.isTrue(source.fromPlaylist) then return false
+        if not GuideSources.isText(source.referrerURL) then return true
+        return not URLPolicy.isLANHop(source.referrerURL)
+    end function
+
+    ' The memory guard (plan step 9): stop when the memory left is under 15 % of the app's limit, or (QA-M2 /
+    ' security M-2 of step 9) less than twice retainedBytes, the pipeline's estimate of the programmes held: the
+    ' task's copy and one reader's copy must both fit. limitMB is
+    ' Capabilities.memoryLimitMB's reading (invalid: unknown). availableRaw is GetChannelAvailableMemory's value,
+    ' whose unit is unverified (step 3 logs it raw). Capabilities reads the limit by magnitude with fixed floors,
+    ' but those floors would read a KB value under 64 MB as MB, exactly where the guard matters, so the memory
+    ' left is read against the limit instead: as MB, KB or bytes, the first reading that isn't more than the limit
+    ' (memory left is never more than the limit). Only a value under 1/1024 of the limit in its own unit is misread
+    ' (as the larger unit), when the app is about to be stopped anyway. Not a number, negative, or more than the
+    ' limit even as bytes: unknown. Unknown means the guard is inactive: { known: false, stop: false }.
+    function memoryCheck(availableRaw as dynamic, limitMB as dynamic, retainedBytes = 0 as dynamic) as object
+        unknown = { known: false, stop: false, availableMB: invalid }
+        if not Refresh.isNumber(limitMB) then return unknown
+        if limitMB <= 0 then return unknown
+        if not Refresh.isNumber(availableRaw) then return unknown
+        if availableRaw < 0 then return unknown
+        for each divisor in [1, 1024, 1048576]
+            megabytes = availableRaw / divisor
+            if megabytes <= limitMB
+                shouldStop = megabytes * 100 < limitMB * GuideFetch.memoryGuardPercent
+                if Refresh.isNumber(retainedBytes)
+                    if retainedBytes * 2 > megabytes * 1048576 then shouldStop = true
+                end if
+                return { known: true, stop: shouldStop, availableMB: megabytes }
+            end if
+        end for
+        return unknown
+    end function
+
+    ' options: { limitMB, maxBytes, timeLimitMs } (each optional: invalid is no limit, and no memory guard without
+    ' limitMB). tick(bytes) returns false, with reason set and pushed to stops, when isCancelled() ("cancel": the
+    ' scene's watchdog gave up on the task, security M-3 of step 9), when the bytes read or inflated so far in this
+    ' file pass maxBytes ("size"), after timeLimitMs since the observer was made ("time"), or when memoryCheck says
+    ' stop ("memory", sampled every memorySampleMs, with retainedBytes, which GuidePipeline sets before each tick).
+    ' guardInactive is set when a sample's memory wasn't known; lowestMB is the least memory left seen.
+    ' elapsedMs() and availableMemory() are the real clock and roAppMemoryMonitor's GetChannelAvailableMemory;
+    ' isCancelled() is false until the task sets its own; tests replace them.
+    function newObserver(options as object) as object
+        return {
+            limitMB: options.limitMB,
+            maxBytes: options.maxBytes,
+            timeLimitMs: options.timeLimitMs,
+            timer: CreateObject("roTimespan"),
+            lastSampleMs: -1,
+            reason: "",
+            stops: [],
+            guardInactive: false,
+            lowestMB: invalid,
+            retainedBytes: 0,
+            isCancelled: GuideFetch.neverCancelled,
+            elapsedMs: GuideFetch.timerElapsedMs,
+            availableMemory: GuideFetch.deviceAvailableMemory,
+            tick: GuideFetch.observerTick
+        }
+    end function
+
+    ' Runs with m = the observer.
+    function observerTick(bytes as dynamic) as boolean
+        if m.isCancelled() then return GuideFetch.observerStop(m, "cancel")
+        if Refresh.isNumber(m.maxBytes) and Refresh.isNumber(bytes)
+            if bytes > m.maxBytes then return GuideFetch.observerStop(m, "size")
+        end if
+        elapsed = m.elapsedMs()
+        if Refresh.isNumber(m.timeLimitMs)
+            if elapsed > m.timeLimitMs then return GuideFetch.observerStop(m, "time")
+        end if
+        if m.lastSampleMs >= 0 and elapsed - m.lastSampleMs < GuideFetch.memorySampleMs then return true
+        m.lastSampleMs = elapsed
+        check = GuideFetch.memoryCheck(m.availableMemory(), m.limitMB, m.retainedBytes)
+        if not check.known
+            m.guardInactive = true
+            return true
+        end if
+        if m.lowestMB = invalid then m.lowestMB = check.availableMB
+        if check.availableMB < m.lowestMB then m.lowestMB = check.availableMB
+        if check.stop then return GuideFetch.observerStop(m, "memory")
+        return true
+    end function
+
+    function observerStop(observer as object, why as string) as boolean
+        observer.reason = why
+        observer.stops.Push(why)
+        return false
+    end function
+
+    function neverCancelled() as boolean
+        return false
+    end function
+
+    ' Runs with m = the observer.
+    function timerElapsedMs() as dynamic
+        return m.timer.TotalMilliseconds()
+    end function
+
+    ' GetChannelAvailableMemory's raw value, or invalid where this Roku OS lacks it (OS 12.5+).
+    function deviceAvailableMemory() as dynamic
+        try
+            monitor = CreateObject("roAppMemoryMonitor")
+            if monitor = invalid then return invalid
+            return monitor.GetChannelAvailableMemory()
+        catch e
+            return invalid
+        end try
+        return invalid
+    end function
+
+    function downloadLimit(usedBytes as dynamic) as dynamic
+        room = GuideFetch.runBudgetBytes - usedBytes
+        if room <= 0 then return 0
+        if room < GuideFetch.maximumBytes then return room
+        return GuideFetch.maximumBytes
+    end function
+
+    ' A guide counts as unreadable when its file was just downloaded or fresh from cachefs: ("downloaded",
+    ' "cached") and the pipeline failed it (not XMLTV, malformed, a corrupt .gz) or found no <channel> in it.
+    ' Returns their indices. Not "Can't read .gz on this Roku" (problem "gzip"): that's the device, not the file.
+    function markUnreadable(outcomes as object, result as object) as object
+        found = []
+        for i = 0 to outcomes.Count() - 1
+            state = outcomes[i].state
+            entry = result.guides[i]
+            if state = "downloaded" or state = "cached"
+                if entry.problem = "failed" or (entry.ok and entry.channels.Count() = 0)
+                    outcomes[i].state = "unreadable"
+                    found.Push(i)
+                end if
+            end if
+        end for
+        return found
+    end function
+
+    ' Settings → Guides (security L-3: no URLs): one row per source, in priority order:
+    '   { index, host, status, problem, matched, fromPlaylist, stale }
+    ' outcomes[i].state is the download's: "downloaded", "cached" (a fresh file reused), "stale" (the download
+    ' failed and the last file was read: status "Failed: <host>", stale true, programmes still shown, as MMTVL keeps
+    ' a guide's rows when a refresh fails), "tooLarge" (over maximumBytes or the run's budget, or still waiting
+    ' after that: "Too large for this Roku"), "unreadable" (markUnreadable: "Failed: <host>"), "failed" or
+    ' "refused" (no file: the pipeline's "Failed: <host>"). Otherwise the pipeline's status and problem.
+    function statusRows(sources as object, outcomes as object, result as object) as object
+        rows = []
+        for i = 0 to sources.Count() - 1
+            entry = result.guides[i]
+            outcome = outcomes[i]
+            host = Log.host(sources[i].url)
+            row = { index: sources[i].index, host: host, status: entry.status, problem: entry.problem, matched: entry.matched, fromPlaylist: GuideSources.isTrue(sources[i].fromPlaylist), stale: false }
+            if outcome.state = "tooLarge"
+                row.status = GuidePipeline.tooLargeStatus
+                row.problem = "tooLarge"
+                row.matched = 0
+            else if outcome.state = "unreadable"
+                row.status = GuideFetch.failedStatus(host)
+                row.problem = "failed"
+                row.matched = 0
+            else if outcome.state = "stale" and entry.ok
+                row.status = GuideFetch.failedStatus(host)
+                row.problem = "failed"
+                row.stale = true
+            end if
+            rows.Push(row)
+        end for
+        return rows
+    end function
+
+    function failedStatus(host as string) as string
+        if host = "" then return "Failed"
+        return GuidePipeline.failedPrefix + host
+    end function
+
+    ' The guide screen's data (step 12), the value of the scene's guideData field:
+    '   { windowStart, windowEnd, programmeCount,
+    '     matches: { channel id: { guide, sourceID, epgID } },
+    '     guides: [{ programmes: { epgID: [programme] }, channels: [{ id, names }] }] }   in priority order
+    ' GuidePipeline.programmesFor(data, channelID) reads it as it reads the pipeline's result. Programmes are as
+    ' GuidePipeline returns them ({ start, stop, title, subtitle?, summary?, category?, episode? }, seconds since
+    ' 1970, file order), kept once per EPG id, so channels that share a guide channel don't repeat them. channels
+    ' is each guide's channel list, for Match Guide (step 19).
+    function guideData(result as object, windowStart as dynamic, windowEnd as dynamic) as object
+        guides = []
+        count = 0
+        for each entry in result.guides
+            for each epgID in entry.programmes
+                count += entry.programmes[epgID].Count()
+            end for
+            guides.Push({ programmes: entry.programmes, channels: entry.channels })
+        end for
+        return { windowStart: windowStart, windowEnd: windowEnd, programmeCount: count, matches: result.matches, guides: guides }
+    end function
+
+    ' The names in cachefs:/guides to delete after a run: anything that isn't a current guide's file, time or fail, so
+    ' guides no longer in use (and leftovers: .part, .inflated.xml) don't hold the Roku's RAM.
+    function prunable(names as dynamic, sources as object) as object
+        keep = {}
+        for each source in sources
+            paths = GuideSources.cachePaths(source.url)
+            keep[GuideFetch.fileName(paths.file)] = true
+            keep[GuideFetch.fileName(paths.time)] = true
+            keep[GuideFetch.fileName(paths.fail)] = true
+        end for
+        result = []
+        kind = type(names)
+        if kind <> "roArray" and kind <> "roList" then return result
+        for each name in names
+            if GuideSources.isText(name)
+                if not keep.DoesExist(name) then result.Push(name)
+            end if
+        end for
+        return result
+    end function
+
+    function fileName(path as string) as string
+        parts = path.Split("/")
+        return parts[parts.Count() - 1]
+    end function
+
+    ' One log line per guide (L6: the host only).
+    function logLine(row as object) as string
+        return "Guide " + row.index.ToStr() + " from " + row.host + ": " + row.status
+    end function
+
+end namespace

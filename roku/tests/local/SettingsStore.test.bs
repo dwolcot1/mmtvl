@@ -1,0 +1,645 @@
+' SettingsStore (M12 step 7, L5): defaults, round-trips, corrupt and wrong-typed values (per field), the limits,
+' the space check and the overrides refusal, and replaceAll. Every test uses an in-memory fake registry with a
+' fake space function; none touches brs-node's registry.
+namespace SettingsStoreTests
+
+    sub test_anEmptyRegistryReadsAsMMTVLsDefaults(t as object)
+        store = SettingsStore.load(SettingsStoreTests.fakeRegistry(30000))
+        t.assertEqual(store.source, "")
+        t.assertEqual(store.guides, [])
+        t.assertEqual(store.prefs, { favorites: [], hiddenChannels: [], hiddenGroups: [], teams: [] })
+        t.assertEqual(store.overrides, {})
+        t.assertEqual(store.state, { lastChannelID: "", lastGroup: "", recentChannelIDs: [] })
+        t.assertEqual(store.settings, SettingsStoreTests.mmtvlDefaults())
+        t.assertEqual(store.schema, 0)
+        t.assertFalse(store.lowSpace)
+        t.assertEqual(store.spaceLeft, 30000)
+    end sub
+
+    sub test_everyKeyRoundTripsThroughTheRegistry(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        values = SettingsStoreTests.sampleValues()
+        for each key in SettingsStore.keys()
+            t.assertEqual(SettingsStore.save(store, key, values[key]), { ok: true, message: "" }, key)
+            t.assertEqual(store[key], values[key], key + " in the store")
+        end for
+        reloaded = SettingsStore.load(registry)
+        for each key in SettingsStore.keys()
+            t.assertEqual(reloaded[key], values[key], key + " reloaded")
+        end for
+        t.assertEqual(reloaded.schema, 1)
+    end sub
+
+    sub test_eachKeyIsOneJSONValueInTheSectionWithTheSchema(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        SettingsStore.save(store, "guides", ["https://guide-a.example/a.xml", "https://guide-b.example/b.xml.gz"])
+        SettingsStore.save(store, "settings", { channelUpMovesUpList: false })
+        t.assertEqual(ParseJson(registry.data.guides), ["https://guide-a.example/a.xml", "https://guide-b.example/b.xml.gz"])
+        t.assertEqual(ParseJson(registry.data.settings).channelUpMovesUpList, false)
+        t.assertEqual(registry.data.schema, "1")
+        t.assertEqual(SettingsStore.sectionName, "mmtvl")
+        t.assertEqual(registry.data.Count(), 3, "guides, settings and schema only")
+    end sub
+
+    sub test_everySaveFlushes(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        SettingsStore.save(store, "source", "https://iptv.example/list.m3u")
+        t.assertEqual(registry.flushes, 1)
+        SettingsStore.save(store, "state", { lastChannelID: "id:one.example" })
+        t.assertEqual(registry.flushes, 2)
+    end sub
+
+    sub test_missingFieldsReadAsTheirDefaults(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        registry.data.prefs = "{" + Chr(34) + "favorites" + Chr(34) + ": [" + Chr(34) + "id:a" + Chr(34) + "]}"
+        registry.data.settings = "{" + Chr(34) + "usePlaylistGuide" + Chr(34) + ": true}"
+        registry.data.state = "{}"
+        store = SettingsStore.load(registry)
+        t.assertEqual(store.prefs, { favorites: ["id:a"], hiddenChannels: [], hiddenGroups: [], teams: [] })
+        expected = SettingsStoreTests.mmtvlDefaults()
+        expected.usePlaylistGuide = true
+        t.assertEqual(store.settings, expected)
+        t.assertEqual(store.state, { lastChannelID: "", lastGroup: "", recentChannelIDs: [] })
+    end sub
+
+    sub test_aValueThatIsntJSONReadsAsItsDefaultAndTheOtherKeysAreKept(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        registry.data.prefs = "{favorites: [oops"
+        registry.data.overrides = ""
+        registry.data.settings = FormatJson({ antennaGuide: false })
+        registry.data.source = FormatJson("https://iptv.example/list.m3u")
+        store = SettingsStore.load(registry)
+        t.assertEqual(store.prefs, { favorites: [], hiddenChannels: [], hiddenGroups: [], teams: [] })
+        t.assertEqual(store.overrides, {})
+        t.assertFalse(store.settings.antennaGuide)
+        t.assertEqual(store.source, "https://iptv.example/list.m3u")
+    end sub
+
+    sub test_aWrongTypeReadsAsThatFieldsDefaultOnly(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        registry.data.settings = FormatJson({ channelUpMovesUpList: "no", usePlaylistGuide: true, antennaEnabled: 0, teamMatchInitials: true })
+        registry.data.prefs = FormatJson({ favorites: "id:a", hiddenChannels: ["id:b", 7, invalid, "", "id:c"], hiddenGroups: { a: 1 }, teams: ["nba.lal"] })
+        registry.data.state = FormatJson({ lastChannelID: 5, lastGroup: "Sports", recentChannelIDs: "id:a" })
+        store = SettingsStore.load(registry)
+        t.assertTrue(store.settings.channelUpMovesUpList, "a string reads as the default")
+        t.assertTrue(store.settings.usePlaylistGuide, "kept")
+        t.assertTrue(store.settings.antennaEnabled, "a number reads as the default")
+        t.assertTrue(store.settings.teamMatchInitials, "kept")
+        t.assertFalse(store.settings.teamMatchNicknames, "missing")
+        t.assertEqual(store.prefs, { favorites: [], hiddenChannels: ["id:b", "id:c"], hiddenGroups: [], teams: ["nba.lal"] })
+        t.assertEqual(store.state, { lastChannelID: "", lastGroup: "Sports", recentChannelIDs: [] })
+    end sub
+
+    sub test_aWrongTypeForAWholeKeyReadsAsItsDefault(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        registry.data.source = "42"
+        registry.data.guides = FormatJson({ a: "https://guide.example/a.xml" })
+        registry.data.prefs = "[1, 2]"
+        registry.data.overrides = FormatJson(["x"])
+        registry.data.state = "null"
+        registry.data.settings = "true"
+        store = SettingsStore.load(registry)
+        t.assertEqual(store.source, "")
+        t.assertEqual(store.guides, [])
+        t.assertEqual(store.prefs, { favorites: [], hiddenChannels: [], hiddenGroups: [], teams: [] })
+        t.assertEqual(store.overrides, {})
+        t.assertEqual(store.state, { lastChannelID: "", lastGroup: "", recentChannelIDs: [] })
+        t.assertEqual(store.settings, SettingsStoreTests.mmtvlDefaults())
+    end sub
+
+    sub test_overridesKeepNoGuideAndDropBadEntries(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        registry.data.overrides = FormatJson({ "News One": "news1.example", "Shop": "", "Bad": 3, "Long": String(257, "x") })
+        store = SettingsStore.load(registry)
+        t.assertEqual(store.overrides, { "News One": "news1.example", "Shop": "" })
+    end sub
+
+    sub test_theLimitsApplyOnLoad(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        registry.data.source = FormatJson("https://iptv.example/" + String(2100, "a"))
+        registry.data.guides = FormatJson(SettingsStoreTests.urls(8))
+        registry.data.prefs = FormatJson({ favorites: SettingsStoreTests.ids(600), teams: ["nba.lal", String(257, "t"), String(256, "u")] })
+        registry.data.state = FormatJson({ lastChannelID: String(257, "c"), recentChannelIDs: SettingsStoreTests.ids(15) })
+        registry.data.overrides = FormatJson(SettingsStoreTests.overrides(600))
+        store = SettingsStore.load(registry)
+        t.assertEqual(store.source, "", "a URL over 2 KB")
+        t.assertEqual(store.guides, SettingsStoreTests.urls(6), "the first 6 guides")
+        t.assertEqual(store.prefs.favorites, SettingsStoreTests.ids(500), "the first 500 favorites")
+        t.assertEqual(store.prefs.teams, ["nba.lal", String(256, "u")], "ids over 256 characters are dropped")
+        t.assertEqual(store.state.lastChannelID, "")
+        t.assertEqual(store.state.recentChannelIDs, SettingsStoreTests.ids(10), "the 10 most recent")
+        t.assertEqual(store.overrides.Count(), 500)
+    end sub
+
+    sub test_theLimitsApplyOnSave(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        guides = SettingsStoreTests.urls(7)
+        guides[1] = "https://guide.example/" + String(2048, "g")
+        SettingsStore.save(store, "guides", guides)
+        expected = SettingsStoreTests.urls(7)
+        expected.Delete(1)
+        t.assertEqual(store.guides, expected, "the too-long URL dropped, then the first 6")
+        t.assertEqual(ParseJson(registry.data.guides), expected, "what's written")
+        SettingsStore.save(store, "state", { lastChannelID: "id:a", lastGroup: "News", recentChannelIDs: SettingsStoreTests.ids(12) })
+        t.assertEqual(ParseJson(registry.data.state).recentChannelIDs, SettingsStoreTests.ids(10))
+        SettingsStore.save(store, "prefs", { hiddenGroups: SettingsStoreTests.ids(501) })
+        t.assertEqual(ParseJson(registry.data.prefs).hiddenGroups.Count(), 500)
+        url2048 = "https://iptv.example/" + String(2048 - 21, "p")
+        SettingsStore.save(store, "source", url2048)
+        t.assertEqual(store.source, url2048, "exactly 2 KB is kept")
+    end sub
+
+    sub test_lowSpaceRefusesSavingTheOverridesWithAMessage(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        SettingsStore.save(store, "overrides", { "News One": "news1.example" })
+        registry.space = 4095
+        result = SettingsStore.save(store, "overrides", { "News One": "", "Shop": "shop.example" })
+        t.assertFalse(result.ok)
+        t.assertEqual(result.message, SettingsStore.overridesRefusedMessage)
+        t.assertTrue(result.message <> "", "a message for the user")
+        t.assertTrue(store.lowSpace)
+        t.assertEqual(store.spaceLeft, 4095)
+        t.assertEqual(store.overrides, { "News One": "news1.example" }, "the store keeps the saved value")
+        t.assertEqual(ParseJson(registry.data.overrides), { "News One": "news1.example" }, "nothing written")
+        t.assertEqual(registry.flushes, 1, "only the first save flushed")
+    end sub
+
+    sub test_lowSpaceLetsTheOtherSavesThrough(t as object)
+        registry = SettingsStoreTests.fakeRegistry(1000)
+        store = SettingsStore.load(registry)
+        t.assertTrue(store.lowSpace, "flagged at load for Settings")
+        for each key in ["source", "guides", "prefs", "state", "settings"]
+            t.assertTrue(SettingsStore.save(store, key, SettingsStoreTests.sampleValues()[key]).ok, key)
+        end for
+        t.assertTrue(store.lowSpace)
+        t.assertEqual(store.prefs, SettingsStoreTests.sampleValues().prefs)
+    end sub
+
+    sub test_everySaveChecksTheSpaceAgain(t as object)
+        registry = SettingsStoreTests.fakeRegistry(4096)
+        store = SettingsStore.load(registry)
+        t.assertFalse(store.lowSpace, "exactly 4 KB isn't low")
+        registry.space = 100
+        SettingsStore.save(store, "source", "https://iptv.example/list.m3u")
+        t.assertTrue(store.lowSpace)
+        registry.space = 9000
+        t.assertTrue(SettingsStore.save(store, "overrides", { "Shop": "" }).ok, "room again")
+        t.assertFalse(store.lowSpace)
+        t.assertTrue(registry.spaceChecks >= 3, "checked on every save")
+    end sub
+
+    sub test_aFailedWriteReportsAndKeepsTheOldValue(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        SettingsStore.save(store, "guides", ["https://guide.example/a.xml"])
+        registry.failWrites = true
+        result = SettingsStore.save(store, "guides", ["https://guide.example/b.xml"])
+        t.assertFalse(result.ok)
+        t.assertEqual(result.message, SettingsStore.saveFailedMessage)
+        t.assertEqual(store.guides, ["https://guide.example/a.xml"])
+    end sub
+
+    sub test_anUnknownKeyIsNotSaved(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        t.assertFalse(SettingsStore.save(store, "schema", 2).ok)
+        t.assertEqual(registry.data.Count(), 0)
+    end sub
+
+    sub test_replaceAllWritesEveryKeyWithOneFlush(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        SettingsStore.save(store, "overrides", { "Old": "old.example" })
+        flushesBefore = registry.flushes
+        result = SettingsStore.replaceAll(store, SettingsStoreTests.bundle())
+        t.assertEqual(result, { ok: true, message: "" })
+        t.assertEqual(registry.flushes, flushesBefore + 1, "one flush")
+        values = SettingsStoreTests.sampleValues()
+        reloaded = SettingsStore.load(registry)
+        for each key in SettingsStore.keys()
+            t.assertEqual(store[key], values[key], key)
+            t.assertEqual(reloaded[key], values[key], key + " reloaded")
+        end for
+    end sub
+
+    sub test_replaceAllGivesMissingFieldsTheirDefaultsAndAppliesTheLimits(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        SettingsStore.save(store, "prefs", { favorites: ["id:old"] })
+        SettingsStore.save(store, "settings", { channelUpMovesUpList: false })
+        result = SettingsStore.replaceAll(store, { version: 1, playlistURL: "https://iptv.example/list.m3u", guideURLs: SettingsStoreTests.urls(9), recentChannelIDs: SettingsStoreTests.ids(11) })
+        t.assertTrue(result.ok)
+        t.assertEqual(store.prefs, { favorites: [], hiddenChannels: [], hiddenGroups: [], teams: [] }, "replaced, not merged")
+        t.assertEqual(store.settings, SettingsStoreTests.mmtvlDefaults())
+        t.assertEqual(store.guides, SettingsStoreTests.urls(6))
+        t.assertEqual(store.state.recentChannelIDs, SettingsStoreTests.ids(10))
+        t.assertEqual(SettingsStore.load(registry).prefs.favorites, [])
+    end sub
+
+    ' Low space alone doesn't refuse an import that fits (about 1 KB here, with 3,000 bytes left).
+    sub test_replaceAllGoesAheadWithLowSpace(t as object)
+        registry = SettingsStoreTests.fakeRegistry(3000)
+        store = SettingsStore.load(registry)
+        t.assertTrue(SettingsStore.replaceAll(store, SettingsStoreTests.bundle()).ok)
+        t.assertTrue(store.lowSpace)
+        t.assertEqual(store.overrides, SettingsStoreTests.sampleValues().overrides)
+    end sub
+
+    sub test_replaceAllRefusesANonObjectAndWritesNothing(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        t.assertFalse(SettingsStore.replaceAll(store, ["not", "a", "bundle"]).ok)
+        t.assertFalse(SettingsStore.replaceAll(store, invalid).ok)
+        t.assertEqual(registry.data.Count(), 0)
+        t.assertEqual(registry.flushes, 0)
+    end sub
+
+    ' QA 2: a write that fails part-way puts every old value back, so the registry is exactly as before.
+    sub test_aReplaceAllThatFailsPartWayLeavesTheRegistryExactlyAsItWas(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        old = SettingsStoreTests.sampleValues()
+        old.source = "https://iptv.example/old.m3u"
+        old.prefs.favorites = ["id:old.example"]
+        for each key in SettingsStore.keys()
+            SettingsStore.save(store, key, old[key])
+        end for
+        before = SettingsStoreTests.copy(registry.data)
+        newBundle = SettingsStoreTests.bundle()
+        newBundle.overrides = { "Other": "other.example" }
+        registry.failWriteNumber = registry.writes + 4
+        result = SettingsStore.replaceAll(store, newBundle)
+        t.assertFalse(result.ok)
+        t.assertEqual(result.message, SettingsStore.saveFailedMessage)
+        t.assertEqual(registry.data, before, "every old value back")
+        t.assertEqual(SettingsStoreTests.rawKeys(registry.data), SettingsStoreTests.rawKeys(before))
+        reloaded = SettingsStore.load(registry)
+        for each key in SettingsStore.keys()
+            t.assertEqual(store[key], reloaded[key], key + " matches the registry")
+            t.assertEqual(store[key], old[key], key + " is the old value")
+        end for
+    end sub
+
+    sub test_aFailedReplaceAllDeletesTheKeysThatWerentThere(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        SettingsStore.save(store, "source", "https://iptv.example/old.m3u")
+        before = SettingsStoreTests.copy(registry.data)
+        registry.failWriteNumber = registry.writes + 4
+        t.assertFalse(SettingsStore.replaceAll(store, SettingsStoreTests.bundle()).ok)
+        t.assertEqual(SettingsStoreTests.rawKeys(registry.data), ["schema", "source"], "the new keys deleted")
+        t.assertEqual(registry.data, before)
+        t.assertEqual(store.guides, [])
+    end sub
+
+    sub test_aReplaceAllWhoseFlushFailsPutsTheOldValuesBack(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        SettingsStore.save(store, "guides", ["https://guide.example/old.xml"])
+        before = SettingsStoreTests.copy(registry.data)
+        registry.failFlush = true
+        t.assertFalse(SettingsStore.replaceAll(store, SettingsStoreTests.bundle()).ok)
+        t.assertEqual(registry.data, before)
+        t.assertEqual(store.guides, ["https://guide.example/old.xml"])
+    end sub
+
+    ' QA 4: a save whose flush fails reports it and writes the old value back (a key that wasn't there is deleted).
+    sub test_aSaveWhoseFlushFailsPutsTheOldValueBack(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        SettingsStore.save(store, "source", "https://iptv.example/old.m3u")
+        before = SettingsStoreTests.copy(registry.data)
+        registry.failFlush = true
+        result = SettingsStore.save(store, "source", "https://iptv.example/new.m3u")
+        t.assertFalse(result.ok)
+        t.assertEqual(result.message, SettingsStore.saveFailedMessage)
+        t.assertEqual(registry.data, before)
+        t.assertEqual(store.source, "https://iptv.example/old.m3u")
+        SettingsStore.save(store, "guides", ["https://guide.example/a.xml"])
+        t.assertEqual(registry.data, before, "a new key deleted again")
+        t.assertEqual(store.guides, [])
+    end sub
+
+    sub test_aFirstSaveWhoseFlushFailsLeavesNoSchema(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        registry.failFlush = true
+        t.assertFalse(SettingsStore.save(store, "prefs", { favorites: ["id:a"] }).ok)
+        t.assertEqual(registry.data, {})
+        t.assertEqual(store.schema, 0)
+        registry.failFlush = false
+        t.assertTrue(SettingsStore.save(store, "prefs", { favorites: ["id:a"] }).ok)
+        t.assertEqual(store.schema, 1)
+        t.assertEqual(registry.data.schema, "1")
+    end sub
+
+    ' QA 1: the size of what's written counts, not only the 4 KB gate. The fake enforces a 32 KB total.
+    sub test_aSaveTooLargeForTheRegistryIsRefusedWithNothingWritten(t as object)
+        registry = SettingsStoreTests.cappedRegistry(32768)
+        store = SettingsStore.load(registry)
+        t.assertTrue(SettingsStore.save(store, "prefs", { favorites: ["id:kept.example"] }).ok)
+        before = SettingsStoreTests.copy(registry.data)
+        writesBefore = registry.writes
+        huge = SettingsStoreTests.longIDs(500)
+        result = SettingsStore.save(store, "prefs", { favorites: huge, hiddenChannels: huge })
+        t.assertFalse(result.ok)
+        t.assertEqual(result.message, SettingsStore.tooLargeMessage)
+        t.assertEqual(registry.writes, writesBefore, "nothing written")
+        t.assertEqual(registry.data, before)
+        t.assertEqual(store.prefs.favorites, ["id:kept.example"])
+    end sub
+
+    sub test_aSaveThatFitsTheCapIsWrittenAndReadBack(t as object)
+        registry = SettingsStoreTests.cappedRegistry(32768)
+        store = SettingsStore.load(registry)
+        favorites = SettingsStoreTests.longIDs(100)
+        t.assertTrue(SettingsStore.save(store, "prefs", { favorites: favorites }).ok, "about 26 KB")
+        t.assertEqual(SettingsStore.load(registry).prefs.favorites, favorites)
+        t.assertTrue(store.spaceLeft < 32768 - 25000, "the space went down")
+        t.assertFalse(SettingsStore.save(store, "guides", SettingsStoreTests.longURLs(6)).ok, "6 × 2 KB doesn't fit what's left")
+        t.assertTrue(SettingsStore.save(store, "prefs", { favorites: SettingsStoreTests.longIDs(110) }).ok, "growing by the difference only")
+        t.assertEqual(store.prefs.favorites.Count(), 110)
+    end sub
+
+    sub test_largeOverridesAreRefusedThoughThe4KBGatePasses(t as object)
+        registry = SettingsStoreTests.fakeRegistry(5000)
+        store = SettingsStore.load(registry)
+        t.assertFalse(store.lowSpace)
+        result = SettingsStore.save(store, "overrides", SettingsStoreTests.longOverrides(70))
+        t.assertFalse(result.ok, "about 20 KB with 5 KB free")
+        t.assertEqual(result.message, SettingsStore.tooLargeMessage)
+        t.assertEqual(registry.data.Count(), 0)
+    end sub
+
+    sub test_overridesKeep4KBFreeAndOtherKeysDont(t as object)
+        registry = SettingsStoreTests.fakeRegistry(10000)
+        store = SettingsStore.load(registry)
+        t.assertFalse(SettingsStore.save(store, "overrides", SettingsStoreTests.longOverrides(25)).ok, "about 7 KB would leave under 4 KB")
+        t.assertTrue(SettingsStore.save(store, "prefs", { favorites: SettingsStoreTests.longIDs(25) }).ok, "about 7 KB of prefs is fine")
+        t.assertTrue(SettingsStore.save(store, "overrides", SettingsStoreTests.longOverrides(15)).ok, "about 4 KB leaves 4 KB")
+    end sub
+
+    sub test_aReplaceAllTooLargeForTheRegistryWritesNothing(t as object)
+        registry = SettingsStoreTests.cappedRegistry(32768)
+        store = SettingsStore.load(registry)
+        SettingsStore.save(store, "source", "https://iptv.example/old.m3u")
+        before = SettingsStoreTests.copy(registry.data)
+        writesBefore = registry.writes
+        newBundle = SettingsStoreTests.bundle()
+        newBundle.favorites = SettingsStoreTests.longIDs(500)
+        result = SettingsStore.replaceAll(store, newBundle)
+        t.assertFalse(result.ok)
+        t.assertEqual(result.message, SettingsStore.tooLargeMessage)
+        t.assertEqual(registry.writes, writesBefore)
+        t.assertEqual(registry.data, before)
+        t.assertEqual(store.source, "https://iptv.example/old.m3u")
+    end sub
+
+    ' QA 3: override keys are lowercased; keys differing only in case resolve the same way whatever their order.
+    sub test_overrideKeysAreLowercasedAndTheLastInSortedOrderWins(t as object)
+        forward = SettingsStore.overridesFromPairs([{ key: "NEWS", value: "a" }, { key: "News", value: "b" }, { key: "news", value: "c" }, { key: "Shop", value: "" }])
+        backward = SettingsStore.overridesFromPairs([{ key: "Shop", value: "" }, { key: "news", value: "c" }, { key: "News", value: "b" }, { key: "NEWS", value: "a" }])
+        mixed = SettingsStore.overridesFromPairs([{ key: "News", value: "b" }, { key: "news", value: "c" }, { key: "NEWS", value: "a" }, { key: "Shop", value: "" }])
+        t.assertEqual(forward, { news: "c", shop: "" })
+        t.assertEqual(backward, forward)
+        t.assertEqual(mixed, forward)
+        t.assertEqual(SettingsStoreTests.rawKeys(forward), ["news", "shop"])
+    end sub
+
+    sub test_overrideKeysAreLowercasedOnSaveLoadAndReplaceAll(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        SettingsStore.save(store, "overrides", { "News One": "news1.example" })
+        t.assertEqual(registry.data.overrides, "{" + Chr(34) + "news one" + Chr(34) + ":" + Chr(34) + "news1.example" + Chr(34) + "}")
+        registry.data.overrides = "{" + Chr(34) + "Shop TV" + Chr(34) + ":" + Chr(34) + "" + Chr(34) + "}"
+        t.assertEqual(SettingsStoreTests.rawKeys(SettingsStore.load(registry).overrides), ["shop tv"])
+        SettingsStore.replaceAll(store, { overrides: { "Sports HD": "sports.example" } })
+        t.assertEqual(SettingsStoreTests.rawKeys(store.overrides), ["sports hd"])
+        t.assertEqual(SettingsStoreTests.rawKeys(ParseJson(registry.data.overrides)), ["sports hd"])
+    end sub
+
+    sub test_anUnknownSpaceAnswerCountsAsEnough(t as object)
+        registry = SettingsStoreTests.fakeRegistry(invalid)
+        store = SettingsStore.load(registry)
+        t.assertFalse(store.lowSpace)
+        t.assertEqual(store.spaceLeft, -1)
+        t.assertTrue(SettingsStore.save(store, "overrides", { "Shop": "" }).ok)
+    end sub
+
+    ' --- helpers ------------------------------------------------------------------------------------------------
+
+    ' An in-memory registry section: data holds the stored strings, space is what spaceAvailable() answers.
+    ' failWrites makes every write fail; failWriteNumber fails only that write (counting from 1); failFlush makes
+    ' every flush fail. With cap set (cappedRegistry), the stored entries (UTF-8 bytes of key and value plus
+    ' fakeOverhead each) can't exceed cap, a write past it fails, and spaceAvailable() is what's left.
+    function fakeRegistry(space as dynamic) as object
+        return {
+            data: {},
+            space: space,
+            cap: invalid,
+            fakeOverhead: 8,
+            writes: 0,
+            flushes: 0,
+            spaceChecks: 0,
+            failWrites: false,
+            failWriteNumber: -1,
+            failFlush: false,
+            read: SettingsStoreTests.fakeRead,
+            write: SettingsStoreTests.fakeWrite,
+            delete: SettingsStoreTests.fakeDelete,
+            flush: SettingsStoreTests.fakeFlush,
+            spaceAvailable: SettingsStoreTests.fakeSpaceAvailable
+        }
+    end function
+
+    function cappedRegistry(cap as integer) as object
+        registry = SettingsStoreTests.fakeRegistry(invalid)
+        registry.cap = cap
+        return registry
+    end function
+
+    ' The methods below run with m = the fake registry.
+    function fakeRead(key as string) as dynamic
+        if not m.data.DoesExist(key) then return invalid
+        return m.data[key]
+    end function
+
+    function fakeWrite(key as string, text as string) as boolean
+        m.writes++
+        if m.failWrites then return false
+        if m.writes = m.failWriteNumber then return false
+        if m.cap <> invalid
+            used = SettingsStoreTests.usedBytes(m) + SettingsStoreTests.fakeEntryBytes(m, key, text)
+            if m.data.DoesExist(key) then used -= SettingsStoreTests.fakeEntryBytes(m, key, m.data[key])
+            if used > m.cap then return false
+        end if
+        m.data[key] = text
+        return true
+    end function
+
+    function fakeDelete(key as string) as boolean
+        return m.data.Delete(key)
+    end function
+
+    function fakeFlush() as boolean
+        m.flushes++
+        return not m.failFlush
+    end function
+
+    function fakeSpaceAvailable() as dynamic
+        m.spaceChecks++
+        if m.cap <> invalid then return m.cap - SettingsStoreTests.usedBytes(m)
+        return m.space
+    end function
+
+    function usedBytes(registry as object) as integer
+        used = 0
+        for each key in registry.data
+            used += SettingsStoreTests.fakeEntryBytes(registry, key, registry.data[key])
+        end for
+        return used
+    end function
+
+    function fakeEntryBytes(registry as object, key as string, text as string) as integer
+        encoded = CreateObject("roByteArray")
+        encoded.FromAsciiString(key + text)
+        return encoded.Count() + registry.fakeOverhead
+    end function
+
+    ' A shallow copy, to compare a registry's data before and after.
+    function copy(data as object) as object
+        result = {}
+        for each key in data
+            result[key] = data[key]
+        end for
+        return result
+    end function
+
+    ' The keys as stored (case kept), sorted.
+    function rawKeys(data as object) as object
+        result = []
+        for each pair in data.Items()
+            result.Push(pair.key)
+        end for
+        result.Sort()
+        return result
+    end function
+
+    ' count ids of 256 characters each.
+    function longIDs(count as integer) as object
+        result = []
+        for i = 1 to count
+            prefix = "id:" + i.ToStr() + "."
+            result.Push(prefix + String(256 - Len(prefix), "x"))
+        end for
+        return result
+    end function
+
+    ' count URLs of 2048 characters each.
+    function longURLs(count as integer) as object
+        result = []
+        for i = 1 to count
+            prefix = "https://guide" + i.ToStr() + ".example/"
+            result.Push(prefix + String(2048 - Len(prefix), "g"))
+        end for
+        return result
+    end function
+
+    ' count overrides of about 280 bytes each (key ~20, value ~256).
+    function longOverrides(count as integer) as object
+        result = {}
+        for i = 1 to count
+            result["channel " + i.ToStr()] = "epg" + i.ToStr() + "." + String(240, "e")
+        end for
+        return result
+    end function
+
+    ' AppSettings.swift's defaults for the six migrated settings.
+    function mmtvlDefaults() as object
+        return {
+            channelUpMovesUpList: true,
+            usePlaylistGuide: false,
+            teamMatchInitials: false,
+            teamMatchNicknames: false,
+            antennaEnabled: true,
+            antennaGuide: true
+        }
+    end function
+
+    function sampleValues() as object
+        return {
+            source: "https://iptv.example/get.php?username=u&password=p&type=m3u_plus",
+            guides: ["https://guide-a.example/a.xml.gz", "https://guide-b.example/b.xml"],
+            prefs: {
+                favorites: ["id:news1.example", "name:shop", "antenna:5.1"],
+                hiddenChannels: ["id:hidden.example"],
+                hiddenGroups: ["Adult", "Antenna"],
+                teams: ["nba.lal", "ncaaf.michigan-wolverines"]
+            },
+            overrides: { "News One": "news1.example", "Shop": "", "antenna:5.1": "wabc.example" },
+            state: { lastChannelID: "id:news1.example", lastGroup: "News", recentChannelIDs: ["id:news1.example", "name:shop"] },
+            settings: {
+                channelUpMovesUpList: false,
+                usePlaylistGuide: true,
+                teamMatchInitials: true,
+                teamMatchNicknames: true,
+                antennaEnabled: false,
+                antennaGuide: false
+            }
+        }
+    end function
+
+    ' The bundle (v1, L2) that holds sampleValues().
+    function bundle() as object
+        values = SettingsStoreTests.sampleValues()
+        return {
+            version: 1,
+            playlistURL: values.source,
+            guideURLs: values.guides,
+            usePlaylistGuide: values.settings.usePlaylistGuide,
+            favorites: values.prefs.favorites,
+            hiddenChannels: values.prefs.hiddenChannels,
+            hiddenGroups: values.prefs.hiddenGroups,
+            teams: values.prefs.teams,
+            overrides: values.overrides,
+            lastChannelID: values.state.lastChannelID,
+            lastGroup: values.state.lastGroup,
+            recentChannelIDs: values.state.recentChannelIDs,
+            channelUpMovesUpList: values.settings.channelUpMovesUpList,
+            teamMatchInitials: values.settings.teamMatchInitials,
+            teamMatchNicknames: values.settings.teamMatchNicknames,
+            antennaEnabled: values.settings.antennaEnabled,
+            antennaGuide: values.settings.antennaGuide
+        }
+    end function
+
+    function ids(count as integer) as object
+        result = []
+        for i = 1 to count
+            result.Push("id:channel" + i.ToStr() + ".example")
+        end for
+        return result
+    end function
+
+    function urls(count as integer) as object
+        result = []
+        for i = 1 to count
+            result.Push("https://guide" + i.ToStr() + ".example/guide.xml")
+        end for
+        return result
+    end function
+
+    function overrides(count as integer) as object
+        result = {}
+        for i = 1 to count
+            result["Channel " + i.ToStr()] = "epg" + i.ToStr() + ".example"
+        end for
+        return result
+    end function
+
+end namespace
