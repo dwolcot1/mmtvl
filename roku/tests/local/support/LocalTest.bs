@@ -1,0 +1,129 @@
+' The off-device test runner (M12, `npm run test:local`): runs the pure-logic tests for source/lib in
+' brs-node on the dev Mac, with no Roku. tools/roku.mjs writes Main, which lists every test it found,
+' and calls LocalTest.runSuites. A test is `sub test_<name>(t as object)` in `namespace <Suite>Tests` in
+' tests/local/<Suite>.test.bs; it checks with t.assertEqual, t.assertTrue, t.assertFalse,
+' t.assertInvalid and t.fail. Output: "PASS <suite> <test>", "FAIL <suite> <test>: <message>",
+' then the summary line tools/roku.mjs reads.
+namespace LocalTest
+
+    sub runSuites(suites as object)
+        passed = 0
+        failed = 0
+        for each suite in suites
+            for each test in suite.tests
+                t = LocalTest.newContext()
+                try
+                    test.fn(t)
+                catch e
+                    t.failures.Push("crashed: " + LocalTest.errorText(e))
+                end try
+                if t.failures.Count() = 0
+                    passed++
+                    print "PASS " + suite.name + " " + test.name
+                else
+                    failed++
+                    print "FAIL " + suite.name + " " + test.name + ": " + t.failures.Join("; ")
+                end if
+            end for
+        end for
+        print "LOCAL TESTS: " + passed.ToStr() + " passed, " + failed.ToStr() + " failed"
+    end sub
+
+    function newContext() as object
+        return {
+            failures: [],
+            assertEqual: LocalTest.assertEqual,
+            assertTrue: LocalTest.assertTrue,
+            assertFalse: LocalTest.assertFalse,
+            assertInvalid: LocalTest.assertInvalid,
+            fail: LocalTest.fail
+        }
+    end function
+
+    ' The methods below run with m = the test's context.
+    sub assertEqual(actual as dynamic, expected as dynamic, label = "" as string)
+        if not LocalTest.same(actual, expected)
+            m.failures.Push(LocalTest.prefix(label) + "expected " + LocalTest.describe(expected) + ", got " + LocalTest.describe(actual))
+        end if
+    end sub
+
+    sub assertTrue(value as dynamic, label = "" as string)
+        if not LocalTest.same(value, true)
+            m.failures.Push(LocalTest.prefix(label) + "expected true, got " + LocalTest.describe(value))
+        end if
+    end sub
+
+    sub assertFalse(value as dynamic, label = "" as string)
+        if not LocalTest.same(value, false)
+            m.failures.Push(LocalTest.prefix(label) + "expected false, got " + LocalTest.describe(value))
+        end if
+    end sub
+
+    sub assertInvalid(value as dynamic, label = "" as string)
+        if LocalTest.kind(value) <> "invalid"
+            m.failures.Push(LocalTest.prefix(label) + "expected invalid, got " + LocalTest.describe(value))
+        end if
+    end sub
+
+    sub fail(message as string)
+        m.failures.Push(message)
+    end sub
+
+    ' Deep equality: numbers by value, strings case-sensitively, arrays in order, AAs by key.
+    function same(a as dynamic, b as dynamic) as boolean
+        kindA = LocalTest.kind(a)
+        if kindA <> LocalTest.kind(b) then return false
+        if kindA = "invalid" then return true
+        if kindA = "array"
+            if a.Count() <> b.Count() then return false
+            for i = 0 to a.Count() - 1
+                if not LocalTest.same(a[i], b[i]) then return false
+            end for
+            return true
+        end if
+        if kindA = "assoc"
+            if a.Count() <> b.Count() then return false
+            for each key in a
+                if not b.DoesExist(key) then return false
+                if not LocalTest.same(a[key], b[key]) then return false
+            end for
+            return true
+        end if
+        if kindA = "string" or kindA = "number" or kindA = "boolean" then return a = b
+        return false
+    end function
+
+    function kind(value as dynamic) as string
+        t = LCase(type(value))
+        if t = "rostring" or t = "string" then return "string"
+        if t = "roint" or t = "integer" or t = "rointeger" or t = "rofloat" or t = "float" or t = "rodouble" or t = "double" or t = "longinteger" or t = "rolonginteger" then return "number"
+        if t = "roboolean" or t = "boolean" then return "boolean"
+        if t = "roinvalid" or t = "invalid" or t = "<uninitialized>" then return "invalid"
+        if t = "roarray" then return "array"
+        if t = "roassociativearray" then return "assoc"
+        return t
+    end function
+
+    function describe(value as dynamic) as string
+        k = LocalTest.kind(value)
+        if k = "string" then return Chr(34) + value + Chr(34)
+        if k = "number" or k = "boolean" then return value.ToStr()
+        if k = "invalid" then return "invalid"
+        if k = "array" or k = "assoc"
+            json = FormatJson(value)
+            if json <> "" then return json
+        end if
+        return "<" + type(value) + ">"
+    end function
+
+    function prefix(label as string) as string
+        if label = "" then return ""
+        return label + ": "
+    end function
+
+    function errorText(e as dynamic) as string
+        if LocalTest.kind(e) = "assoc" and e.DoesExist("message") then return e.message
+        return "unknown error"
+    end function
+
+end namespace

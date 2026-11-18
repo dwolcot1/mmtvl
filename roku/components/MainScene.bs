@@ -1,0 +1,11 @@
+sub init()
+    versionText = appVersionText()
+    m.top.findNode("version").text = versionText
+    Log.info("App", "Showing " + versionText)
+end sub
+
+' "Version <major>.<minor> Build <build>", from the manifest.
+function appVersionText() as string
+    info = CreateObject("roAppInfo")
+    return "Version " + info.GetValue("major_version") + "." + info.GetValue("minor_version") + " Build " + info.GetValue("build_version")
+end function

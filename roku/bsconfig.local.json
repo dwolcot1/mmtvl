@@ -1,0 +1,17 @@
+{
+  "rootDir": ".",
+  "files": [
+    "manifest",
+    "source/lib/**/*",
+    {
+      "src": "tests/local/**/*.bs",
+      "dest": "source/localtests"
+    }
+  ],
+  "stagingDir": "out/local-staging",
+  "retainStagingDir": true,
+  "createPackage": false,
+  "plugins": [
+    "@rokucommunity/bslint"
+  ]
+}

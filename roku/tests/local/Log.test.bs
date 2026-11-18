@@ -1,0 +1,16 @@
+' Log.host keeps only the host (M12 L6). Runs off-device: npm run test:local.
+namespace LogTests
+
+    sub test_keepsOnlyTheHostOfAURLWithUserInfoPortPathAndQuery(t as object)
+        t.assertEqual(Log.host("http://user:secret@IPTV.example:8080/get.php?token=abc#x"), "iptv.example")
+    end sub
+
+    sub test_keepsAnIPv6HostWithoutItsBracketsOrPort(t as object)
+        t.assertEqual(Log.host("http://[fd00::1]:5004/auto/v5.1"), "fd00::1")
+    end sub
+
+    sub test_returnsAnEmptyHostForAnEmptyString(t as object)
+        t.assertEqual(Log.host(""), "")
+    end sub
+
+end namespace

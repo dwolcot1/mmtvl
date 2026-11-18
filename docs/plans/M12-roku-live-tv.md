@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Planned |
+| Status | In progress |
 | Depends on | M4, M6b, M7j, M7l, M7m, M7n (the Live TV behaviour it clones) |
 | Master plan decisions used | D9, D23, D26, D48, D49, D52; new D54, D55, D56 |
 | Planned | 2026-11-18 |
@@ -253,7 +253,7 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
   - Record each device's model, Roku OS version, and Settings → System → Advanced → Control by mobile apps setting under *Deviations & questions*.
   - Optional: apply to Roku's developer beta program for `roMultiDecode` documentation (Q30).
   - Done when: the installer page loads in a browser with the password, and the record is in this plan.
-- [ ] **2. Scaffold** `[implementer]`, files: `roku/**` (layout above), `.gitignore` (`roku/.env`, `roku/out/`, `roku/node_modules/`)
+- [x] **2. Scaffold** `[implementer]`, files: `roku/**` (layout above), `.gitignore` (`roku/.env`, `roku/out/`, `roku/node_modules/`)
   - npm scripts:
     - `build`: bsc into `out/staging`, then a zip in `out/`.
     - `lint`: bslint.
@@ -483,3 +483,15 @@ Steps 4, 15 and 23 on the devices (three device sessions: probes, build A, build
 ## Deviations & questions
 
 Executors append here when the plan is wrong or ambiguous: the date, the step, what happened, and what they need. Do not silently diverge.
+
+- **2026-11-18, all device steps (1, 3, 4, 15, 23, and the "with a device" parts of other steps): no Roku here; a remote tester has one.** The user has no Roku. Test builds go to a remote tester, model unknown, who uses the **same provider** with their **own playlist**, typed in on the Roku. No Mac with MMTVL is on the tester's network. User decisions (2026-11-18):
+  - **Off-device logic tests.** `brs-node` (an npm devDependency, an off-device BrightScript interpreter) runs the tests for the pure logic in `source/lib/` on this Mac with `npm run test:local`. That is the QA gate for the `lib` steps. Rooibos suites stay for node and key logic, run whenever someone has a device on the LAN. Every "pass as Rooibos tests" in steps 6–9, 17 and 19–21 is met by `test:local` for `lib` code.
+  - **The probe build reports on screen.** The Probes screen shows a results table the tester photographs, plus a short summary code the user pastes back. It never shows a URL. Console `[PROBE]` lines stay. This changes L8.
+  - **Big-guide probes (3d, 3e) don't need the dev Mac.** The probe generates a synthetic US2-sized XMLTV in `cachefs:` (77 MB, about 80,000 programmes) to time the scan, and inflate is timed on a small synthetic `.gz` in the package. In addition, the tester can type one of their own guide URLs (same provider, so likely US2 itself) for a real download, inflate and scan.
+  - **Not testable remotely, deferred until the user has a Roku on their own network:** migration (step 14's device part, step 15.1), probe 3i (ECP launch needs a computer on the Roku's network), and 3j's `curl` (the user can run 3j on this Mac at any time, since it needs only the guide URLs). Probe 3b (antenna) runs only if the tester has an HDHomeRun.
+- **2026-11-18, step 2 (done; QA PASS, build/lint/test:local clean, no device run).** As built, beyond the layout:
+  - `roku/tools/roku.mjs` runs `deploy`, `test`, `console` and `test-local`, reads `roku/.env` (a one-line message and exit 1 when it's missing), and passes the password to Rooibos by environment, never argv.
+  - The Rooibos build is `bsconfig.test.json` (extends `bsconfig.json`, specs staged as `source/tests`). The off-device build is `bsconfig.local.json`. Local suites are `tests/local/<Suite>.test.bs` with `namespace <Suite>Tests` and `sub test_<name>(t)`, run by `tests/local/support/LocalTest.bs`, and `npm run test:local` exits 1 on any failure. `npm run lint` covers all three projects.
+  - Also: HD icon and splash variants, and `bs_const=DEBUG=true` in the manifest. **The release build must set DEBUG=false** (QA minor): owed by whichever step adds packaging; no `package` script yet.
+  - **`npm audit`: 43 high, accepted as dev-only.** zod via brs-node's jimp, picomatch (no patched release exists) and decode-uri-component. Nothing from npm ships in the app (L1). Re-check at step 24.
+  - Device checks owed to the first device session: `npm run deploy` shows the scene and version, the icon and splash look right, and the Rooibos sample passes.

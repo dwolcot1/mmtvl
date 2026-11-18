@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The screen router (M12). Step 2: the app's name and version only. -->
+<component name="MainScene" extends="Scene">
+    <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
+    <children>
+        <Rectangle id="background" width="1920" height="1080" color="0x1C1C1EFF" />
+        <Label
+            id="title"
+            text="MMTVL Live TV"
+            font="font:LargeBoldSystemFont"
+            color="0xFFFFFFFF"
+            width="1920"
+            horizAlign="center"
+            translation="[0, 470]" />
+        <Label
+            id="version"
+            font="font:MediumSystemFont"
+            color="0xFFFFFF99"
+            width="1920"
+            horizAlign="center"
+            translation="[0, 560]" />
+    </children>
+</component>

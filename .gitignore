@@ -4,3 +4,6 @@ DerivedData/
 xcuserdata/
 *.xcuserstate
 .claude/settings.local.json
+roku/.env
+roku/out/
+roku/node_modules/
