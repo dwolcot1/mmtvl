@@ -1,0 +1,192 @@
+' The Roku look (M12 step 10): colours, fonts, sizes and 9-patch images on the 1920 x 1080 (fhd) canvas, from the
+' design in design/roku-live-tv.pen. Keys keep MMTVL's DesignSystem/Theme.swift token names where one exists; Roku-only
+' tokens say so. Colours are Roku "0xRRGGBBAA" strings. SceneGraph has no blur, so Liquid Glass is a translucent
+' 9-patch panel with a rim (images/panel.9.png); the banner role (D46) is darker and more opaque (panel_banner.9.png).
+' The 9-patches are written by roku/tools/gen-ninepatch.py from the same numbers: change both together.
+'
+' Type: nothing on screen is smaller than 24 px (Theme.swift's 18-22 px detail sizes go up to 24): a 720p Roku
+' scales the canvas by 2/3, and 24 px is 16 px there, the smallest that still renders cleanly from across the room
+' (the 720p check in the design file).
+'
+' Use: m.theme = Theme.make() once per screen, then m.theme.colors.primaryText, Theme.font(m.theme.fonts.bannerTitle).
+namespace Theme
+
+    function make() as object
+        return {
+            "canvas": { "width": 1920, "height": 1080 },
+            "colors": colors(),
+            "fonts": fonts(),
+            "layout": layout(),
+            "images": images(),
+            "timing": timing()
+        }
+    end function
+
+    function colors() as object
+        return {
+            ' Theme.swift backgroundGradient (top; the bottom is black). Also the manifest's splash_color.
+            "background": "0x1C1C1EFF",
+            "backgroundBottom": "0x000000FF",
+            "primaryText": "0xFFFFFFFF",
+            "secondaryText": "0xFFFFFF99", ' white 0.6
+            "tileFill": "0xFFFFFF1F", ' white 0.12: guide cells, unfocused tiles
+            "focusHighlight": "0xFFFFFF4D", ' white 0.3
+            ' Focused rows are white with black text (Theme.swift focusedRow*).
+            "focusedRowFill": "0xFFFFFFFF",
+            "focusedRowText": "0x000000FF",
+            "focusedRowSecondaryText": "0x00000099",
+            "guideNowLine": "0xFF453AFF", ' TimeGrid nowBarBlendColor
+            "menuDim": "0x00000066", ' black 0.4 behind menus
+            "searchDim": "0x000000C7", ' black 0.78 behind Search and Choose Teams
+            ' Roku-only: the glass panels' fills (the 9-patches carry them; a Rectangle fallback can use these).
+            "panelFill": "0x262628D1",
+            "bannerPanelFill": "0x0E0E10E0",
+            "solidPanelFill": "0x1C1C1EEB", ' 0x1C1C1E at 0.92, Theme.swift's Reduce Transparency fill
+            "settingsRowCapsuleFill": "0xFFFFFF13", ' white 0.075
+            "settingsInfoRowFill": "0xFFFFFF0D", ' white 0.05
+            "settingsSelectedRowFill": "0xFFFFFF66", ' white 0.4: the parent column's opened row
+            "shelfProgressTrack": "0xFFFFFF40", ' white 0.25: the banner's progress track
+            "shelfProgressFill": "0xFFFFFFFF",
+            ' Roku-only: "Off: <reason>" in Settings > Device, warnings (registry nearly full).
+            "warningText": "0xFFD60AFF",
+            ' Roku-only: the bottom-of-screen gradient behind the banner (Theme.swift liveOverlayGradient's end).
+            "liveOverlayBottom": "0x000000D9"
+        }
+    end function
+
+    ' Font specs: { uri, size }. Theme.font(spec) makes the Font node. Roku's system font files: nothing to bundle,
+    ' no licence, no package weight. MMTVL's medium and semibold weights map to the regular and bold files.
+    function fonts() as object
+        regular = "font:SystemFontFile"
+        bold = "font:BoldSystemFontFile"
+        return {
+            "settingsTitle": { "uri": bold, "size": 48 },
+            "settingsSection": { "uri": bold, "size": 24 }, ' Theme.swift 22
+            "settingsRow": { "uri": regular, "size": 30 },
+            "settingsRowDetail": { "uri": regular, "size": 24 },
+            "settingsDescription": { "uri": regular, "size": 28 },
+            "settingsHint": { "uri": regular, "size": 24 }, ' Theme.swift 22
+            "liveBannerTitle": { "uri": bold, "size": 40 },
+            "liveBannerProgramme": { "uri": regular, "size": 30 },
+            "liveBannerDetail": { "uri": regular, "size": 24 }, ' Theme.swift 22
+            "guideInfoTitle": { "uri": bold, "size": 44 },
+            "guideInfoDetail": { "uri": regular, "size": 24 },
+            "guideCell": { "uri": regular, "size": 24 }, ' TimeGrid programTitleFont
+            "guideCellTime": { "uri": regular, "size": 24 }, ' TimeGrid timeLabelFont (Theme.swift 18)
+            "guideChannel": { "uri": regular, "size": 24 }, ' the channel info component's name
+            "guideChannelNumber": { "uri": regular, "size": 24 }, ' Theme.swift guideCellTimeFont (18) for the number
+            "guideGroup": { "uri": regular, "size": 28 }, ' Roku-only: the group LabelList (font and focusedFont)
+            "liveMenuTitle": { "uri": bold, "size": 34 },
+            "liveMenuRow": { "uri": regular, "size": 30 }, ' Theme.swift settingsRowFont
+            "liveMenuValue": { "uri": regular, "size": 24 },
+            "searchTitle": { "uri": bold, "size": 44 },
+            "searchRowTitle": { "uri": regular, "size": 28 }, ' Theme.swift 26
+            "searchRowDetail": { "uri": regular, "size": 24 }, ' Theme.swift 20
+            "errorTitle": { "uri": bold, "size": 48 } ' Theme.swift settingsTitleFont on the error panel
+        }
+    end function
+
+    function font(spec as object) as object
+        node = CreateObject("roSGNode", "Font")
+        node.uri = spec.uri
+        node.size = spec.size
+        return node
+    end function
+
+    function layout() as object
+        return {
+            "sideMargin": 120,
+            "glassCornerRadius": 28,
+            "glassRimWidth": 2,
+            ' Player (Theme.swift liveBanner*, M7 L28): the banner sits on a glass panel inset by sideMargin, 72 above
+            ' the bottom, with 32 padding; logo 96; progress 320 x 8.
+            "liveBannerLogoSize": 96,
+            "liveBannerPadding": 32,
+            "liveBannerBottom": 72,
+            "liveBannerSpacing": 12, ' between the lines
+            "liveBannerLogoGap": 32,
+            "liveBarHeight": 8,
+            "liveBannerProgressWidth": 320,
+            "errorPanelPadding": 60,
+            "errorPanelSymbolSize": 72, ' Theme.swift tileSymbolSize
+            ' Guide (Theme.swift guide*): info top-left, the playing channel's video top-right, the grid below.
+            "guideInfoRect": { "x": 120, "y": 60, "width": 980, "height": 360 },
+            "guidePreviewRect": { "x": 1160, "y": 60, "width": 640, "height": 360 },
+            "guideGridTop": 460,
+            "guideTimeHeaderHeight": 48, ' TimeGrid timeBarHeight
+            "guideRowHeight": 80, ' TimeGrid's own row height is not a documented field (verify on device, step 12)
+            "guideVisibleRows": 6,
+            "guideCellSpacing": 4, ' drawn as the 2-px transparent inset of guide_cell.9.png
+            "guideChannelColumnWidth": 340, ' TimeGrid channelInfoWidth
+            "guideInfoGridGap": 12, ' TimeGrid infoGridGap (guideGridLeading 472 - 120 - 340)
+            "guideGridLeading": 472,
+            "guideGridWidth": 1328,
+            "guideGroupPanelWidth": 420,
+            "guideGroupRowHeight": 64, ' Roku-only: the group LabelList itemSize height (Theme.swift guideRowHeight - 16)
+            "guideLogoSize": 48,
+            "guideChannelNumberWidth": 52,
+            "guideCellCornerRadius": 10,
+            "guideProgramHorizMargin": 16, ' TimeGrid programHorizMargin
+            "guideNowBarWidth": 3, ' TimeGrid nowBarWidth: 2 px at 720p
+            "guideDuration": 5400, ' TimeGrid duration: 90 minutes across guideGridWidth (MMTVL's timeline)
+            ' Menus (Theme.swift liveMenu*, menu*).
+            "liveMenuWidth": 720,
+            "liveMenuWideWidth": 1040,
+            "liveMenuRowHeight": 72,
+            "liveMenuRowCornerRadius": 12,
+            "liveMenuVisibleRows": 8,
+            "menuPanelPadding": 32,
+            "menuTitleSpacing": 16,
+            "menuRowPadding": 20,
+            ' Search (Theme.swift search*): Roku's DynamicMiniKeyboard on the left, results on the right.
+            "searchTitleTop": 80,
+            "searchKeyboardOrigin": { "x": 120, "y": 200 },
+            "searchResultsRect": { "x": 800, "y": 200, "width": 1000, "height": 780 },
+            "searchRowHeight": 84,
+            ' Settings (Theme.swift settings*, M7g): two 840-wide columns on a sliding track.
+            "settingsColumnWidth": 840,
+            "settingsColumnGap": 80,
+            "settingsSideMargin": 80,
+            "settingsRootColumnLeading": 540,
+            "settingsTitleTop": 80, ' Roku-only
+            "settingsListTop": 200, ' Roku-only
+            "settingsRowMinHeight": 72,
+            "settingsRowCornerRadius": 32, ' the 9-patch radius (Theme.swift 40 for two-line rows, capsules for one)
+            "settingsRowTextInset": 32,
+            "settingsRowSpacing": 8,
+            "settingsSectionSpacing": 40,
+            "settingsBandHeight": 104,
+            "settingsBandMaxWidth": 1400,
+            "settingsDimmedColumnOpacity": 0.55,
+            "settingsRowFocusScale": 1.03
+        }
+    end function
+
+    ' 9-patch images (roku/images, written by roku/tools/gen-ninepatch.py). The white ones are tinted with a blend
+    ' colour where a node has one (focusBitmapBlendColor, Poster.blendColor).
+    function images() as object
+        return {
+            "panel": "pkg:/images/panel.9.png", ' standard glass: menus, Search's results, Settings' Import confirm
+            "bannerPanel": "pkg:/images/panel_banner.9.png", ' banner role: the player banner, error panel
+            "settingsRow": "pkg:/images/settings_row.9.png", ' an unfocused Settings row capsule
+            "focusRow": "pkg:/images/focus_row.9.png", ' menu rows, the group LabelList focusBitmapUri (radius 12)
+            "focusCapsule": "pkg:/images/focus_capsule.9.png", ' Settings rows (radius 32)
+            "guideCell": "pkg:/images/guide_cell.9.png", ' TimeGrid programBackgroundBitmapUri
+            "guideFocus": "pkg:/images/guide_focus.9.png", ' TimeGrid focusBitmapUri, variant A (filled)
+            "guideFocusRing": "pkg:/images/guide_focus_ring.9.png", ' TimeGrid focusBitmapUri, variant B (ring)
+            "bar": "pkg:/images/bar.9.png" ' progress bar and track (blendColor)
+        }
+    end function
+
+    ' Seconds.
+    function timing() as object
+        return {
+            "bannerDuration": 5, ' the banner hides 5 s after a change or OK (step 11)
+            "pausedOverlayDuration": 15, ' D51
+            "guideIdleReturn": 180, ' D51
+            "menuFade": 0.2, ' Theme.swift menuFadeAnimation
+            "overlayFade": 0.25
+        }
+    end function
+
+end namespace

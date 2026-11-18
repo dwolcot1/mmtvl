@@ -32,6 +32,8 @@
     <script type="text/brighterscript" uri="pkg:/source/lib/SettingsStore.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/Refresh.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/GuideSources.bs" />
+    <!-- Step 10: the Roku look (colours, fonts, sizes, 9-patches); the screens of steps 11-13 read it. -->
+    <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
     <children>
         <Rectangle id="background" width="1920" height="1080" color="0x1C1C1EFF" />
         <Label
