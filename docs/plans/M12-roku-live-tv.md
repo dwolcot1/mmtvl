@@ -307,7 +307,7 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
 - [x] **7. Settings store and capabilities** `[implementer]`, files: `roku/source/lib/SettingsStore.bs`, `Capabilities.bs`, tests
   - L5 and L7. Defaults equal MMTVL's (`channelUpMovesUpList` true, and so on). The registry size check works as L5 says.
   - Done when: tests cover round-trips, defaults for missing keys, a corrupt value reading as the default, and the low-space refusal (with a fake space function).
-- [ ] **8. Playlist and lineup** `[implementer]`, files: `roku/components/tasks/PlaylistTask.*`, `roku/source/lib/Lineup.bs`, tests
+- [x] **8. Playlist and lineup** `[implementer]`, files: `roku/components/tasks/PlaylistTask.*`, `roku/source/lib/Lineup.bs`, tests
   - Fetch with the CA bundle (and http), at most 4 MB.
   - The host is logged as MMTVL does: "Loaded N channels from <host>".
   - On failure, keep the last channel list in memory and show "Couldn't load the playlist (<host>)".
@@ -485,6 +485,7 @@ Steps 4, 15 and 23 on the devices (three device sessions: probes, build A, build
 | ECP launch blocked under Limited | Probe i | The script tells the user to set Control by mobile apps to Enabled for the import, then back. |
 | Roku disables dev mode | The installer page is gone | The app has no store path; out of our hands. |
 | MMTVL's matching changes later | `RokuParityTests` fails | Update the golden file and the Roku port together. |
+| A public host the playlist names (a `url-tvg` guide, a stream, an HLS sub-resource) redirects the Roku to loopback, ECP or a LAN device. `roUrlTransfer` follows redirects itself and the `Video` node fetches HLS sub-resources itself, so `URLPolicy` judges only the first URL, and MMTVL's relay-level hop checks (D39) can't be matched | Security review of step 8 (M-1, 2026-11-18) | **Accepted residual: a blind GET only** (ECP's state-changing commands are POST). After each fetch, `roUrlEvent.GetTargetIpAddress()` is checked with `URLPolicy.allowsPeer`, and the body is discarded when a public chain ended on an internal address (whether it reports the last hop is a device check). Use the Roku on a trusted network. |
 | Developer mode exposes the app to the LAN: the BrightScript console on port 8085 has no authentication (Ctrl-C breaks into the debugger, where the registry can be read), and dev-mode ECP queries may show node fields | Security review of step 3 (M-1, 2026-11-18); check `curl http://<roku>:8060/query/app-ui` and port 8085 on the first device session | Inherent to sideloading. Use the Roku on a trusted network only (README and tester instructions say so). The probe build erases typed URLs when Probes closes. The app never puts a URL in a node field it doesn't need, and the risk is re-assessed in step 24. |
 
 ## Deviations & questions
@@ -528,3 +529,23 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
   - **QA fixes:** every save checks the value's size against the space left. A save that won't fit gets a "too large" message and writes nothing, and overrides keep 4 KB free. `save` and `replaceAll` are all or nothing, putting the old values back on a failed write or flush. Override keys are lowercased, and on a collision the last in sorted order wins.
   - **Deviations:** `lastChannelID` and `lastGroup` use `""` for none. Sizes are estimated uncompressed, which is conservative against the 32 KB compressed budget; revisit with real `GetSpaceAvailable` numbers. The memory-limit unit is guessed from its magnitude, provisionally, until step 4. The thresholds are named constants.
   - **bsc gotcha:** inside a namespace, a local variable named like a function of that namespace is rewritten to the function. Avoid such names.
+- **2026-11-18, step 8, decisions on the implementer's questions:** stream URLs are checked by step 11's player **as MMTVL does**: http(s), and the entry's own host is allowed whatever it is. `GuideTask` (step 9) checks typed guides with no referrer and `url-tvg` guides with the playlist as referrer, then checks the peer address with `URLPolicy.allowsPeer`. Step 12's guide calls `refreshPlaylistIfStale()` when it opens. **Security L-3 is open:** the root scene's `lineup` and `playlistGuideURLs` fields hold token-bearing URLs. Decide after the first device session checks whether dev-mode ECP `/query/app-ui` or `/query/sgnodes` shows node fields; if it does, keep URLs in `m` and expose only ids.
+- **2026-11-18, step 8 (done; QA PASS, security review: 1 medium (accepted residual, Risks table) and 7 lows, fixed except L-3 and L-6).** `test:local`: 155 passed.
+  - **New `lib` code:** `Lineup.bs`, a port of `ChannelLineup`, `guideGroups` and `channels(in:)`, with all 16 ChannelLineupTests cases plus 2 ChannelListTests cases. `Lineup.build(channels, prefs, liveTeamChannelIDs)` takes the live team channel ids; upcoming games wait for step 18. Antenna channels are those with `source: "antenna"` and a `guideNumber` (step 21).
+  - **`URLPolicy.bs`:**
+    - `allows(url, referrer)` judges the first URL. With a referrer, the host must be plain ASCII with no empty label, and a host whose last label is a number must read as IPv4 (WHATWG's rule, narrower than review L-2 as written, so `cafe.be` passes).
+    - `allowsStream(url)` accepts any http(s) host, as MMTVL does.
+    - `allowsPeer(ip, publicChain)` judges the address a fetch actually reached.
+    - `allowsInChain` is the full MMTVL rule, kept for if redirect hops ever become visible.
+  - **`Refresh.bs`:** `isDue` and the cadence and timeout constants.
+  - **`PlaylistTask`:** http(s) only, the CA bundle, a 4 MB cap, a 30 s timeout, try/catch around the body, and host-only logs. It logs whether `GetTargetIpAddress` reported a peer (a device check). Its `url-tvg` guides are filtered with the playlist as referrer.
+  - **MainScene:** loads the settings registry, loads the playlist at launch and every 15 min (`refreshPlaylistIfStale()`), has a 60 s watchdog, and keeps the last list when a load fails.
+  - **`Log.host`** returns "" for an authority with a backslash, space or control character.
+  - **Device checks:**
+    - the "Loaded N channels from <host>" line;
+    - whether the 4 MB cap applies while downloading (does `tmp:` grow?);
+    - what `GetTargetIpAddress` reports, and for which hop;
+    - what `GetIPAddrs` returns;
+    - that the watchdog and the 15-minute timer fire;
+    - that try/catch works in a Task thread;
+    - lineup build time on the stick.

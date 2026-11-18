@@ -17,7 +17,9 @@ namespace Log
         print "[MMTVL][" + category + "] Error: " + text
     end sub
 
-    ' Only the host of a URL, lowercased: no scheme, user info, port, path, query or fragment.
+    ' Only the host of a URL, lowercased: no scheme, user info, port, path, query or fragment. "" when the
+    ' authority holds a backslash, a space or a control character (security L-4 of step 8): such a URL may be
+    ' read with other separators elsewhere, and its "host" could carry a path or credentials.
     function host(url as string) as string
         rest = url
         schemeEnd = Instr(1, rest, "://")
@@ -25,6 +27,10 @@ namespace Log
         for each stopper in ["/", "?", "#"]
             cut = Instr(1, rest, stopper)
             if cut > 0 then rest = Left(rest, cut - 1)
+        end for
+        for i = 1 to Len(rest)
+            code = Asc(Mid(rest, i, 1))
+            if code <= 32 or code = 92 or code = 127 then return ""
         end for
         at = rest.Split("@")
         if at.Count() = 0 then return ""

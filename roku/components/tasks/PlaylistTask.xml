@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Loads the playlist off the render thread (M12 step 8). Set playlistURL and prefs, then control = "run". The
+     task sets result once: { ok: true, host, channels, lineup, guideURLs } or { ok: false, host, status }, where
+     status is the text to show ("Couldn't load the playlist (<host>)"). On failure the scene keeps the channels it
+     has. channels are M3U.makeChannels'; lineup is Lineup.build(channels, prefs, []); guideURLs are the playlist's
+     url-tvg guides that URLPolicy allows with the playlist as the referrer. Logs show the host only (L6). -->
+<component name="PlaylistTask" extends="Task">
+    <interface>
+        <field id="playlistURL" type="string" />
+        <field id="prefs" type="assocarray" />
+        <field id="result" type="assocarray" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Unicode.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/M3U.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/URLPolicy.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Lineup.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Refresh.bs" />
+</component>

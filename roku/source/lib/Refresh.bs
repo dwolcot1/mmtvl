@@ -1,0 +1,32 @@
+' When to load the playlist again (M12 step 8; MMTVL's D40 cadence, IPTV/IPTVLibrary.swift:17-20,218-223): at
+' launch, on a timer every intervalSeconds while the app runs, and when the guide opens, each time only when the
+' channels are empty or the last load is more than playlistMaxAgeSeconds old. Pure, so any clock works; the scene
+' uses UpTime(0) (seconds since the Roku started), which no clock change moves.
+namespace Refresh
+
+    ' The playlist is stale after 10 minutes (IPTVLibrary.playlistStaleness).
+    const playlistMaxAgeSeconds = 600
+    ' The refresh timer's period (IPTVLibrary.autoRefreshInterval).
+    const intervalSeconds = 900
+    ' PlaylistTask gives up on a download after this long.
+    const playlistTimeoutSeconds = 30
+    ' The scene stops waiting for a PlaylistTask after this long (twice its timeout; QA-2, security L-5), so a task
+    ' that never sets its result doesn't block later refreshes.
+    const playlistWatchdogSeconds = 60
+
+    ' True when nothing has loaded yet (lastLoad not a number), when more than maxAgeSeconds have passed since
+    ' lastLoad (as MMTVL: exactly maxAgeSeconds isn't stale yet), or when now is before lastLoad (a clock that
+    ' went back; MMTVL would wait for it to catch up).
+    function isDue(lastLoad as dynamic, now as dynamic, maxAgeSeconds as dynamic) as boolean
+        if not Refresh.isNumber(lastLoad) or not Refresh.isNumber(now) or not Refresh.isNumber(maxAgeSeconds) then return true
+        age = now - lastLoad
+        if age < 0 then return true
+        return age > maxAgeSeconds
+    end function
+
+    function isNumber(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "integer" or kind = "roint" or kind = "rointeger" or kind = "float" or kind = "rofloat" or kind = "double" or kind = "rodouble" or kind = "longinteger" or kind = "rolonginteger"
+    end function
+
+end namespace

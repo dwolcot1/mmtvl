@@ -1,0 +1,155 @@
+' PlaylistTask (M12 step 8; fields in PlaylistTask.xml): downloads the playlist, then M3U.parse,
+' M3U.makeChannels and Lineup.build, as MMTVL's IPTVLibrary.refreshPlaylist (IPTV/IPTVLibrary.swift:192-215).
+' The download goes through a file in tmp: so its size can be checked while it arrives: past 4 MB it's stopped
+' (unverified on a device: whether the file grows during AsyncGetToFile; the size is checked again at the end
+' either way, so nothing over 4 MB is ever parsed). http and https only (URLPolicy), https with Roku's CA bundle.
+' A crash in here still sets a failure result (QA-2, security L-5); the scene also has a watchdog.
+
+' The largest playlist read (security L-3 of step 3; the user's is about 30 KB).
+const playlistMaxBytes = 4194304
+const playlistDownloadPath = "tmp:/mmtvl-playlist.m3u"
+
+sub init()
+    m.top.functionName = "loadPlaylist"
+end sub
+
+sub loadPlaylist()
+    host = Log.host(m.top.playlistURL)
+    try
+        loadPlaylistFrom(m.top.playlistURL, host)
+    catch e
+        ' Never the exception's message, which could quote the URL: its number only.
+        Log.error("IPTV", "Playlist from " + host + " failed: the loader stopped (error " + errorNumber(e) + ")")
+        m.top.result = playlistFailure(host)
+    end try
+end sub
+
+function errorNumber(e as dynamic) as string
+    if type(e) = "roAssociativeArray"
+        if Refresh.isNumber(e.number) then return e.number.ToStr()
+    end if
+    return "?"
+end function
+
+sub loadPlaylistFrom(url as string, host as string)
+    fetched = fetchPlaylistText(url)
+    if not fetched.ok
+        Log.error("IPTV", "Playlist from " + host + " failed: " + fetched.reason)
+        m.top.result = playlistFailure(host)
+        return
+    end if
+    playlist = M3U.parse(fetched.text)
+    fetched.text = ""
+    if playlist.DoesExist("error")
+        Log.error("IPTV", "Playlist from " + host + " failed: not a playlist")
+        m.top.result = playlistFailure(host)
+        return
+    end if
+    channels = M3U.makeChannels(playlist.entries)
+    guideURLs = allowedGuideURLs(playlist.guideURLs, url)
+    sorted = Lineup.build(channels, m.top.prefs, [])
+    Log.info("IPTV", "Loaded " + channels.Count().ToStr() + " channels from " + host)
+    m.top.result = { ok: true, host: host, channels: channels, lineup: sorted, guideURLs: guideURLs }
+end sub
+
+function playlistFailure(host as string) as object
+    return { ok: false, host: host, status: "Couldn't load the playlist (" + host + ")" }
+end function
+
+' The playlist's url-tvg guides that URLPolicy allows with the playlist as the referrer (a public playlist names no
+' guide on the Roku or the LAN). The guide task (step 9) checks each again before it fetches.
+function allowedGuideURLs(urls as object, playlistURL as string) as object
+    result = []
+    refused = 0
+    for each guideURL in urls
+        if URLPolicy.allows(guideURL, playlistURL).ok then result.Push(guideURL) else refused = refused + 1
+    end for
+    if refused > 0 then Log.warn("IPTV", "Left out " + refused.ToStr() + " guide(s) the playlist names: not allowed for a playlist on " + Log.host(playlistURL))
+    return result
+end function
+
+' GET url into a string, at most playlistMaxBytes, within Refresh.playlistTimeoutSeconds. { ok, text, reason }; reason never
+' holds the URL or a server's text.
+function fetchPlaylistText(url as string) as object
+    result = { ok: false, text: "", reason: "" }
+    if not URLPolicy.allows(url).ok
+        result.reason = "not an http or https URL"
+        return result
+    end if
+    fs = CreateObject("roFileSystem")
+    fs.Delete(playlistDownloadPath)
+    port = CreateObject("roMessagePort")
+    transfer = CreateObject("roUrlTransfer")
+    transfer.SetUrl(url)
+    transfer.SetPort(port)
+    if LCase(Left(url, 8)) = "https://"
+        transfer.SetCertificatesFile("common:/certs/ca-bundle.crt")
+    end if
+    transfer.RetainBodyOnError(false)
+    if not transfer.AsyncGetToFile(playlistDownloadPath)
+        result.reason = "couldn't start the download"
+        return result
+    end if
+    timer = CreateObject("roTimespan")
+    while true
+        remaining = Refresh.playlistTimeoutSeconds * 1000 - timer.TotalMilliseconds()
+        if remaining <= 0
+            transfer.AsyncCancel()
+            result.reason = "timed out"
+            exit while
+        end if
+        if remaining > 250 then remaining = 250
+        msg = Wait(remaining, port)
+        if type(msg) = "roUrlEvent"
+            if msg.GetInt() = 1
+                logPeer(msg, url)
+                code = msg.GetResponseCode()
+                if code >= 200 and code < 300
+                    result.ok = true
+                else if code < 0
+                    result.reason = "network error " + code.ToStr()
+                else
+                    result.reason = "HTTP " + code.ToStr()
+                end if
+                exit while
+            end if
+        end if
+        if downloadedBytes(playlistDownloadPath) > playlistMaxBytes
+            transfer.AsyncCancel()
+            result.reason = "larger than 4 MB"
+            exit while
+        end if
+    end while
+    if result.ok and downloadedBytes(playlistDownloadPath) > playlistMaxBytes
+        result.ok = false
+        result.reason = "larger than 4 MB"
+    end if
+    if result.ok then result.text = M3U.readFile(playlistDownloadPath)
+    fs.Delete(playlistDownloadPath)
+    return result
+end function
+
+' Security M-1 (for step 9 and the first device session): whether roUrlEvent reports the address the transfer
+' reached, and how URLPolicy.allowsPeer would judge it. Logged as yes/no and the verdict, with the host only; not
+' enforced for the playlist, which the user typed.
+sub logPeer(msg as object, url as string)
+    peer = msg.GetTargetIpAddress()
+    if not URLPolicy.isText(peer) then peer = ""
+    if peer = ""
+        Log.info("IPTV", "Playlist from " + Log.host(url) + ": no peer address reported")
+        return
+    end if
+    verdict = URLPolicy.allowsPeer(peer, true)
+    shown = "public"
+    if not verdict.ok then shown = verdict.reason
+    Log.info("IPTV", "Playlist from " + Log.host(url) + ": peer address reported (" + shown + ")")
+end sub
+
+' The file's size so far, 0 when there's none yet.
+function downloadedBytes(path as string) as dynamic
+    info = CreateObject("roFileSystem").Stat(path)
+    if type(info) <> "roAssociativeArray" then return 0
+    kind = LCase(type(info.size))
+    if kind = "integer" or kind = "roint" or kind = "rointeger" or kind = "longinteger" or kind = "rolonginteger" or kind = "double" or kind = "rodouble" or kind = "float" or kind = "rofloat" then return info.size
+    return 0
+end function

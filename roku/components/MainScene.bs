@@ -2,6 +2,7 @@ sub init()
     versionText = appVersionText()
     m.top.findNode("version").text = versionText
     Log.info("App", "Showing " + versionText)
+    startPlaylist()
     #if DEBUG
         ' M12 step 3 (L8, until the About page of step 13): DEBUG builds open the Probes screen with OK or *.
         ' Release builds (bs_const DEBUG=false) have none of this, and no probe files (bsconfig.release.json).
@@ -16,6 +17,93 @@ sub init()
         m.top.appendChild(hint)
         m.top.setFocus(true)
     #end if
+end sub
+
+' M12 step 8: the settings, then the playlist at launch and on a 15-minute timer (D40). The channels stay in m, so
+' the lineup can be built again when the preferences change; a failed load keeps them.
+sub startPlaylist()
+    m.store = SettingsStore.load(SettingsStore.deviceRegistry())
+    m.channels = []
+    m.lastPlaylistLoad = invalid
+    m.playlistTask = invalid
+    m.refreshTimer = CreateObject("roSGNode", "Timer")
+    m.refreshTimer.duration = Refresh.intervalSeconds
+    m.refreshTimer.repeat = true
+    m.refreshTimer.observeField("fire", "refreshPlaylistIfStale")
+    m.refreshTimer.control = "start"
+    ' QA-2, security L-5: a task that never sets its result is given up after twice its own timeout.
+    m.playlistWatchdog = CreateObject("roSGNode", "Timer")
+    m.playlistWatchdog.duration = Refresh.playlistWatchdogSeconds
+    m.playlistWatchdog.repeat = false
+    m.playlistWatchdog.observeField("fire", "onPlaylistWatchdog")
+    m.playlistHost = ""
+    loadPlaylist()
+end sub
+
+' The timer's check, and (step 12) the guide's when it opens: a load when there are no channels or the last load
+' is more than 10 minutes old (Refresh.isDue, on UpTime, which no clock change moves).
+sub refreshPlaylistIfStale()
+    if m.channels.Count() = 0 or Refresh.isDue(m.lastPlaylistLoad, UpTime(0), Refresh.playlistMaxAgeSeconds)
+        loadPlaylist()
+    end if
+end sub
+
+' One load at a time (MMTVL skips a refresh while one runs). Without a playlist URL there's nothing to load.
+sub loadPlaylist()
+    if m.playlistTask <> invalid then return
+    url = m.store.source
+    if url = ""
+        ' QA-1: the field too, for the screens that read it.
+        m.top.playlistStatus = "No Live TV source yet"
+        showPlaylistStatus(m.top.playlistStatus)
+        return
+    end if
+    m.playlistHost = Log.host(url)
+    if m.channels.Count() = 0 then showPlaylistStatus("Loading channels…")
+    m.playlistTask = CreateObject("roSGNode", "PlaylistTask")
+    m.playlistTask.playlistURL = url
+    m.playlistTask.prefs = m.store.prefs
+    m.playlistTask.observeField("result", "onPlaylistResult")
+    m.playlistTask.control = "run"
+    m.playlistWatchdog.control = "start"
+end sub
+
+' The task didn't answer in time: drop it (the next refresh may start another) and say so, with the host only.
+sub onPlaylistWatchdog()
+    task = m.playlistTask
+    if task = invalid then return
+    task.unobserveField("result")
+    task.control = "stop"
+    m.playlistTask = invalid
+    Log.error("IPTV", "Playlist from " + m.playlistHost + " failed: no answer from the loader")
+    m.top.playlistStatus = "Couldn't load the playlist (" + m.playlistHost + ")"
+    showPlaylistStatus(m.top.playlistStatus)
+end sub
+
+sub onPlaylistResult()
+    task = m.playlistTask
+    if task = invalid then return
+    task.unobserveField("result")
+    m.playlistTask = invalid
+    m.playlistWatchdog.control = "stop"
+    result = task.result
+    if type(result) <> "roAssociativeArray" then return
+    if result.ok = true
+        m.channels = result.channels
+        m.lastPlaylistLoad = UpTime(0)
+        m.top.lineup = result.lineup
+        m.top.playlistGuideURLs = result.guideURLs
+        m.top.playlistStatus = ""
+        showPlaylistStatus(m.channels.Count().ToStr() + " channels from " + result.host)
+    else
+        ' The last channel list stays (MMTVL keeps playlistChannels on a failed refresh).
+        m.top.playlistStatus = result.status
+        showPlaylistStatus(result.status)
+    end if
+end sub
+
+sub showPlaylistStatus(text as string)
+    m.top.findNode("status").text = text
 end sub
 
 ' "Version <major>.<minor> Build <build>", from the manifest.

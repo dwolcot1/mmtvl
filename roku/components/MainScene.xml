@@ -1,7 +1,19 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<!-- The screen router (M12). Step 2: the app's name and version only. -->
+<!-- The screen router (M12). Step 2: the app's name and version. Step 8: loads the settings and the playlist
+     (PlaylistTask) at launch, then every 15 minutes when stale, and shows the playlist's status. Screens come with
+     steps 10-13 and read the fields below. -->
 <component name="MainScene" extends="Scene">
+    <interface>
+        <!-- Lineup.build's result for the last playlist that loaded (kept when a later load fails). -->
+        <field id="lineup" type="assocarray" />
+        <!-- The playlist's url-tvg guides, as URLPolicy allows them (for the guide task, step 9). -->
+        <field id="playlistGuideURLs" type="array" />
+        <!-- "" after a load, else what to show: "Couldn't load the playlist (<host>)". -->
+        <field id="playlistStatus" type="string" />
+    </interface>
     <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/SettingsStore.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Refresh.bs" />
     <children>
         <Rectangle id="background" width="1920" height="1080" color="0x1C1C1EFF" />
         <Label
@@ -19,5 +31,12 @@
             width="1920"
             horizAlign="center"
             translation="[0, 560]" />
+        <Label
+            id="status"
+            font="font:SmallSystemFont"
+            color="0xFFFFFFCC"
+            width="1920"
+            horizAlign="center"
+            translation="[0, 700]" />
     </children>
 </component>
