@@ -1,0 +1,208 @@
+' What this Roku can do, and its device class (M12 L7, D56). Capabilities.detect(deviceInfo, memoryMonitor) reads:
+'   memoryMB    the app's memory limit (GetChannelMemoryLimit), or invalid when it's unknown
+'   uiHD        true with a 720p UI
+'   mpeg2, ac3  CanDecodeVideo / CanDecodeAudio
+'   osVersion, model
+' and derives:
+'   deviceClass "Low" (memory limit unknown or at most lowMemoryLimitMB, or a 720p UI) or "High"; classReason says why
+'   guideHours, logosDefault, inflateMaxCompressedBytes (invalid: no limit)
+'   features    [{ id, on, reason }] for Settings → Device: reason is "" when on, else why it's off
+' Both objects are passed in, so tests use fakes; Capabilities.detectDevice() uses the real roDeviceInfo and
+' roAppMemoryMonitor. Every call is guarded: a call this Roku OS lacks reads as unknown, never a crash.
+namespace Capabilities
+
+    ' Provisional thresholds: step 4's probe measurements replace them (L7 "the thresholds come from step 4").
+    ' A limit at or under this is the Low class.
+    const lowMemoryLimitMB = 512
+    const lowGuideHours = 24
+    const highGuideHours = 36
+    ' Low devices don't inflate guides over this size compressed (2 MB).
+    const lowInflateMaxCompressedBytes = 2097152
+
+    ' GetChannelMemoryLimit's unit and shape are unverified (step 3 shows the raw values). A number is read by its
+    ' size: at least bytesFloor is bytes, at least kilobytesFloor is KB, else MB. App limits are tens to hundreds of
+    ' MB, so the three ranges don't overlap (64 MB in KB is 65,536; 64 GB in MB is 65,536). An AA is read by its
+    ' maxForegroundMemory, the same way.
+    const bytesFloor = 67108864
+    const kilobytesFloor = 65536
+
+    function detectDevice() as object
+        monitor = invalid
+        try
+            monitor = CreateObject("roAppMemoryMonitor")
+        catch e
+            monitor = invalid
+        end try
+        return Capabilities.detect(CreateObject("roDeviceInfo"), monitor)
+    end function
+
+    function detect(deviceInfo as dynamic, memoryMonitor as dynamic) as object
+        caps = {
+            "memoryMB": Capabilities.memoryLimitMB(memoryMonitor),
+            "uiHD": Capabilities.isHDUI(deviceInfo),
+            "mpeg2": Capabilities.canDecode(deviceInfo, "video", "mpeg2"),
+            "ac3": Capabilities.canDecode(deviceInfo, "audio", "ac3"),
+            "osVersion": Capabilities.osVersion(deviceInfo),
+            "model": Capabilities.model(deviceInfo)
+        }
+        reasons = []
+        if caps.memoryMB = invalid
+            reasons.Push("memory limit unknown")
+        else if caps.memoryMB <= Capabilities.lowMemoryLimitMB
+            reasons.Push("memory limit " + caps.memoryMB.ToStr() + " MB")
+        end if
+        if caps.uiHD then reasons.Push("720p UI")
+        low = reasons.Count() > 0
+        if low
+            caps["deviceClass"] = "Low"
+            caps["classReason"] = "Low-end Roku: " + reasons.Join(", ")
+            caps["guideHours"] = Capabilities.lowGuideHours
+            caps["logosDefault"] = false
+            caps["inflateMaxCompressedBytes"] = Capabilities.lowInflateMaxCompressedBytes
+        else
+            caps["deviceClass"] = "High"
+            caps["classReason"] = ""
+            caps["guideHours"] = Capabilities.highGuideHours
+            caps["logosDefault"] = true
+            caps["inflateMaxCompressedBytes"] = invalid
+        end if
+        caps["features"] = [
+            Capabilities.feature("longGuide", not low, caps.classReason + "; the guide shows 24 hours"),
+            Capabilities.feature("logos", not low, caps.classReason + "; channel logos are off by default"),
+            Capabilities.feature("inflateLargeGuides", not low, caps.classReason + "; .gz guides over 2 MB aren't read"),
+            Capabilities.feature("mpeg2", caps.mpeg2, "This Roku can't play MPEG-2; antenna MPEG-2 channels are hidden"),
+            Capabilities.feature("ac3", caps.ac3, "This Roku can't decode Dolby Digital (AC-3)")
+        ]
+        Log.info("Device", Capabilities.summary(caps))
+        return caps
+    end function
+
+    function feature(id as string, isOn as boolean, offReason as string) as object
+        if isOn then reason = "" else reason = offReason
+        return { "id": id, "on": isOn, "reason": reason }
+    end function
+
+    ' The app's memory limit in MB, or invalid when the monitor, the call or its value is missing or unknown.
+    function memoryLimitMB(memoryMonitor as dynamic) as dynamic
+        if memoryMonitor = invalid then return invalid
+        raw = invalid
+        try
+            raw = memoryMonitor.GetChannelMemoryLimit()
+        catch e
+            return invalid
+        end try
+        if LCase(type(raw)) = "roassociativearray"
+            foreground = invalid
+            for each key in raw
+                if LCase(key) = "maxforegroundmemory" then foreground = raw[key]
+            end for
+            raw = foreground
+        end if
+        if not Capabilities.isNumber(raw) then return invalid
+        if raw <= 0 then return invalid
+        if raw >= Capabilities.bytesFloor then return Int(raw / 1048576)
+        if raw >= Capabilities.kilobytesFloor then return Int(raw / 1024)
+        return Int(raw)
+    end function
+
+    ' A 720p UI: GetUIResolution's name "HD", or a height of at most 720.
+    function isHDUI(deviceInfo as dynamic) as boolean
+        resolution = invalid
+        try
+            resolution = deviceInfo.GetUIResolution()
+        catch e
+            return false
+        end try
+        if LCase(type(resolution)) <> "roassociativearray" then return false
+        name = resolution.name
+        if Capabilities.isString(name) then return LCase(name) = "hd"
+        height = resolution.height
+        if Capabilities.isNumber(height) then return height > 0 and height <= 720
+        return false
+    end function
+
+    ' CanDecodeVideo / CanDecodeAudio({ codec }): its result field (or a plain boolean); false when unknown.
+    function canDecode(deviceInfo as dynamic, kind as string, codec as string) as boolean
+        answer = invalid
+        try
+            if kind = "video"
+                answer = deviceInfo.CanDecodeVideo({ "codec": codec })
+            else
+                answer = deviceInfo.CanDecodeAudio({ "codec": codec })
+            end if
+        catch e
+            return false
+        end try
+        if LCase(type(answer)) = "roassociativearray" then answer = answer.result
+        return Capabilities.isBoolean(answer) and answer = true
+    end function
+
+    ' "major.minor.revision.build" from GetOSVersion, else GetVersion's string, else "".
+    function osVersion(deviceInfo as dynamic) as string
+        try
+            version = deviceInfo.GetOSVersion()
+            if LCase(type(version)) = "roassociativearray"
+                parts = []
+                for each field in ["major", "minor", "revision", "build"]
+                    part = version[field]
+                    if Capabilities.isString(part) and part <> ""
+                        parts.Push(part)
+                    else if Capabilities.isNumber(part)
+                        parts.Push(Int(part).ToStr())
+                    end if
+                end for
+                if parts.Count() > 0 then return parts.Join(".")
+            end if
+        catch e
+            ' Older Roku OS: GetVersion below.
+        end try
+        try
+            text = deviceInfo.GetVersion()
+            if Capabilities.isString(text) then return text
+        catch e
+            return ""
+        end try
+        return ""
+    end function
+
+    function model(deviceInfo as dynamic) as string
+        try
+            name = deviceInfo.GetModel()
+            if Capabilities.isString(name) then return name
+        catch e
+            return ""
+        end try
+        return ""
+    end function
+
+    function isString(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "string" or kind = "rostring"
+    end function
+
+    function isBoolean(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "boolean" or kind = "roboolean"
+    end function
+
+    function isNumber(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "integer" or kind = "roint" or kind = "rointeger" or kind = "longinteger" or kind = "rolonginteger" or kind = "float" or kind = "rofloat" or kind = "double" or kind = "rodouble"
+    end function
+
+    ' One log line: the class and why, the decoders, model and OS. No ids or addresses.
+    function summary(caps as object) as string
+        if caps.memoryMB = invalid then memory = "unknown" else memory = caps.memoryMB.ToStr() + " MB"
+        text = caps.deviceClass + " class"
+        if caps.classReason <> "" then text += " (" + caps.classReason + ")"
+        text += "; memory limit " + memory + "; MPEG-2 " + Capabilities.yesNo(caps.mpeg2) + "; AC-3 " + Capabilities.yesNo(caps.ac3)
+        text += "; model " + caps.model + "; Roku OS " + caps.osVersion
+        return text
+    end function
+
+    function yesNo(value as boolean) as string
+        if value then return "yes"
+        return "no"
+    end function
+
+end namespace
