@@ -1,0 +1,23 @@
+{
+  "extends": "bsconfig.json",
+  "files": [
+    "manifest",
+    "source/**/*",
+    "components/**/*",
+    "images/**/*",
+    {
+      "src": "tests/**/*.spec.bs",
+      "dest": "source/tests"
+    }
+  ],
+  "stagingDir": "out/test-staging",
+  "outFile": "out/mmtvl-live-tv-test.zip",
+  "plugins": [
+    "rooibos-roku",
+    "@rokucommunity/bslint"
+  ],
+  "rooibos": {
+    "showOnlyFailures": false,
+    "catchCrashes": true
+  }
+}

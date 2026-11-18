@@ -1,0 +1,42 @@
+' Hosts-only logging (M12 L6). Lines print as "[MMTVL][<category>] <text>".
+' Never pass a URL, token, DeviceAuth or tuner address in text: log Log.host(url) instead.
+' Release builds (bs_const DEBUG=false) print warnings and errors only.
+namespace Log
+
+    sub info(category as string, text as string)
+        #if DEBUG
+            print "[MMTVL][" + category + "] " + text
+        #end if
+    end sub
+
+    sub warn(category as string, text as string)
+        print "[MMTVL][" + category + "] Warning: " + text
+    end sub
+
+    sub error(category as string, text as string)
+        print "[MMTVL][" + category + "] Error: " + text
+    end sub
+
+    ' Only the host of a URL, lowercased: no scheme, user info, port, path, query or fragment.
+    function host(url as string) as string
+        rest = url
+        schemeEnd = Instr(1, rest, "://")
+        if schemeEnd > 0 then rest = Mid(rest, schemeEnd + 3)
+        for each stopper in ["/", "?", "#"]
+            cut = Instr(1, rest, stopper)
+            if cut > 0 then rest = Left(rest, cut - 1)
+        end for
+        at = rest.Split("@")
+        if at.Count() = 0 then return ""
+        rest = at[at.Count() - 1]
+        if Left(rest, 1) = "["
+            close = Instr(1, rest, "]")
+            if close > 0 then return LCase(Mid(rest, 2, close - 2))
+            return ""
+        end if
+        colon = Instr(1, rest, ":")
+        if colon > 0 then rest = Left(rest, colon - 1)
+        return LCase(rest)
+    end function
+
+end namespace
