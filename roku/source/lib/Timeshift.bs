@@ -1,0 +1,83 @@
+' The timeshift bar's maths (M12 step 11b): a port of MMTVL's Timeshift (IPTV/Player/Timeshift.swift: behindLive,
+' isLive, buffered, label) and TimeshiftBarView's playhead (IPTV/LiveTVView.swift), over Roku's pause buffer
+' instead of mpv's cache. Pure functions, no nodes. Uses PlayerKeys (liveEdgeMarginSeconds) and Refresh (isNumber).
+'
+'   make(position, bufferStart, bufferEnd) -> { position, rangeStart, liveEdge, behindLive, isLive, buffered,
+'     fraction, label }, or invalid when any of the three isn't a number (the Video node's pauseBufferStart and
+'     pauseBufferEnd are unverified on a device). The track is the pause buffer: rangeStart = bufferStart, and the
+'     right end, bufferEnd, is live.
+'     behindLive  max(0, liveEdge - position - liveSlackSeconds), as MMTVL
+'     isLive      behindLive < 1
+'     buffered    max(0, bufferEnd - bufferStart)
+'     fraction    the playhead in the buffer, 0...1 (1 when nothing is buffered, as MMTVL's playheadFraction)
+'     label       "LIVE", or "−m:ss" / "−h:mm:ss" with U+2212 (MMTVL's label)
+'   view(position, bufferStart, bufferEnd, trackWidth, minimumFill) -> { label, isLive, fillWidth }: what the bar
+'     shows. With no numbers: "LIVE", live (no badge), and no playhead fill. Else the fill is the playhead's share
+'     of the track, at least minimumFill (MMTVL: max(liveBarHeight, width * playhead)) and at most the track.
+'
+' liveSlackSeconds: MMTVL counts mpv's natural 10-14 s lag as live (its liveSlack, 15 s). A Roku plays a live
+' stream at least PlayerKeys.liveEdgeMarginSeconds (30 s) behind the live edge, and Fast Forward stops there
+' (PlayerKeys.seekTarget), so that margin is the slack here: as far forward as a skip goes reads "LIVE". How far
+' behind pauseBufferEnd a Roku really plays is a device check (step 15).
+namespace Timeshift
+
+    const live = "LIVE"
+    const hint = "Rewind/Fast Forward: 10 s · Play/Pause"
+    ' How often the bar's label and playhead are read again while it shows (seconds).
+    const refreshSeconds = 1
+
+    function liveSlackSeconds() as integer
+        return PlayerKeys.liveEdgeMarginSeconds
+    end function
+
+    function make(position as dynamic, bufferStart as dynamic, bufferEnd as dynamic) as dynamic
+        if not Refresh.isNumber(position) or not Refresh.isNumber(bufferStart) or not Refresh.isNumber(bufferEnd) then return invalid
+        behind = bufferEnd - position - Timeshift.liveSlackSeconds()
+        if behind < 0 then behind = 0
+        buffered = bufferEnd - bufferStart
+        if buffered < 0 then buffered = 0
+        fraction = 1.0
+        if buffered > 0
+            fraction = (position - bufferStart) / buffered
+            if fraction < 0 then fraction = 0.0
+            if fraction > 1 then fraction = 1.0
+        end if
+        isLive = behind < 1
+        return {
+            position: position,
+            rangeStart: bufferStart,
+            liveEdge: bufferEnd,
+            behindLive: behind,
+            isLive: isLive,
+            buffered: buffered,
+            fraction: fraction,
+            label: Timeshift.labelFor(behind, isLive)
+        }
+    end function
+
+    function labelFor(behind as dynamic, isLive as boolean) as string
+        if isLive then return Timeshift.live
+        total = Int(behind + 0.5)
+        hours = Int(total / 3600)
+        minutes = Int((total mod 3600) / 60)
+        seconds = total mod 60
+        minus = Chr(8722)
+        if hours > 0 then return minus + hours.ToStr() + ":" + Timeshift.twoDigits(minutes) + ":" + Timeshift.twoDigits(seconds)
+        return minus + minutes.ToStr() + ":" + Timeshift.twoDigits(seconds)
+    end function
+
+    function view(position as dynamic, bufferStart as dynamic, bufferEnd as dynamic, trackWidth as integer, minimumFill as integer) as object
+        state = Timeshift.make(position, bufferStart, bufferEnd)
+        if state = invalid then return { label: Timeshift.live, isLive: true, fillWidth: 0 }
+        fillWidth = Int(trackWidth * state.fraction + 0.5)
+        if fillWidth < minimumFill then fillWidth = minimumFill
+        if fillWidth > trackWidth then fillWidth = trackWidth
+        return { label: state.label, isLive: state.isLive, fillWidth: fillWidth }
+    end function
+
+    function twoDigits(value as integer) as string
+        if value < 10 then return "0" + value.ToStr()
+        return value.ToStr()
+    end function
+
+end namespace

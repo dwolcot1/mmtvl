@@ -122,7 +122,6 @@ namespace Theme
             "liveBarHeight": 9,
             "liveBannerProgressWidth": 321,
             "liveBannerProgressGap": 21, ' between the time range and the progress track (Theme.swift 20, on 3 px)
-            "liveOverlayHeight": 561, ' the overlay_bottom gradient behind the banner, from the bottom of the screen
             ' The timeshift bar (step 11b; MMTVL's TimeshiftBarView, M7m L15): on the banner panel, under Banner A when
             ' both show (liveBannerBarGap) or alone; the track spans the panel's width (the pause buffer), bar.9.png
             ' tinted tileFill, then focusHighlight, then primaryText to the playhead (at least liveBarHeight wide).

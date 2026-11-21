@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The timeshift bar (M12 step 11b; frames rW6vt paused, aZpEA after a skip back, qDm9F under Banner A, WD5Ol at
+     720p; the notes frame's "Timeshift bar (step 11b) → SceneGraph"): MMTVL's TimeshiftBarView
+     (IPTV/LiveTVView.swift). The content only, laid out from its own origin, contentWidth wide; the player screen
+     puts it on the banner-role panel. The track is the pause buffer (bar.9.png in tileFill, then focusHighlight
+     over its whole width), the playhead fill primaryText; under it the paused symbol (only while paused), "LIVE"
+     or "−m:ss", and the key hint at the right. Sizes from Theme.bs. -->
+<component name="TimeshiftBar" extends="Group">
+    <interface>
+        <!-- In: the track's width (the panel's inner width). -->
+        <field id="contentWidth" type="integer" value="0" onChange="layoutBar" />
+        <!-- In: { paused, label, fillWidth } (Timeshift.view's label and fillWidth; fillWidth 0: no fill). -->
+        <field id="info" type="assocarray" onChange="layoutBar" />
+        <!-- Out: the bar's height (liveBarHeight + timeshiftBarSpacing + a liveBannerDetail line). -->
+        <field id="contentHeight" type="integer" value="0" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/PlayerKeys.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Refresh.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Timeshift.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Lineup.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/PlayerSession.bs" />
+    <children>
+        <Poster id="track" />
+        <Poster id="buffered" />
+        <Poster id="playhead" />
+        <Poster id="pauseSymbol" />
+        <Label id="label" />
+        <Label id="hint" />
+    </children>
+</component>

@@ -2,8 +2,8 @@
 <!-- The low-memory notice (M12 step 11, L7 as amended 2026-11-21; frame "Low-memory notice", cau6M): over whatever
      screen opened first, a full-screen searchDim, then a liveMenuWideWidth panel_solid panel, centred: the title,
      the body, one read-only row per feature that is on (LowMemoryNotice.items), OK and Open Settings, and the
-     footnote. Left and Right move between the buttons; OK answers. Every key is handled here, so none reaches the
-     screen underneath, and Back never leaves the app (D49). Text from LowMemoryNotice.bs, sizes from Theme.bs. -->
+     footnote. Left and Right move between the buttons; OK answers, and Back answers OK (step 11b). Every key is
+     handled here, so none reaches the screen underneath, and Back never leaves the app (D49). Text from LowMemoryNotice.bs, sizes from Theme.bs. -->
 <component name="LowMemoryNoticeView" extends="Group">
     <interface>
         <!-- LowMemoryNotice.items(settings): [{ id, title, value }]. -->

@@ -1,6 +1,6 @@
 ' The full-screen player (fields in PlayerScreen.xml). Keys go through PlayerKeys.handle; overlays through
 ' PlayerSession.apply/visible (MMTVL's banner, timeshift bar and paused overlay timing); the banner's text through
-' BannerText. The stream URL is checked with URLPolicy.allowsStream (http or https, any host: MMTVL's rule, decided
+' BannerText; the timeshift bar's and badge's through Timeshift (step 11b). The stream URL is checked with URLPolicy.allowsStream (http or https, any host: MMTVL's rule, decided
 ' 2026-11-18) and never logged: only its host (L6).
 
 sub init()
@@ -12,31 +12,59 @@ sub init()
     m.video.width = canvas.width
     m.video.height = canvas.height
     m.video.observeField("state", "onVideoState")
-    gradient = m.top.findNode("overlayGradient")
-    gradient.uri = m.theme.images.overlayBottom
-    gradient.width = canvas.width
-    gradient.height = layout.liveOverlayHeight
-    gradient.translation = [0, canvas.height - layout.liveOverlayHeight]
+    m.gradient = m.top.findNode("overlayGradient")
+    m.gradient.uri = m.theme.images.overlayBottom
+    m.gradient.width = canvas.width
     m.overlay = m.top.findNode("overlay")
+    m.panelGroup = m.top.findNode("panelGroup")
+    m.panel = m.top.findNode("overlayPanel")
+    m.panel.uri = m.theme.images.bannerPanel
+    m.panelWidth = canvas.width - 2 * layout.sideMargin
+    m.panel.width = m.panelWidth
+    innerWidth = m.panelWidth - 2 * layout.liveBannerPadding
     m.banner = m.top.findNode("banner")
+    m.banner.contentWidth = innerWidth
+    m.banner.observeField("contentHeight", "layoutPanel")
+    m.bar = m.top.findNode("timeshiftBar")
+    m.bar.contentWidth = innerWidth
+    m.badge = m.top.findNode("badge")
+    m.badgePanel = m.top.findNode("badgePanel")
+    m.badgePanel.uri = m.theme.images.behindLiveBadge
+    m.badgePanel.height = layout.timeshiftBadgeHeight
+    m.badgeLabel = m.top.findNode("badgeLabel")
+    detail = m.theme.fonts.liveBannerDetail
+    m.badgeLabel.font = Theme.font(detail)
+    m.badgeLabel.color = m.theme.colors.primaryText
+    m.badgeLabel.height = Theme.lineHeight(detail)
+    m.badgeLabel.vertAlign = "center"
+    m.badgeLabel.translation = [layout.timeshiftBadgeHorizontalPadding, Int((layout.timeshiftBadgeHeight - m.badgeLabel.height) / 2)]
     m.errorPanel = m.top.findNode("errorPanel")
-    m.fade = m.top.findNode("overlayFade")
-    m.fade.duration = timing.overlayFade
-    m.fadeValue = m.top.findNode("overlayFadeValue")
-    m.fade.observeField("state", "onFadeState")
-    m.fadeTarget = 0
+    ' The overlay (gradient and panel) and the badge fade on their own, as MMTVL's.
+    m.faders = {
+        overlay: makeFader(m.overlay, "overlayFade", "overlayFadeValue", timing.overlayFade),
+        badge: makeFader(m.badge, "badgeFade", "badgeFadeValue", timing.overlayFade)
+    }
+    m.timeshiftTimer = makeTimer("timeshiftTimer", Timeshift.refreshSeconds, "updateTimeshift")
     m.bannerTimer = makeTimer("bannerTimer", timing.bannerDuration, "onBannerTimeout")
     m.barTimer = makeTimer("barTimer", timing.bannerDuration, "onBarTimeout")
     m.pausedTimer = makeTimer("pausedTimer", timing.pausedOverlayDuration, "onPausedTimeout")
     m.stallTimer = makeTimer("stallTimer", PlayerSession.stallSeconds, "onStall")
     m.channel = invalid
     m.overlays = PlayerSession.noOverlays()
+    m.shown = invalid
     m.errorShown = false
     m.guideData = invalid
     m.guideDataRevision = -1
     m.playClock = CreateObject("roTimespan")
     m.waitingForStart = false
 end sub
+
+function makeFader(node as object, animationID as string, valueID as string, seconds as dynamic) as object
+    animation = m.top.findNode(animationID)
+    animation.duration = seconds
+    animation.observeField("state", "onFadeState")
+    return { node: node, animation: animation, value: m.top.findNode(valueID), target: 0 }
+end function
 
 function makeTimer(id as string, seconds as dynamic, handler as string) as object
     timer = m.top.findNode(id)
@@ -250,23 +278,90 @@ sub onPausedTimeout()
     applyOverlay("pausedTimeout")
 end sub
 
+' What shows: the panel with Banner A, the timeshift bar or both (one under the other, frame qDm9F), and the badge
+' while the bar shows behind live. While everything fades out, the last layout stays.
 sub render()
     shown = PlayerSession.visible(m.overlays, isPaused())
     m.top.timeshiftShown = shown.timeshift
-    if shown.banner then fadeTo(1) else fadeTo(0)
+    m.shown = shown
+    if shown.timeshift
+        if m.timeshiftTimer.control <> "start" then m.timeshiftTimer.control = "start"
+    else
+        m.timeshiftTimer.control = "stop"
+    end if
+    if shown.any
+        m.banner.visible = shown.banner
+        m.bar.visible = shown.timeshift
+        layoutPanel()
+    end if
+    updateTimeshift()
+    if shown.any then fadeTo("overlay", 1) else fadeTo("overlay", 0)
 end sub
 
-sub fadeTo(target as integer)
-    if m.fadeTarget = target then return
-    m.fadeTarget = target
-    m.fade.control = "stop"
-    m.fadeValue.keyValue = [m.overlay.opacity, target]
-    if target = 1 then m.overlay.visible = true
-    m.fade.control = "start"
+' The panel liveBannerPadding around its content, Banner A then liveBannerBarGap then the bar; its bottom
+' liveBannerBottom above the screen's; the gradient from liveOverlayTopPadding above it to the bottom.
+sub layoutPanel()
+    if m.shown = invalid then return
+    if not m.shown.any then return
+    layout = m.theme.layout
+    canvas = m.theme.canvas
+    padding = layout.liveBannerPadding
+    y = padding
+    if m.shown.banner
+        m.banner.translation = [padding, y]
+        y = y + m.banner.contentHeight
+    end if
+    if m.shown.timeshift
+        if m.shown.banner then y = y + layout.liveBannerBarGap
+        m.bar.translation = [padding, y]
+        y = y + m.bar.contentHeight
+    end if
+    height = y + padding
+    panelTop = canvas.height - layout.liveBannerBottom - height
+    m.panel.height = height
+    m.panelGroup.translation = [layout.sideMargin, panelTop]
+    gradientTop = panelTop - layout.liveOverlayTopPadding
+    m.gradient.translation = [0, gradientTop]
+    m.gradient.height = canvas.height - gradientTop
+end sub
+
+' The bar's label and playhead and the badge, from the Video's position and pause buffer (Timeshift.view). Without
+' pause-buffer numbers (unverified fields): "LIVE", no playhead, no badge.
+sub updateTimeshift()
+    if m.shown = invalid then return
+    paused = isPaused()
+    layout = m.theme.layout
+    state = Timeshift.view(m.video.position, nodeField(m.video, "pauseBufferStart"), nodeField(m.video, "pauseBufferEnd"), m.bar.contentWidth, layout.liveBarHeight)
+    m.bar.info = { paused: paused, label: state.label, fillWidth: state.fillWidth }
+    showBadge = m.shown.timeshift and not state.isLive
+    if showBadge
+        m.badgeLabel.text = state.label
+        m.badgeLabel.width = 0
+        inner = Int(m.badgeLabel.boundingRect().width + 0.5)
+        width = Int((inner + 2 * layout.timeshiftBadgeHorizontalPadding + 2) / 3) * 3
+        m.badgePanel.width = width
+        m.badge.translation = [m.theme.canvas.width - layout.sideMargin - width, layout.timeshiftBadgeTop]
+        fadeTo("badge", 1)
+    else
+        fadeTo("badge", 0)
+    end if
+end sub
+
+sub fadeTo(name as string, target as integer)
+    fader = m.faders[name]
+    if fader.target = target then return
+    fader.target = target
+    fader.animation.control = "stop"
+    fader.value.keyValue = [fader.node.opacity, target]
+    if target = 1 then fader.node.visible = true
+    fader.animation.control = "start"
 end sub
 
 sub onFadeState()
-    if m.fade.state = "stopped" and m.fadeTarget = 0 then m.overlay.visible = false
+    for each name in m.faders
+        fader = m.faders[name]
+        if fader.animation.state = "stopped" and fader.target = 0 then fader.node.visible = false
+    end for
 end sub
 
 ' --- the banner -----------------------------------------------------------------------------------------------
@@ -292,7 +387,9 @@ end sub
 sub onGuideRevision()
     ' The old copy goes now; the new one is read when the banner next needs it.
     m.guideData = invalid
-    if m.fadeTarget = 1 then updateBanner()
+    if m.shown <> invalid
+        if m.shown.banner then updateBanner()
+    end if
 end sub
 
 ' The programmes, read from the holder once per guideRevision (MainScene.xml's rule: one plain field get, kept in
