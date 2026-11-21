@@ -7,16 +7,25 @@ the rows that stretch, transparent everywhere else. The stretch region is the mi
 so the corners never scale; the rim's top-to-bottom gradient and the sheen sit in rows that Roku scales smoothly.
 
 Colours and sizes come from roku/components/theme/Theme.bs (which maps them to MMTVL's DesignSystem/Theme.swift):
-  panel             standard glass panel: fill, rim (top 0.70, middle 0.08, bottom 0.32), sheen 0.14 (Theme.swift glass*)
+  panel             standard glass panel: fill, rim 3 px (top 0.70, middle 0.08, bottom 0.32), sheen 0.14 (Theme.swift glass*)
   panel_banner      banner role (D46): darker, more opaque fill, rim x0.4, no sheen (Theme.swift banner*)
-  settings_row      a Settings row capsule: settingsRowCapsuleFill plus the unfocused rim
+  panel_solid       menus over the busy guide (channel menu, group column): solidPanelFill (Theme.swift's Reduce
+                    Transparency fill), the standard rim and sheen; at panel's 0.82 the guide's titles showed through
+  settings_row      a one-line Settings row: settingsRowCapsuleFill plus the unfocused rim, radius 36 (a capsule at 72)
+  settings_row_tall a two-line Settings row (title and detail): the same, radius 39 (Theme.swift settingsRowCornerRadius 40, on 3 px)
+  settings_info_row a read-only Settings row: settingsInfoRowFill, no rim, radius 36; _tall: radius 39
   focus_row         white, radius 12: menu rows, the group column's focus (tint with focusBitmapBlendColor)
-  focus_capsule     white, radius 32: Settings rows and list focus
-  guide_cell        TimeGrid programBackgroundBitmapUri: tileFill, radius 10, a 2-px transparent inset (4-px gaps)
-  guide_focus       TimeGrid focusBitmapUri, variant A: white fill, radius 10, same inset
-  guide_focus_ring  TimeGrid focusBitmapUri, variant B: a 4-px white ring, radius 10, same inset
-  bar               the banner's progress bar and track: white capsule, radius 4 (tint with blendColor)
+  focus_capsule     white, radius 36: one-line Settings rows (also the parent's opened row, tinted); _tall: radius 39
+  guide_cell        TimeGrid programBackgroundBitmapUri: tileFill, radius 9, a 1/2-px transparent inset (3-px gaps)
+  guide_focus       TimeGrid focusBitmapUri, variant A (chosen): white fill, radius 9, same inset
+  guide_focus_ring  TimeGrid focusBitmapUri, variant B (not chosen): a 3-px white ring, radius 9, same inset
+  bar               the banner's progress bar and track: white capsule, 9 high (tint with blendColor)
+
+Plain gradients (not 9-patches; a Poster stretches them, loadDisplayMode scaleToFill):
+  overlay_bottom    behind the player banner: clear at the top to liveOverlayBottom (black 0.85) at the bottom
+  background        behind the guide, Settings and Import: background (0x1C1C1E) at the top to black at the bottom
 """
+import math
 import os
 import struct
 import sys
@@ -73,10 +82,12 @@ def rim_alpha(t, top, middle, bottom):
     return lerp(top, middle, t * 2) if t < 0.5 else lerp(middle, bottom, (t - 0.5) * 2)
 
 
-def make(name, size, radius, fill, inset=0, rim=None, rim_width=2, sheen=0.0, ring=None):
-    """fill: (r, g, b, a) 0...255 or None; rim: (top, middle, bottom) white alphas; ring: width of a white ring."""
+def make(name, size, radius, fill, inset=0, rim=None, rim_width=3, sheen=0.0, ring=None):
+    """fill: (r, g, b, a) 0...255 or None; rim: (top, middle, bottom) white alphas; ring: width of a white ring.
+    inset: a transparent margin, one number or (left, top, right, bottom)."""
     w, h = size
-    x0, y0, x1, y1 = inset, inset, w - inset, h - inset
+    il, it, ir, ib = inset if isinstance(inset, tuple) else (inset,) * 4
+    x0, y0, x1, y1 = il, it, w - ir, h - ib
     pixels = []
     for py in range(h):
         row = []
@@ -98,7 +109,9 @@ def make(name, size, radius, fill, inset=0, rim=None, rim_width=2, sheen=0.0, ri
             row.append(colour)
         pixels.append(row)
 
-    fixed = inset + radius + max(rim_width if rim else 0, ring or 0)
+    # The corners stay fixed; the rim and ring are uniform along the straight edges, so they may stretch there. (Counting
+    # the rim too would leave a 72-px capsule with no stretchable rows.)
+    fixed = math.ceil(max(il, it, ir, ib) + radius)
     bw, bh = w + 2, h + 2
     rows = []
     for by in range(bh):
@@ -121,27 +134,55 @@ def make(name, size, radius, fill, inset=0, rim=None, rim_width=2, sheen=0.0, ri
     return name, bw, bh, rows
 
 
+def gradient(name, size, top, bottom):
+    """A vertical gradient, (r, g, b, a) 0...255 at the top and bottom, with no 9-patch border."""
+    w, h = size
+    rows = []
+    for y in range(h):
+        t = y / (h - 1)
+        px = [round(lerp(top[i], bottom[i], t)) for i in range(4)]
+        rows.append(px * w)
+    return name, w, h, rows
+
+
 def main():
     images = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "images")
     specs = [
-        # Theme.bs panelFill 0x262628D1, rim 0.70/0.08/0.32, sheen 0.14, radius 28 (glassCornerRadius).
-        make("panel", (72, 72), 28, (0x26, 0x26, 0x28, 0xD1), rim=(0.70, 0.08, 0.32), sheen=0.14),
+        # Theme.bs panelFill 0x262628D1, rim 0.70/0.08/0.32, sheen 0.14, radius 27 (glassCornerRadius), rim 3 (glassRimWidth).
+        make("panel", (72, 72), 27, (0x26, 0x26, 0x28, 0xD1), rim=(0.70, 0.08, 0.32), sheen=0.14),
         # Theme.bs bannerPanelFill 0x0E0E10E0, rim x0.4 (bannerRimScale), no sheen (bannerSheenScale 0).
-        make("panel_banner", (72, 72), 28, (0x0E, 0x0E, 0x10, 0xE0), rim=(0.28, 0.032, 0.128)),
-        # settingsRowCapsuleFill (white 0.075) with the unfocused rim, radius 32.
-        make("settings_row", (72, 72), 32, (0xFF, 0xFF, 0xFF, 0x13), rim=(0.70, 0.08, 0.32)),
+        make("panel_banner", (72, 72), 27, (0x0E, 0x0E, 0x10, 0xE0), rim=(0.28, 0.032, 0.128)),
+        # Theme.bs solidPanelFill 0x1C1C1EEB with the standard rim and sheen.
+        make("panel_solid", (72, 72), 27, (0x1C, 0x1C, 0x1E, 0xEB), rim=(0.70, 0.08, 0.32), sheen=0.14),
+        # settingsRowCapsuleFill (white 0.075) with the unfocused rim, radius 36.
+        # One-line rows are capsules at 72 (radius 36); two-line rows radius 39 (MMTVL 40, on the 3-px grid).
+        make("settings_row", (76, 76), 36, (0xFF, 0xFF, 0xFF, 0x13), rim=(0.70, 0.08, 0.32)),
+        make("settings_row_tall", (84, 84), 39, (0xFF, 0xFF, 0xFF, 0x13), rim=(0.70, 0.08, 0.32)),
+        # settingsInfoRowFill (white 0.05), no rim.
+        make("settings_info_row", (76, 76), 36, (0xFF, 0xFF, 0xFF, 0x0D)),
+        make("settings_info_row_tall", (84, 84), 39, (0xFF, 0xFF, 0xFF, 0x0D)),
         make("focus_row", (30, 30), 12, (0xFF, 0xFF, 0xFF, 0xFF)),
-        make("focus_capsule", (72, 72), 32, (0xFF, 0xFF, 0xFF, 0xFF)),
-        # TimeGrid cells: radius 10 (guideCellCornerRadius) inside a 2-px transparent inset.
-        make("guide_cell", (28, 28), 10, (0xFF, 0xFF, 0xFF, 0x1F), inset=2),
-        make("guide_focus", (28, 28), 10, (0xFF, 0xFF, 0xFF, 0xFF), inset=2),
-        make("guide_focus_ring", (32, 32), 10, None, inset=2, ring=4),
-        make("bar", (12, 10), 4, (0xFF, 0xFF, 0xFF, 0xFF)),
+        make("focus_capsule", (76, 76), 36, (0xFF, 0xFF, 0xFF, 0xFF)),
+        make("focus_capsule_tall", (84, 84), 39, (0xFF, 0xFF, 0xFF, 0xFF)),
+        # TimeGrid cells: radius 9 (guideCellCornerRadius) inside a transparent inset of 1 px left/top and 2 px
+        # right/bottom, so neighbouring cells are 3 px apart (guideCellSpacing, on the 3-px grid).
+        make("guide_cell", (28, 28), 9, (0xFF, 0xFF, 0xFF, 0x1F), inset=(1, 1, 2, 2)),
+        make("guide_focus", (28, 28), 9, (0xFF, 0xFF, 0xFF, 0xFF), inset=(1, 1, 2, 2)),
+        make("guide_focus_ring", (32, 32), 9, None, inset=(1, 1, 2, 2), ring=3),
+        # liveBarHeight 9: radius 4 leaves one stretchable row (a capsule to the eye).
+        make("bar", (12, 9), 4, (0xFF, 0xFF, 0xFF, 0xFF)),
     ]
-    for name, w, h, rows in specs:
-        path = os.path.join(images, name + ".9.png")
-        png(path, w, h, rows)
-        print(f"{name}.9.png {w}x{h} {os.path.getsize(path)} bytes")
+    plain = [
+        # Theme.bs liveOverlayBottom 0x000000D9.
+        gradient("overlay_bottom", (4, 256), (0, 0, 0, 0), (0, 0, 0, 0xD9)),
+        # Theme.bs background 0x1C1C1EFF to backgroundBottom 0x000000FF.
+        gradient("background", (4, 256), (0x1C, 0x1C, 0x1E, 0xFF), (0, 0, 0, 0xFF)),
+    ]
+    for suffix, items in ((".9.png", specs), (".png", plain)):
+        for name, w, h, rows in items:
+            path = os.path.join(images, name + suffix)
+            png(path, w, h, rows)
+            print(f"{name}{suffix} {w}x{h} {os.path.getsize(path)} bytes")
 
 
 if __name__ == "__main__":

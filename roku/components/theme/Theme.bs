@@ -8,6 +8,10 @@
 ' scales the canvas by 2/3, and 24 px is 16 px there, the smallest that still renders cleanly from across the room
 ' (the 720p check in the design file).
 '
+' Layout: FHD designs scale by 2/3 on an HD Roku, so every position, size, spacing, radius and font size here is a
+' multiple of 3 (Roku, "Specifying display resolution"): they land on whole pixels at 720p, with no 1-px jitter when
+' grids scroll. Keep new values on 3-px boundaries; fonts stay at 24 or more.
+'
 ' Use: m.theme = Theme.make() once per screen, then m.theme.colors.primaryText, Theme.font(m.theme.fonts.bannerTitle).
 namespace Theme
 
@@ -47,7 +51,7 @@ namespace Theme
             "settingsSelectedRowFill": "0xFFFFFF66", ' white 0.4: the parent column's opened row
             "shelfProgressTrack": "0xFFFFFF40", ' white 0.25: the banner's progress track
             "shelfProgressFill": "0xFFFFFFFF",
-            ' Roku-only: "Off: <reason>" in Settings > Device, warnings (registry nearly full).
+            ' Roku-only: warnings (registry nearly full). Settings' values and details stay secondaryText, as MMTVL.
             "warningText": "0xFFD60AFF",
             ' Roku-only: the bottom-of-screen gradient behind the banner (Theme.swift liveOverlayGradient's end).
             "liveOverlayBottom": "0x000000D9"
@@ -64,23 +68,23 @@ namespace Theme
             "settingsSection": { "uri": bold, "size": 24 }, ' Theme.swift 22
             "settingsRow": { "uri": regular, "size": 30 },
             "settingsRowDetail": { "uri": regular, "size": 24 },
-            "settingsDescription": { "uri": regular, "size": 28 },
+            "settingsDescription": { "uri": regular, "size": 27 },
             "settingsHint": { "uri": regular, "size": 24 }, ' Theme.swift 22
-            "liveBannerTitle": { "uri": bold, "size": 40 },
+            "liveBannerTitle": { "uri": bold, "size": 39 },
             "liveBannerProgramme": { "uri": regular, "size": 30 },
             "liveBannerDetail": { "uri": regular, "size": 24 }, ' Theme.swift 22
-            "guideInfoTitle": { "uri": bold, "size": 44 },
+            "guideInfoTitle": { "uri": bold, "size": 45 },
             "guideInfoDetail": { "uri": regular, "size": 24 },
             "guideCell": { "uri": regular, "size": 24 }, ' TimeGrid programTitleFont
             "guideCellTime": { "uri": regular, "size": 24 }, ' TimeGrid timeLabelFont (Theme.swift 18)
             "guideChannel": { "uri": regular, "size": 24 }, ' the channel info component's name
             "guideChannelNumber": { "uri": regular, "size": 24 }, ' Theme.swift guideCellTimeFont (18) for the number
-            "guideGroup": { "uri": regular, "size": 28 }, ' Roku-only: the group LabelList (font and focusedFont)
-            "liveMenuTitle": { "uri": bold, "size": 34 },
+            "guideGroup": { "uri": regular, "size": 27 }, ' Roku-only: the group LabelList (font and focusedFont)
+            "liveMenuTitle": { "uri": bold, "size": 33 },
             "liveMenuRow": { "uri": regular, "size": 30 }, ' Theme.swift settingsRowFont
             "liveMenuValue": { "uri": regular, "size": 24 },
-            "searchTitle": { "uri": bold, "size": 44 },
-            "searchRowTitle": { "uri": regular, "size": 28 }, ' Theme.swift 26
+            "searchTitle": { "uri": bold, "size": 45 },
+            "searchRowTitle": { "uri": regular, "size": 27 }, ' Theme.swift 26
             "searchRowDetail": { "uri": regular, "size": 24 }, ' Theme.swift 20
             "errorTitle": { "uri": bold, "size": 48 } ' Theme.swift settingsTitleFont on the error panel
         }
@@ -96,67 +100,72 @@ namespace Theme
     function layout() as object
         return {
             "sideMargin": 120,
-            "glassCornerRadius": 28,
-            "glassRimWidth": 2,
+            "glassCornerRadius": 27,
+            "glassRimWidth": 3,
             ' Player (Theme.swift liveBanner*, M7 L28): the banner sits on a glass panel inset by sideMargin, 72 above
-            ' the bottom, with 32 padding; logo 96; progress 320 x 8.
+            ' the bottom, with 33 padding; logo 96; progress 321 x 9.
             "liveBannerLogoSize": 96,
-            "liveBannerPadding": 32,
+            "liveBannerPadding": 33,
             "liveBannerBottom": 72,
             "liveBannerSpacing": 12, ' between the lines
-            "liveBannerLogoGap": 32,
-            "liveBarHeight": 8,
-            "liveBannerProgressWidth": 320,
+            "liveBannerLogoGap": 33,
+            "liveBarHeight": 9,
+            "liveBannerProgressWidth": 321,
             "errorPanelPadding": 60,
             "errorPanelSymbolSize": 72, ' Theme.swift tileSymbolSize
             ' Guide (Theme.swift guide*): info top-left, the playing channel's video top-right, the grid below.
-            "guideInfoRect": { "x": 120, "y": 60, "width": 980, "height": 360 },
-            "guidePreviewRect": { "x": 1160, "y": 60, "width": 640, "height": 360 },
-            "guideGridTop": 460,
+            "guideInfoRect": { "x": 120, "y": 60, "width": 981, "height": 360 },
+            "guidePreviewRect": { "x": 1161, "y": 60, "width": 639, "height": 360 },
+            "guideGridTop": 459,
             "guideTimeHeaderHeight": 48, ' TimeGrid timeBarHeight
-            "guideRowHeight": 80, ' TimeGrid's own row height is not a documented field (verify on device, step 12)
+            "guideRowHeight": 81, ' TimeGrid's own row height is not a documented field (verify on device, step 12)
             "guideVisibleRows": 6,
-            "guideCellSpacing": 4, ' drawn as the 2-px transparent inset of guide_cell.9.png
-            "guideChannelColumnWidth": 340, ' TimeGrid channelInfoWidth
-            "guideInfoGridGap": 12, ' TimeGrid infoGridGap (guideGridLeading 472 - 120 - 340)
-            "guideGridLeading": 472,
-            "guideGridWidth": 1328,
+            "guideCellSpacing": 3, ' drawn as guide_cell.9.png's transparent inset (1 px left/top, 2 px right/bottom)
+            "guideChannelColumnWidth": 339, ' TimeGrid channelInfoWidth
+            "guideInfoGridGap": 12, ' TimeGrid infoGridGap (guideGridLeading 471 - 120 - 339)
+            "guideGridLeading": 471,
+            "guideGridWidth": 1329,
             "guideGroupPanelWidth": 420,
-            "guideGroupRowHeight": 64, ' Roku-only: the group LabelList itemSize height (Theme.swift guideRowHeight - 16)
+            "guideGroupRowHeight": 63, ' Roku-only: the group LabelList itemSize height (Theme.swift guideRowHeight - 16, on 3 px)
             "guideLogoSize": 48,
-            "guideChannelNumberWidth": 52,
-            "guideCellCornerRadius": 10,
-            "guideProgramHorizMargin": 16, ' TimeGrid programHorizMargin
+            "guideChannelNumberWidth": 51,
+            "guideCellCornerRadius": 9,
+            "guideProgramHorizMargin": 15, ' TimeGrid programHorizMargin
             "guideNowBarWidth": 3, ' TimeGrid nowBarWidth: 2 px at 720p
-            "guideDuration": 5400, ' TimeGrid duration: 90 minutes across guideGridWidth (MMTVL's timeline)
+            "guideDuration": 5400, ' TimeGrid duration: 90 minutes across guideGridWidth (MMTVL's timeline; 471 + 1329 = 1800)
             ' Menus (Theme.swift liveMenu*, menu*).
             "liveMenuWidth": 720,
-            "liveMenuWideWidth": 1040,
+            "liveMenuWideWidth": 1044,
             "liveMenuRowHeight": 72,
             "liveMenuRowCornerRadius": 12,
             "liveMenuVisibleRows": 8,
-            "menuPanelPadding": 32,
-            "menuTitleSpacing": 16,
-            "menuRowPadding": 20,
+            "menuPanelPadding": 33,
+            "menuTitleSpacing": 15,
+            "menuRowPadding": 21,
             ' Search (Theme.swift search*): Roku's DynamicMiniKeyboard on the left, results on the right.
-            "searchTitleTop": 80,
-            "searchKeyboardOrigin": { "x": 120, "y": 200 },
-            "searchResultsRect": { "x": 800, "y": 200, "width": 1000, "height": 780 },
+            "searchTitleTop": 81,
+            "searchKeyboardOrigin": { "x": 120, "y": 201 },
+            "searchResultsRect": { "x": 801, "y": 201, "width": 999, "height": 780 },
             "searchRowHeight": 84,
             ' Settings (Theme.swift settings*, M7g): two 840-wide columns on a sliding track.
             "settingsColumnWidth": 840,
-            "settingsColumnGap": 80,
-            "settingsSideMargin": 80,
+            "settingsColumnGap": 78, ' 81 + 840 + 78 + 840 + 81 = 1920 (Theme.swift 80 + 840 + 80 + 840 + 80)
+            "settingsSideMargin": 81,
             "settingsRootColumnLeading": 540,
-            "settingsTitleTop": 80, ' Roku-only
-            "settingsListTop": 200, ' Roku-only
+            "settingsTitleTop": 60, ' MMTVL: the page title's top padding; the title is centred, in secondaryText
+            "settingsListTop": 144, ' the track's top: title 60 + its 60-px line (48 px type) + 24; the track ends at 936
+            "settingsListVerticalPadding": 33, ' Theme.swift 32; the list's padding inside the track (MaskGroup fades it)
+            "settingsListHorizontalPadding": 24,
+            "settingsBandTop": 960, ' the description band: 24 below the track, 105 high, 15 above the bottom
             "settingsRowMinHeight": 72,
-            "settingsRowCornerRadius": 32, ' the 9-patch radius (Theme.swift 40 for two-line rows, capsules for one)
-            "settingsRowTextInset": 32,
-            "settingsRowSpacing": 8,
-            "settingsSectionSpacing": 40,
-            "settingsBandHeight": 104,
-            "settingsBandMaxWidth": 1400,
+            "settingsRowTwoLineHeight": 93, ' Roku-only: 12 + 36 (30-px title line) + 3 + 30 (24-px detail line) + 12
+            "settingsRowCapsuleRadius": 36, ' Roku-only: one-line rows are capsules (settings_row, focus_capsule at 72)
+            "settingsRowCornerRadius": 39, ' two-line rows (the _tall 9-patches)
+            "settingsRowTextInset": 33,
+            "settingsRowSpacing": 9,
+            "settingsSectionSpacing": 39,
+            "settingsBandHeight": 105,
+            "settingsBandMaxWidth": 1398,
             "settingsDimmedColumnOpacity": 0.55,
             "settingsRowFocusScale": 1.03
         }
@@ -166,15 +175,25 @@ namespace Theme
     ' colour where a node has one (focusBitmapBlendColor, Poster.blendColor).
     function images() as object
         return {
-            "panel": "pkg:/images/panel.9.png", ' standard glass: menus, Search's results, Settings' Import confirm
+            "panel": "pkg:/images/panel.9.png", ' standard glass: Settings' Import confirm
             "bannerPanel": "pkg:/images/panel_banner.9.png", ' banner role: the player banner, error panel
-            "settingsRow": "pkg:/images/settings_row.9.png", ' an unfocused Settings row capsule
+            ' Menus over the guide (channel menu, group column): solidPanelFill, since without blur the translucent
+            ' panel let the guide's titles show through.
+            "panelSolid": "pkg:/images/panel_solid.9.png",
+            "settingsRow": "pkg:/images/settings_row.9.png", ' an unfocused one-line Settings row capsule
+            "settingsRowTall": "pkg:/images/settings_row_tall.9.png", ' an unfocused two-line Settings row
+            "settingsInfoRow": "pkg:/images/settings_info_row.9.png", ' a read-only row (no action, never focused)
+            "settingsInfoRowTall": "pkg:/images/settings_info_row_tall.9.png",
             "focusRow": "pkg:/images/focus_row.9.png", ' menu rows, the group LabelList focusBitmapUri (radius 12)
-            "focusCapsule": "pkg:/images/focus_capsule.9.png", ' Settings rows (radius 32)
+            "focusCapsule": "pkg:/images/focus_capsule.9.png", ' one-line Settings rows, buttons (radius 36)
+            "focusCapsuleTall": "pkg:/images/focus_capsule_tall.9.png", ' two-line Settings rows (radius 39)
             "guideCell": "pkg:/images/guide_cell.9.png", ' TimeGrid programBackgroundBitmapUri
             "guideFocus": "pkg:/images/guide_focus.9.png", ' TimeGrid focusBitmapUri, variant A (filled)
             "guideFocusRing": "pkg:/images/guide_focus_ring.9.png", ' TimeGrid focusBitmapUri, variant B (ring)
-            "bar": "pkg:/images/bar.9.png" ' progress bar and track (blendColor)
+            "bar": "pkg:/images/bar.9.png", ' progress bar and track (blendColor); also TimeGrid nowBarBitmapUri
+            ' Plain gradients, stretched by a Poster (loadDisplayMode scaleToFill).
+            "overlayBottom": "pkg:/images/overlay_bottom.png", ' behind the player banner (liveOverlayBottom)
+            "background": "pkg:/images/background.png" ' behind the guide, Settings, Import (background to black)
         }
     end function
 
