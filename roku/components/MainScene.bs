@@ -2,10 +2,9 @@ sub init()
     m.theme = Theme.make()
     styleScreens()
     versionText = appVersionText()
-    m.top.findNode("version").text = versionText
     Log.info("App", "Showing " + versionText)
-    ' Step 11: the screens. m.screen is "guide", "player" or "settings" (the placeholders until steps 12 and 13);
-    ' m.currentChannel the playing channel (M3U.makeChannels' shape) or invalid; m.launchPending until the first
+    ' Step 11: the screens. m.screen is "guide", "player" or "settings" (Settings → Device's placeholder until step
+    ' 13); m.currentChannel the playing channel (M3U.makeChannels' shape) or invalid; m.launchPending until the first
     ' playlist answer decides what opens (PlayerSession.launchTarget).
     m.screen = "guide"
     m.settingsReturn = "guide"
@@ -13,61 +12,71 @@ sub init()
     m.lineup = invalid
     m.notice = invalid
     m.launchPending = true
+    m.channels = []
+    m.fs = CreateObject("roFileSystem")
     m.player = m.top.findNode("player")
     m.player.observeField("action", "onPlayerAction")
+    m.player.observeField("failed", "updatePlayback")
     #if DEBUG
-        ' M12 step 3 (L8, until the About page of step 13): DEBUG builds open the Probes screen with * on the guide
-        ' placeholder. Release builds (bs_const DEBUG=false) have none of this, and no probe files
-        ' (bsconfig.release.json).
+        ' M12 step 3 (L8, until the About page of step 13): DEBUG builds open the Probes screen with Replay in the
+        ' guide (step 12; * opens the channel menu now). Release builds (bs_const DEBUG=false) have none of this,
+        ' and no probe files (bsconfig.release.json).
         m.probes = invalid
-        hint = CreateObject("roSGNode", "Label")
-        hint.text = "Probe build · press * to open Probes"
-        styleLabel(hint, m.theme.fonts.settingsHint, m.theme.colors.secondaryText)
-        hint.width = m.theme.canvas.width
-        hint.horizAlign = "center"
-        hint.translation = [0, 640]
-        m.top.findNode("guidePlaceholder").appendChild(hint)
     #end if
     m.store = SettingsStore.load(SettingsStore.deviceRegistry())
     m.player.channelUpMovesUpList = m.store.settings.channelUpMovesUpList
-    showScreen("guide")
+    ' Step 12: the guide, the channel menu, the logos and the idle return.
+    m.menu = m.top.findNode("channelMenu")
+    m.menu.observeField("choice", "onMenuChoice")
+    m.menu.observeField("input", "noteInput")
+    m.menuOpen = false
+    m.menuContext = invalid
+    m.playerLogoPath = ""
+    m.logoTask = CreateObject("roSGNode", "LogoTask")
+    m.logoTask.playlistURL = m.store.source
+    m.logoTask.observeField("ready", "onLogoReady")
+    m.logoTask.control = "run"
+    m.guide = m.top.findNode("guide")
+    m.guide.version = versionText
+    m.guide.settings = m.store.settings
+    m.guide.logoTask = m.logoTask
+    m.guide.observeField("action", "onGuideAction")
+    m.guide.observeField("input", "noteInput")
+    m.lastInputAt = invalid
+    m.idleTimer = m.top.findNode("idleTimer")
+    m.idleTimer.observeField("fire", "onIdle")
+    updatePlayback()
+    openGuide(false)
     showLowMemoryNoticeIfDue()
     startPlaylist()
 end sub
 
-' The placeholders' look, from Theme.bs (step 10).
+' The background and the Settings placeholder's look, from Theme.bs (step 10). The guide draws itself (step 12).
 sub styleScreens()
     colors = m.theme.colors
     fonts = m.theme.fonts
     canvas = m.theme.canvas
-    for each id in ["background", "guideBackground", "settingsBackground"]
+    for each id in ["background", "settingsBackground"]
         poster = m.top.findNode(id)
         poster.uri = m.theme.images.background
         poster.loadDisplayMode = "scaleToFill"
         poster.width = canvas.width
         poster.height = canvas.height
     end for
-    placeLabel("title", fonts.settingsTitle, colors.primaryText, 470)
-    placeLabel("version", fonts.settingsRow, colors.secondaryText, 560)
-    placeLabel("guideHint", fonts.settingsHint, colors.secondaryText, 760)
-    placeLabel("status", fonts.settingsRowDetail, colors.primaryText, 700)
+    ' Step 13 replaces the placeholder, and these values with it.
     placeLabel("settingsTitle", fonts.settingsTitle, colors.primaryText, 470)
     placeLabel("settingsHint", fonts.settingsHint, colors.secondaryText, 560)
 end sub
 
 sub placeLabel(id as string, spec as object, color as string, y as integer)
     label = m.top.findNode(id)
-    styleLabel(label, spec, color)
-    label.width = m.theme.canvas.width
-    label.horizAlign = "center"
-    label.translation = [0, y]
-end sub
-
-sub styleLabel(label as object, spec as object, color as string)
     label.font = Theme.font(spec)
     label.color = color
     label.height = Theme.lineHeight(spec)
     label.vertAlign = "center"
+    label.width = m.theme.canvas.width
+    label.horizAlign = "center"
+    label.translation = [0, y]
 end sub
 
 ' M12 step 8: the settings, then the playlist at launch and on a 15-minute timer (D40). The channels stay in m, so
@@ -117,6 +126,8 @@ sub loadPlaylist()
         return
     end if
     m.playlistHost = Log.host(url)
+    ' Step 12: the logos' referrer (LogoTask's URLPolicy check).
+    m.logoTask.playlistURL = url
     if m.channels.Count() = 0 then showPlaylistStatus("Loading channels…")
     m.playlistTask = CreateObject("roSGNode", "PlaylistTask")
     m.playlistTask.playlistURL = url
@@ -155,6 +166,7 @@ sub onPlaylistResult()
         m.lastPlaylistLoad = UpTime(0)
         m.lineup = result.lineup
         m.top.lineup = result.lineup
+        m.guide.lineup = result.lineup
         m.top.playlistGuideURLs = result.guideURLs
         m.top.playlistStatus = ""
         loaded = m.channels.Count().ToStr() + " channels"
@@ -165,6 +177,7 @@ sub onPlaylistResult()
         m.top.playlistStatus = result.status
         showPlaylistStatus(result.status)
     end if
+    updatePlayback()
     resolveLaunch()
     ' As MMTVL's refreshIfStale: the channels first, then the guides (with the last channels after a failure).
     refreshGuideIfDue()
@@ -297,13 +310,15 @@ sub onGuideResult()
     m.guideState.lastKey = result.sourcesKey
     m.guideState.lastChannelsKey = m.guideRunChannelsKey
     m.top.guideRevision = m.top.guideRevision + 1
-    ' Step 11: the banner's now and next (the player reads the holder once per revision).
-    m.player.guideHolder = task
-    m.player.guideRevision = m.top.guideRevision
+    ' Step 12: the guide screen is the one reader (GuideReader); the banner gets the playing channel's list from it.
+    m.guide.guideHolder = task
+    m.guide.guideRevision = m.top.guideRevision
+    pushProgrammes()
 end sub
 
+' Step 12: in the guide's info area while there are no channels.
 sub showPlaylistStatus(text as string)
-    m.top.findNode("status").text = text
+    m.guide.status = text
 end sub
 
 ' "Version <major>.<minor> Build <build>", from the manifest.
@@ -312,27 +327,47 @@ function appVersionText() as string
     return "Version " + info.GetValue("major_version") + "." + info.GetValue("minor_version") + " Build " + info.GetValue("build_version")
 end function
 
+
 ' --- step 11: screens, the player, the notice -------------------------------------------------------------------
 
 ' The first playlist answer (loaded, failed, timed out, or no source at all) decides what opens: the last channel
 ' full screen if the playlist has it, else the guide (MMTVL's LiveTVModel.open). Not when a channel already plays
-' (OK on the placeholder while the playlist loaded).
+' (OK in the guide while the playlist loaded).
 sub resolveLaunch()
     if not m.launchPending then return
     m.launchPending = false
     if m.currentChannel <> invalid then return
     target = PlayerSession.launchTarget(m.channels, m.store.state.lastChannelID)
     Log.info("Live TV", "Opening the " + target.screen)
-    if target.screen = "player" then playChannel(target.channel) else showScreen("guide")
+    if target.screen = "player" then playChannel(target.channel) else openGuide(false)
 end sub
 
-' Plays a channel full screen, remembers it in state (last channel, recents) and gives the player Replay's target.
+' Plays a channel full screen, remembers it in state (last channel, recents) and gives the player Replay's target,
+' the channel's programmes and its cached logo.
 sub playChannel(channel as object)
     m.currentChannel = channel
     saveState(PlayerSession.stateAfterPlaying(m.store.state, channel.id))
     m.player.previousChannelID = PlayerKeys.previousChannelID(m.store.state.recentChannelIDs, channel.id)
-    m.player.channel = PlayerSession.playerItem(channel, logoFor(channel))
+    m.player.channel = PlayerSession.playerItem(channel, playerLogo(channel))
+    pushProgrammes()
     showScreen("player")
+    updatePlayback()
+end sub
+
+' MMTVL's watch: the playing channel goes full screen without a reconnect (with its banner); another plays.
+sub watch(id as dynamic)
+    channel = PlayerSession.channelByID(m.channels, id)
+    if channel = invalid then return
+    if m.currentChannel <> invalid and channel.id = m.currentChannel.id and isPlaying()
+        returnToPlayer()
+    else
+        playChannel(channel)
+    end if
+end sub
+
+sub returnToPlayer()
+    showScreen("player")
+    m.player.control = "showBanner"
 end sub
 
 ' A refused save (registry full, a write failed) is logged by the store; the session keeps the new state in memory,
@@ -342,16 +377,48 @@ sub saveState(state as object)
     if not result.ok then m.store.state = SettingsStore.normalize("state", state)
 end sub
 
-' The channel's logo for the banner, or "": only with Channel Logos on (L7 as amended), and only an http(s) logo
-' that URLPolicy allows with the playlist as the referrer (a public playlist can't point the Roku at a LAN host).
-function logoFor(channel as object) as string
-    if m.store.settings.channelLogos <> true then return ""
-    logo = channel.logo
-    if not PlayerSession.isText(logo) then return ""
-    if logo = "" then return ""
-    if not URLPolicy.allows(logo, m.store.source).ok then return ""
-    return logo
+' The playing channel's programmes for the banner: one list, copied from the guide screen (the only reader of the
+' guide data, step 12).
+sub pushProgrammes()
+    if m.currentChannel = invalid then return
+    list = m.guide.callFunc("programmesFor", m.currentChannel.id)
+    if type(list) <> "roArray" then list = []
+    m.player.programmes = list
+end sub
+
+' The banner's logo: the cached file when LogoTask has it, else "" and a request (onLogoReady sets it). Only with
+' Channel Logos on (L7 as amended); LogoTask checks the URL (URLPolicy.allows with the playlist as the referrer).
+function playerLogo(channel as object) as string
+    m.playerLogoPath = ""
+    url = LogoCache.wanted(channel, m.store.settings)
+    if url = "" then return ""
+    cached = LogoCache.path(url)
+    m.playerLogoPath = cached
+    if m.fs.Exists(cached) then return cached
+    m.logoTask.request = { url: url, path: cached }
+    return ""
 end function
+
+sub onLogoReady()
+    ready = m.logoTask.ready
+    if type(ready) <> "roAssociativeArray" then return
+    if not PlayerSession.isTrue(ready.ok) or not PlayerSession.isText(ready.path) then return
+    if ready.path <> "" and ready.path = m.playerLogoPath then m.player.logo = ready.path
+end sub
+
+function isPlaying() as boolean
+    return m.currentChannel <> invalid and not m.player.failed
+end function
+
+' What Back in the guide and its preview need (LiveTVModel.canReturnToChannel): a channel to go back to, playing or
+' (failed or stopped) still in the playlist.
+sub updatePlayback()
+    hasChannel = m.currentChannel <> invalid
+    playing = isPlaying()
+    canReturn = playing
+    if hasChannel and not playing then canReturn = PlayerSession.channelByID(m.channels, m.currentChannel.id) <> invalid
+    m.guide.playback = { hasChannel: hasChannel, canReturn: canReturn, isPlaying: playing }
+end sub
 
 sub onPlayerAction()
     action = m.player.action
@@ -366,24 +433,187 @@ sub onPlayerAction()
         target = PlayerSession.channelByID(m.channels, action.channelID)
         if target <> invalid then playChannel(target)
     else if kind = "openGuide"
-        showScreen("guide")
+        openGuide(true)
     else if kind = "openChannelMenu"
-        ' The channel menu is step 12's.
-        Log.info("Live TV", "The channel menu isn't built yet (step 12)")
+        openChannelMenu(action.channelID, "")
     end if
 end sub
 
-' The player stays visible (and playing) under the guide; the placeholders cover it.
+' --- step 12: the guide, the channel menu, favorites and hidden channels, the idle return -----------------------
+
+' The guide on the remembered group and the playing channel (MMTVL's openGuide). refreshFirst: also the playlist when
+' stale (step 8's decision: the guide asks for it when it opens; not at launch, which has just loaded it).
+sub openGuide(refreshFirst as boolean)
+    if refreshFirst then refreshPlaylistIfStale()
+    channelID = ""
+    if m.currentChannel <> invalid then channelID = m.currentChannel.id
+    m.guide.callFunc("open", { lastGroup: m.store.state.lastGroup, channelID: channelID })
+    showScreen("guide")
+    noteInput()
+end sub
+
+sub onGuideAction()
+    action = m.guide.action
+    if type(action) <> "roAssociativeArray" then return
+    kind = action.type
+    if kind = "play"
+        watch(action.channelID)
+    else if kind = "channelMenu"
+        openChannelMenu(action.channelID, action.group)
+    else if kind = "groupChanged"
+        state = {}
+        state.Append(m.store.state)
+        state.lastGroup = action.group
+        saveState(state)
+    else if kind = "togglePause"
+        if m.currentChannel <> invalid then m.player.control = "togglePause"
+    else if kind = "returnToChannel"
+        returnToChannel(PlayerSession.isTrue(action.reload))
+    else if kind = "openSearch"
+        ' Step 19 builds Search; until then the Search row does nothing visible.
+        Log.info("Live TV", "Search comes with step 19")
+    else if kind = "openTeamPicker"
+        ' Step 18 builds Choose Teams.
+        Log.info("Live TV", "Choose Teams comes with step 18")
+    else if kind = "openProbes"
+        #if DEBUG
+            openProbes()
+        #end if
+    end if
+end sub
+
+' M7m L2 (D49): full screen on the playing channel without a reconnect; else the current channel again (a failed
+' one retries). GuideKeys only asks when there is one to return to.
+sub returnToChannel(reload as boolean)
+    if m.currentChannel = invalid then return
+    if not reload
+        returnToPlayer()
+        return
+    end if
+    channel = PlayerSession.channelByID(m.channels, m.currentChannel.id)
+    if channel <> invalid then playChannel(channel)
+end sub
+
+' The channel menu over the guide (group: its selected group) or the player (group ""), focused on row focus.
+sub openChannelMenu(id as dynamic, group as dynamic, focus = 0 as integer)
+    channel = PlayerSession.channelByID(m.channels, id)
+    if channel = invalid then return
+    if not PlayerSession.isText(group) then group = ""
+    m.menuContext = { channelID: channel.id, group: group }
+    rows = ChannelMenu.items(menuItemsContext())
+    subtitle = ""
+    list = m.guide.callFunc("programmesFor", channel.id)
+    current = BannerText.nowNext(list, CreateObject("roDateTime").AsSeconds()).now
+    if current <> invalid
+        if PlayerSession.isText(current.title) then subtitle = current.title
+    end if
+    name = ""
+    if PlayerSession.isText(channel.name) then name = channel.name
+    m.menu.menu = ChannelMenu.make(Lineup.displayNumber(channel) + "  " + name, subtitle, rows, focus, m.theme.layout.liveMenuVisibleRows)
+    m.menu.visible = true
+    m.menuOpen = true
+    focusCurrent()
+    noteInput()
+end sub
+
+function menuItemsContext() as object
+    id = m.menuContext.channelID
+    return { channelID: id, isFavorite: ChannelMenu.isFavorite(m.store.prefs, id), group: m.menuContext.group, movableIDs: movableIDs() }
+end function
+
+function movableIDs() as object
+    ids = []
+    if m.lineup = invalid then return ids
+    for each channel in m.lineup.movableFavorites
+        ids.Push(channel.id)
+    end for
+    return ids
+end function
+
+sub closeChannelMenu()
+    m.menu.visible = false
+    m.menuOpen = false
+    m.menuContext = invalid
+    focusCurrent()
+end sub
+
+' MMTVL's perform for the channel menu: Watch; Add/Remove Favorites and Hide Channel save and close; Move Up/Down
+' save and keep the menu open on the same row (or the one now in its place, M6b L8).
+sub onMenuChoice()
+    choice = m.menu.choice
+    if type(choice) <> "roAssociativeArray" or m.menuContext = invalid then return
+    if choice.outcome <> "choose"
+        closeChannelMenu()
+        return
+    end if
+    chosen = choice.action
+    kind = chosen.type
+    if kind = "watch"
+        closeChannelMenu()
+        watch(chosen.channelID)
+    else if kind = "moveFavorite"
+        if chosen.step < 0 then itemID = "moveUp" else itemID = "moveDown"
+        index = ChannelMenu.focusAfterMove(ChannelMenu.items(menuItemsContext()), itemID, 0)
+        context = m.menuContext
+        applyPrefs(chosen)
+        rows = ChannelMenu.items(menuItemsContext())
+        openChannelMenu(context.channelID, context.group, ChannelMenu.focusAfterMove(rows, itemID, index))
+    else
+        applyPrefs(chosen)
+        closeChannelMenu()
+    end if
+end sub
+
+' Favorites and hidden channels: saved in prefs (SettingsStore), then the lineup is built again (Lineup.build) and
+' the guide keeps its group and row. A refused save keeps the change for this session (logged by the store).
+sub applyPrefs(chosen as object)
+    prefs = ChannelMenu.prefsAfter(m.store.prefs, chosen, movableIDs())
+    result = SettingsStore.save(m.store, "prefs", prefs)
+    if not result.ok then m.store.prefs = SettingsStore.normalize("prefs", prefs)
+    built = Lineup.build(m.channels, m.store.prefs, [])
+    m.lineup = built
+    m.top.lineup = built
+    m.guide.lineup = built
+end sub
+
+' D51: any key or focus move in the guide or the menu, and opening the guide.
+sub noteInput()
+    m.lastInputAt = UpTime(0)
+    m.idleTimer.control = "stop"
+    m.idleTimer.duration = m.theme.timing.guideIdleReturn
+    m.idleTimer.control = "start"
+end sub
+
+sub onIdle()
+    limit = m.theme.timing.guideIdleReturn
+    now = UpTime(0)
+    if not GuideIdle.isDue(m.lastInputAt, now, limit)
+        ' The timer ran a little early: wait out the rest.
+        if Refresh.isNumber(m.lastInputAt)
+            m.idleTimer.duration = limit - (now - m.lastInputAt)
+            m.idleTimer.control = "start"
+        end if
+        return
+    end if
+    result = GuideIdle.outcome({ screen: m.screen, menuOpen: m.menuOpen, isPlaying: isPlaying() })
+    if result.closeMenu then closeChannelMenu()
+    if result.returnToChannel then returnToPlayer()
+    if result.changed then Log.info("Live TV", "No input for a while: back to the video")
+end sub
+
+' --- screens and focus ------------------------------------------------------------------------------------------
+
+' The player plays on under the guide, in the guide's preview place (and under the Settings placeholder).
 sub showScreen(name as string)
     m.screen = name
+    m.player.preview = name <> "player"
     m.player.visible = m.currentChannel <> invalid
-    m.top.findNode("guidePlaceholder").visible = name = "guide"
+    m.guide.visible = name = "guide"
     m.top.findNode("settingsPlaceholder").visible = name = "settings"
     focusCurrent()
 end sub
 
-' The notice first, then (DEBUG) the Probes screen, then the screen: the player is a focused Group; the
-' placeholders' keys come to the scene.
+' The notice first, then (DEBUG) the Probes screen, then the channel menu, then the screen.
 sub focusCurrent()
     if m.notice <> invalid
         m.notice.setFocus(true)
@@ -395,7 +625,15 @@ sub focusCurrent()
             return
         end if
     #end if
-    if m.screen = "player" then m.player.setFocus(true) else m.top.setFocus(true)
+    if m.menuOpen
+        m.menu.setFocus(true)
+    else if m.screen = "player"
+        m.player.setFocus(true)
+    else if m.screen = "guide"
+        m.guide.callFunc("takeFocus")
+    else
+        m.top.setFocus(true)
+    end if
 end sub
 
 ' L7 as amended 2026-11-21: on a Low Roku, once, over whatever opens first.
@@ -424,49 +662,32 @@ end sub
 
 ' Settings → Device (step 13); the placeholder until then.
 sub openDeviceSettings()
+    if m.menuOpen then closeChannelMenu()
     if m.screen <> "settings" then m.settingsReturn = m.screen
     showScreen("settings")
 end sub
 
-' Keys that reach the scene: the placeholders' (the player and the notice handle theirs). Every key is handled, so
-' Back never leaves the app (D49, L4); only Roku's Home does.
+' Keys that reach the scene: the Settings placeholder's (the guide, the player, the menu and the notice handle
+' theirs). Every key is handled, so Back never leaves the app (D49, L4); only Roku's Home does.
 function onKeyEvent(key as string, press as boolean) as boolean
     if not press then return true
     #if DEBUG
         if m.probes <> invalid then return true
-        if m.screen = "guide" and key = "options"
-            openProbes()
-            return true
-        end if
     #end if
     if m.screen = "settings"
         if key = "back" or key = "OK" then showScreen(m.settingsReturn)
-    else if m.screen = "guide"
-        onGuidePlaceholderKey(key)
     end if
     return true
 end function
 
-' L4's guide keys that apply without a guide: Back returns to the playing channel (with nothing playing, nothing);
-' OK plays the playing channel, else the first visible one.
-sub onGuidePlaceholderKey(key as string)
-    if key = "back"
-        if m.currentChannel <> invalid then showScreen("player")
-    else if key = "OK"
-        if m.currentChannel <> invalid
-            showScreen("player")
-        else if m.lineup <> invalid
-            if m.lineup.visibleChannels.Count() > 0 then playChannel(m.lineup.visibleChannels[0])
-        end if
-    end if
-end sub
-
 #if DEBUG
     ' The probes play their own video: the player stops first.
     sub openProbes()
+        if m.menuOpen then closeChannelMenu()
         m.player.control = "stop"
         m.currentChannel = invalid
         m.player.visible = false
+        updatePlayback()
         m.probes = CreateObject("roSGNode", "ProbesScreen")
         m.probes.observeField("closed", "onProbesClosed")
         m.top.appendChild(m.probes)

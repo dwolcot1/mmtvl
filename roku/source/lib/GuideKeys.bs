@@ -11,6 +11,30 @@
 '     Channels if there is one, else the channel's own group. The focused channel's row, else row 0.
 '   rowsOf(lineup, group) -> the group's rows: { kind: "channel", channelID } per channel; My Teams starts with
 '     { kind: "chooseTeams", channelID: "" }. (My Teams' upcoming games, kind "upcoming", come with step 18.)
+'   setLineup(state, lineup) -> state after a playlist refresh or a favorites or hiding change (GuideModel.setLineup,
+'     GuideModel.swift:183-207): the same group (by name; else the default group), the focused row by its id, else
+'     the focused channel's row, else the same row index clamped; a focused group-column row keeps its group by
+'     name (else its position, clamped). Focus (grid, channel, groups, search) stays.
+'   visibleStart(first, position, count, visible) -> the first row a list of visible rows shows so that position
+'     is in view, moving as little as possible from first (GuideModel.keepGroupVisible; also the channel menu's
+'     window, LiveMenu): clamped to 0...count - visible.
+'   jumpTarget(state) -> where the screen sends TimeGrid for the model's focus: { row, kind }, kind "channel" (the
+'     row's channel cell, jumpToChannelInfo) or "grid" (a programme cell, jumpToChannel; also with the column open,
+'     which is drawn over the grid). invalid with no rows. The screen keeps it as the pending jump until TimeGrid
+'     reports a focus.
+'   pendingFor(target, held) -> the pending jump for a jump to target (jumpTarget's): invalid when target is invalid
+'     or is held, the cell TimeGrid last reported ({ row, kind }; invalid when unknown, as after new content), since
+'     TimeGrid may raise no report for a jump to the cell it holds; else target.
+'   gridReport(focus, pending, reported, rebuilding) -> { apply, isInput, pending }: what a TimeGrid focus report
+'     means (QA of step 12: a refresh with the column open must not hand the keys to the grid).
+'     focus: the model's; pending: the last jumpTarget sent and not yet reported, or invalid; reported: { row, kind },
+'     kind "grid" (programFocusedDetails) or "channel" (channelInfoFocused); rebuilding: the screen is replacing
+'     TimeGrid's content (a report then is the code's, whatever it says).
+'     The pending jump's own report is never input (the code's move doesn't restart the 3-minute timer, D51; MMTVL
+'     restarts it on commands) and settles it (pending comes back invalid).
+'     With the column open (groups or search), nothing applies: the column keeps its focus and highlight.
+'     While rebuilding, only the pending jump's report applies (it agrees with the model); another keeps pending.
+'     Else apply (the model takes the report's row and focus), and any report but the pending jump's is the user's.
 '   handle(key, press, state) -> { handled, action, state, wrapped }
 '     key, press: as PlayerKeys.handle. A release does nothing, handled for the keys a press handles.
 '     state  { focus, lineup, groups, groupIndex, groupFocus, rows, row, cellIndex, cellCount, canReturn,
@@ -214,6 +238,109 @@ namespace GuideKeys
             end if
         end if
     end sub
+
+    function setLineup(state as object, built as object) as object
+        current = GuideKeys.copyState(state)
+        focusedRow = GuideKeys.rowAtFocus(current)
+        focusedRowID = GuideKeys.rowID(focusedRow)
+        focusedChannelID = ""
+        if focusedRow <> invalid
+            if focusedRow.kind = "channel" then focusedChannelID = focusedRow.channelID
+        end if
+        group = GuideKeys.groupName(current.groups, current.groupIndex)
+        focusedGroup = invalid
+        if current.focus = "groups" then focusedGroup = GuideKeys.groupName(current.groups, current.groupFocus)
+        oldRow = current.row
+        oldGroupFocus = current.groupFocus
+
+        current.lineup = built
+        current.groups = built.groups
+        index = -1
+        if GuideKeys.isText(group) then index = GuideKeys.textIndex(current.groups, group)
+        if index < 0 then index = GuideKeys.defaultGroupIndex(current.groups)
+        current.groupIndex = index
+        current.rows = GuideKeys.rowsOf(built, GuideKeys.groupName(current.groups, index))
+        newRow = -1
+        if focusedRowID <> ""
+            for i = 0 to current.rows.Count() - 1
+                if GuideKeys.rowID(current.rows[i]) = focusedRowID
+                    newRow = i
+                    exit for
+                end if
+            end for
+        end if
+        if newRow < 0 and focusedChannelID <> "" then newRow = GuideKeys.channelRow(current.rows, focusedChannelID)
+        if newRow < 0 then newRow = GuideKeys.clamped(oldRow, current.rows.Count())
+        current.row = newRow
+        if current.focus = "groups"
+            groupFocus = -1
+            if GuideKeys.isText(focusedGroup) then groupFocus = GuideKeys.textIndex(current.groups, focusedGroup)
+            if groupFocus < 0 then groupFocus = GuideKeys.clamped(oldGroupFocus, current.groups.Count())
+            current.groupFocus = groupFocus
+        else
+            current.groupFocus = index
+        end if
+        return current
+    end function
+
+    function jumpTarget(state as object) as dynamic
+        if state.rows.Count() = 0 then return invalid
+        kind = "grid"
+        if state.focus = "channel" then kind = "channel"
+        return { row: GuideKeys.clamped(state.row, state.rows.Count()), kind: kind }
+    end function
+
+    function pendingFor(target as dynamic, held as dynamic) as dynamic
+        if LCase(type(target)) <> "roassociativearray" then return invalid
+        if LCase(type(held)) = "roassociativearray"
+            if held.row = target.row and held.kind = target.kind then return invalid
+        end if
+        return target
+    end function
+
+    function gridReport(focus as dynamic, pending as dynamic, reported as object, rebuilding = false as boolean) as object
+        result = { apply: false, isInput: false, pending: invalid }
+        own = false
+        if LCase(type(pending)) = "roassociativearray"
+            own = pending.kind = reported.kind and pending.row = reported.row
+        end if
+        if GuideKeys.isText(focus)
+            if focus = "groups" or focus = "search" then return result
+        end if
+        if rebuilding
+            result.apply = own
+            if not own then result.pending = pending
+            return result
+        end if
+        result.apply = true
+        result.isInput = not own
+        return result
+    end function
+
+    function visibleStart(first as integer, position as integer, count as integer, visible as integer) as integer
+        start = first
+        if position < start then start = position
+        if position >= start + visible then start = position - visible + 1
+        highest = count - visible
+        if highest < 0 then highest = 0
+        if start > highest then start = highest
+        if start < 0 then start = 0
+        return start
+    end function
+
+    ' A row's id, as GuideModel.Row.id: "channel.<id>", "chooseTeams" (step 18 adds "upcoming.…"); "" for none.
+    function rowID(row as dynamic) as string
+        if row = invalid then return ""
+        if row.kind = "channel" then return "channel." + row.channelID
+        return row.kind
+    end function
+
+    ' value clamped to 0...count - 1 (0 for an empty list).
+    function clamped(value as integer, count as integer) as integer
+        if value > count - 1 then value = count - 1
+        if value < 0 then value = 0
+        return value
+    end function
 
     ' LiveTVModel's .close: full screen on the channel; with nothing to return to, the guide stays (D49).
     function backAction(current as object) as object

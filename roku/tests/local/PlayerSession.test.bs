@@ -1,7 +1,7 @@
 ' PlayerSession (M12 step 11): launch routing (MMTVL's LiveTVModel.open: the last channel, else the guide), the
-' state kept after a channel plays (last channel, recents capped at 10, other fields kept), the player item, the
-' guide-data lookup, and the overlay timing (MMTVL's banner, timeshift bar and paused overlay, M7m L15, D51).
-' Off-device.
+' state kept after a channel plays (last channel, recents capped at 10, other fields kept), the player item and
+' the overlay timing (MMTVL's banner, timeshift bar and paused overlay, M7m L15, D51).
+' (The guide-data lookup moved to GuideReader in step 12: the player no longer reads the guide data.) Off-device.
 namespace PlayerSessionTests
 
     ' MARK: launch
@@ -91,17 +91,6 @@ namespace PlayerSessionTests
         t.assertEqual(PlayerSession.playerItem(channels[0], invalid).logo, "", "no logo")
         antenna = { id: "antenna:5.1", number: 9, name: "Local 5 HD", group: "Antenna", url: "http://tuner.example/auto/v5.1", source: "antenna", guideNumber: "5.1" }
         t.assertEqual(PlayerSession.playerItem(antenna, "").title, "5.1  Local 5 HD", "the tuner's number")
-    end sub
-
-    ' MARK: guide data
-
-    sub test_programmesForReadsTheMatchedGuide(t as object)
-        list = [{ start: 100, stop: 200, title: "A" }]
-        data = { matches: { "id:one.example": { guide: 1, sourceID: "1", epgID: "one.epg" } }, guides: [{ programmes: {} }, { programmes: { "one.epg": list } }] }
-        t.assertEqual(PlayerSession.programmesFor(data, "id:one.example"), list)
-        t.assertInvalid(PlayerSession.programmesFor(data, "id:two.example"), "no match")
-        t.assertInvalid(PlayerSession.programmesFor(invalid, "id:one.example"), "no guide yet")
-        t.assertInvalid(PlayerSession.programmesFor({ matches: {} }, "id:one.example"), "no guides")
     end sub
 
     ' MARK: overlays

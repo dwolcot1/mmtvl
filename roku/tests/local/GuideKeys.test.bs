@@ -12,8 +12,10 @@
 ' LiveTVModelTests.swift: noLastChannelOpensTheGuide (Back with nothing to return to), backInTheGuideReturnsToTheChannel,
 ' backInTheGuideAfterAStreamErrorRetriesTheChannel, backInTheGuideDoesNothingForADroppedChannelThatIsntPlaying,
 ' backFromTheGroupListGoesToTheGridThenTheChannel, playPauseInTheGuidePausesThePreview. MMTVL's Channel Up/Down
-' are Roku's Rewind/Fast Forward here (L4). Not ported: the timeline, programme cells and scrolling (TimeGrid's),
-' setLineup, focus(channelID:at:) and the upcoming games (step 18). Off-device.
+' are Roku's Rewind/Fast Forward here (L4). Step 12 adds setLineup (setLineupThatDropsTheFocusedChannelKeepsTheRow,
+' groupsAppearingAboveKeepTheFocusedGroup) and the group column's window (keepGroupVisible). Not ported: the
+' timeline, programme cells and scrolling (TimeGrid's), focus(channelID:at:) and the upcoming games (step 18).
+' Off-device.
 namespace GuideKeysTests
 
     ' MARK: opening (GuideModel.init)
@@ -452,6 +454,148 @@ namespace GuideKeysTests
     end sub
 
     ' MARK: helpers
+
+    ' MARK: setLineup (step 12: a refresh or a favorites or hiding change keeps the group and row)
+
+    sub test_setLineupKeepsTheGroupAndTheFocusedChannel(t as object)
+        state = GuideKeysTests.model("Live", "id:c4")
+        built = Lineup.build(GuideKeysTests.channels(), { favorites: ["id:c9"] })
+        after = GuideKeys.setLineup(state, built)
+        t.assertEqual(after.groups, ["Favorites", "My Teams", "All Channels", "Live", "NBA", "NHL"])
+        t.assertEqual(GuideKeysTests.selectedGroup(after), "Live", "a group appearing above doesn't change it")
+        t.assertEqual(GuideKeysTests.focusedID(after), "id:c4")
+        t.assertEqual(after.focus, "grid")
+        hidden = GuideKeys.setLineup(after, Lineup.build(GuideKeysTests.channels(), { hiddenChannels: ["id:c1"] }))
+        t.assertEqual(GuideKeysTests.focusedID(hidden), "id:c4", "by id when rows above go")
+        t.assertEqual(hidden.row, 2)
+        t.assertEqual(state.groups.Count(), 5, "the old state doesn't change")
+    end sub
+
+    sub test_setLineupThatDropsTheFocusedChannelKeepsTheRow(t as object)
+        last = GuideKeysTests.model("Live", "id:c6")
+        t.assertEqual(last.row, 5)
+        last = GuideKeys.setLineup(last, Lineup.build(GuideKeysTests.channels(), { hiddenChannels: ["id:c6"] }))
+        t.assertEqual(GuideKeysTests.selectedGroup(last), "Live")
+        t.assertEqual(last.row, 4)
+        t.assertEqual(GuideKeysTests.focusedID(last), "id:c5")
+        middle = GuideKeysTests.model("Live", "id:c3")
+        middle = GuideKeys.setLineup(middle, Lineup.build(GuideKeysTests.channels(), { hiddenChannels: ["id:c3"] }))
+        t.assertEqual(middle.row, 2)
+        t.assertEqual(GuideKeysTests.focusedID(middle), "id:c4")
+    end sub
+
+    ' A hidden selected group: the default group, and the row clamped.
+    sub test_setLineupWithTheGroupGoneUsesTheDefault(t as object)
+        state = GuideKeysTests.model("NHL", "id:c10")
+        state = GuideKeysTests.press(GuideKeysTests.press(state, "down"), "left")
+        t.assertEqual(state.focus, "channel")
+        after = GuideKeys.setLineup(state, Lineup.build(GuideKeysTests.channels(), { hiddenGroups: ["NHL"] }))
+        t.assertEqual(GuideKeysTests.selectedGroup(after), "All Channels")
+        t.assertEqual(after.focus, "channel", "focus stays")
+        t.assertEqual(after.row, 0, "c9's row wasn't found: the same index")
+    end sub
+
+    ' groupsAppearingAboveKeepTheFocusedGroup (QA minor from M7l 8b).
+    sub test_setLineupKeepsTheFocusedGroupInTheColumn(t as object)
+        state = GuideKeysTests.toGroups(GuideKeysTests.model("Live", "id:c1"))
+        t.assertEqual(state.focus, "groups")
+        t.assertEqual(state.groupFocus, 2)
+        state = GuideKeys.setLineup(state, Lineup.build(GuideKeysTests.channels(), {}, ["id:c9"]))
+        t.assertEqual(state.groups[0], "Favorites")
+        t.assertEqual(state.groupFocus, 3)
+        t.assertEqual(state.groups[state.groupFocus], "Live")
+        state = GuideKeys.setLineup(state, Lineup.build(GuideKeysTests.channels(), {}))
+        t.assertEqual(state.groupFocus, 2)
+        state = GuideKeysTests.press(GuideKeysTests.press(state, "down"), "down")
+        t.assertEqual(state.groupFocus, 4)
+        state = GuideKeys.setLineup(state, Lineup.build(GuideKeysTests.channels(), { hiddenGroups: ["NHL"] }))
+        t.assertEqual(state.groupFocus, 3, "a focused group that went: the same position, clamped")
+    end sub
+
+    sub test_setLineupKeepsChooseTeams(t as object)
+        state = GuideKeys.open(Lineup.build(GuideKeysTests.channels(), {}), "My Teams", "")
+        after = GuideKeys.setLineup(state, Lineup.build(GuideKeysTests.channels(), {}, ["id:c9"]))
+        t.assertEqual(GuideKeysTests.selectedGroup(after), "My Teams")
+        t.assertEqual(after.rows[after.row].kind, "chooseTeams")
+        t.assertEqual(after.rows.Count(), 2)
+    end sub
+
+    ' MARK: the group column's window (keepGroupVisible; also the channel menu's)
+
+    sub test_visibleStartFollowsTheFocus(t as object)
+        t.assertEqual(GuideKeys.visibleStart(0, 3, 20, 8), 0)
+        t.assertEqual(GuideKeys.visibleStart(0, 8, 20, 8), 1)
+        t.assertEqual(GuideKeys.visibleStart(5, 2, 20, 8), 2)
+        t.assertEqual(GuideKeys.visibleStart(0, 19, 20, 8), 12, "a loop to the end")
+        t.assertEqual(GuideKeys.visibleStart(12, 0, 20, 8), 0, "a loop to the top")
+        t.assertEqual(GuideKeys.visibleStart(9, 4, 5, 8), 0, "fewer rows than fit")
+    end sub
+
+    ' MARK: TimeGrid's focus reports (QA of step 12: a refresh with the column open; the idle timer, D51)
+
+    sub test_aGridFocusReportWhileTheColumnIsOpenKeepsTheColumn(t as object)
+        column = GuideKeysTests.toGroups(GuideKeysTests.model("Live", "id:c3"))
+        t.assertEqual(column.focus, "groups")
+        ' A lineup refresh rebuilt the grid, whose jump to the row reports a programme focus.
+        pending = GuideKeys.jumpTarget(column)
+        t.assertEqual(pending, { row: 2, kind: "grid" }, "the column is over the grid's programme cells")
+        during = GuideKeys.gridReport(column.focus, pending, { row: 2, kind: "grid" }, true)
+        t.assertEqual(during, { apply: false, isInput: false, pending: invalid }, "reported during rebuildGrid")
+        after = GuideKeys.gridReport(column.focus, pending, { row: 2, kind: "grid" })
+        t.assertEqual(after, { apply: false, isInput: false, pending: invalid }, "reported after it")
+        other = GuideKeys.gridReport("search", invalid, { row: 5, kind: "channel" })
+        t.assertFalse(other.apply, "on the Search row too")
+        t.assertFalse(other.isInput)
+    end sub
+
+    sub test_aReportCausedByOurOwnJumpDoesntCountAsInput(t as object)
+        state = GuideKeysTests.model("Live", "id:c3")
+        pending = GuideKeys.jumpTarget(state)
+        own = GuideKeys.gridReport(state.focus, pending, { row: 2, kind: "grid" })
+        t.assertEqual(own, { apply: true, isInput: false, pending: invalid }, "it agrees with the model, and settles the jump")
+        user = GuideKeys.gridReport(state.focus, own.pending, { row: 3, kind: "grid" })
+        t.assertEqual(user, { apply: true, isInput: true, pending: invalid }, "the next report is the user's")
+        onChannel = GuideKeysTests.press(state, "left")
+        t.assertEqual(GuideKeys.jumpTarget(onChannel), { row: 2, kind: "channel" })
+        t.assertTrue(GuideKeys.gridReport("grid", { row: 2, kind: "channel" }, { row: 2, kind: "grid" }).isInput, "another kind of cell isn't the jump's")
+        t.assertTrue(GuideKeys.gridReport("grid", { row: 2, kind: "grid" }, { row: 4, kind: "grid" }).isInput, "nor another row")
+    end sub
+
+    sub test_whileRebuildingOnlyTheJumpsReportApplies(t as object)
+        pending = { row: 7, kind: "grid" }
+        reset = GuideKeys.gridReport("grid", pending, { row: 0, kind: "grid" }, true)
+        t.assertEqual(reset, { apply: false, isInput: false, pending: pending }, "new content's own focus: the jump still comes")
+        t.assertEqual(GuideKeys.gridReport("grid", pending, { row: 7, kind: "grid" }, true), { apply: true, isInput: false, pending: invalid })
+    end sub
+
+    ' QA of step 12: TimeGrid may raise no report for a jump to the cell it holds, so none is awaited (the next
+    ' move there is the user's).
+    sub test_aJumpToTheCellTimeGridHoldsAwaitsNoReport(t as object)
+        column = GuideKeysTests.toGroups(GuideKeysTests.model("Live", "id:c3"))
+        ' A refresh with the column open moved TimeGrid onto row 2's programme cell; the column guard dropped it.
+        awaited = GuideKeys.pendingFor(GuideKeys.jumpTarget(column), invalid)
+        t.assertEqual(awaited, { row: 2, kind: "grid" }, "after new content TimeGrid's cell is unknown: awaited")
+        held = { row: 2, kind: "grid" }
+        t.assertEqual(GuideKeys.gridReport(column.focus, awaited, held), { apply: false, isInput: false, pending: invalid })
+        closed = GuideKeysTests.press(column, "back")
+        t.assertEqual(GuideKeys.pendingFor(GuideKeys.jumpTarget(closed), held), invalid, "Back jumps to the held cell")
+        t.assertTrue(GuideKeys.gridReport(closed.focus, invalid, { row: 2, kind: "grid" }).isInput, "so a move there counts")
+        t.assertEqual(GuideKeys.pendingFor(GuideKeys.jumpTarget(closed), { row: 2, kind: "channel" }), { row: 2, kind: "grid" }, "from the channel cell: awaited")
+        t.assertEqual(GuideKeys.pendingFor(GuideKeys.jumpTarget(closed), { row: 4, kind: "grid" }), { row: 2, kind: "grid" }, "another row: awaited")
+        t.assertEqual(GuideKeys.pendingFor(invalid, held), invalid, "no rows")
+    end sub
+
+    ' Back from the column: the model is on the grid, and the screen sends TimeGrid to the row's programme cell.
+    sub test_closingTheColumnJumpsToTheProgrammeCell(t as object)
+        column = GuideKeysTests.toGroups(GuideKeysTests.model("Live", "id:c2"))
+        for each key in ["back", "left"]
+            closed = GuideKeysTests.press(column, key)
+            t.assertEqual(closed.focus, "grid", key)
+            t.assertEqual(GuideKeys.jumpTarget(closed), { row: 1, kind: "grid" }, key)
+        end for
+        empty = GuideKeys.open(Lineup.build([], {}), invalid, "")
+        t.assertEqual(GuideKeys.jumpTarget(empty), invalid, "no rows: no jump")
+    end sub
 
     ' GuideModelTests' fixture: channels 1-6 "Live", 7-8 "NBA", 9-10 "NHL", ids "id:c<n>".
     function channels() as object

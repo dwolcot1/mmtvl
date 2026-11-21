@@ -11,8 +11,6 @@
 '   channelByID(channels, id) -> the channel or invalid.
 '   playerItem(channel, logo) -> what PlayerScreen.channel takes: { id, title, url, logo } (logo "" for none). The
 '     title is MMTVL's banner line "<number>  <name>".
-'   programmesFor(guideData, channelID) -> GuidePipeline.programmesFor on GuideFetch.guideData's shape, without
-'     loading the pipeline (its scanner and matcher) into the player: the channel's programmes or invalid.
 '
 ' Overlays (MMTVL's banner, showsTimeshiftBar and pausedOverlayVisible): overlays is { banner, bar, paused }, all
 ' booleans. apply(overlays, event) -> { overlays, timers: { banner, bar, paused } }, each timer "start" (restart
@@ -68,17 +66,6 @@ namespace PlayerSession
         url = ""
         if PlayerSession.isText(channel.url) then url = channel.url
         return { id: channel.id, title: Lineup.displayNumber(channel) + "  " + name, url: url, logo: shownLogo }
-    end function
-
-    function programmesFor(guideData as dynamic, channelID as string) as dynamic
-        if LCase(type(guideData)) <> "roassociativearray" then return invalid
-        if LCase(type(guideData.matches)) <> "roassociativearray" or LCase(type(guideData.guides)) <> "roarray" then return invalid
-        ref = guideData.matches[channelID]
-        if LCase(type(ref)) <> "roassociativearray" then return invalid
-        guide = guideData.guides[ref.guide]
-        if LCase(type(guide)) <> "roassociativearray" then return invalid
-        if LCase(type(guide.programmes)) <> "roassociativearray" then return invalid
-        return guide.programmes[ref.epgID]
     end function
 
     ' --- overlays -------------------------------------------------------------------------------------------------
