@@ -1,0 +1,149 @@
+' The logo loader (fields in LogoTask.xml).
+
+sub init()
+    m.top.functionName = "loadLogos"
+end sub
+
+sub loadLogos()
+    port = CreateObject("roMessagePort")
+    m.top.observeField("request", port)
+    m.fs = CreateObject("roFileSystem")
+    m.fs.CreateDirectory(LogoCache.directory)
+    pruneCache()
+    m.queue = LogoCache.newQueue()
+    m.failed = {}
+    m.peerWarned = false
+    loaded = 0
+    while true
+        ' Every request that has come in goes into the queue before the next is chosen, so the newest is fetched
+        ' first and the oldest beyond maximumQueue are dropped (LogoCache.enqueue, popNewest). With nothing waiting,
+        ' sleep until a request comes.
+        if m.queue.items.Count() = 0 then msg = Wait(0, port) else msg = port.GetMessage()
+        while msg <> invalid
+            if type(msg) = "roSGNodeEvent" then enqueue(msg.getData())
+            msg = port.GetMessage()
+        end while
+        item = LogoCache.popNewest(m.queue)
+        if item <> invalid
+            ok = fetch(item)
+            if ok then loaded = loaded + 1
+            m.top.ready = { path: item.path, ok: ok }
+            if ok and loaded mod 50 = 0 then Log.info("Logos", loaded.ToStr() + " logos loaded")
+        end if
+    end while
+end sub
+
+sub enqueue(request as dynamic)
+    if type(request) <> "roAssociativeArray" then return
+    if not LogoCache.isOwnPath(request.url, request.path) then return
+    if m.failed.DoesExist(request.path) or m.queue.paths.DoesExist(request.path) then return
+    if m.fs.Exists(request.path)
+        m.top.ready = { path: request.path, ok: true }
+        return
+    end if
+    outcome = LogoCache.enqueue(m.queue, { url: request.url, path: request.path }, LogoCache.maximumQueue)
+    ' Dropped from the full queue: answered (not failed), so the guide may ask again when the row is in view.
+    for each droppedPath in outcome.dropped
+        m.top.ready = { path: droppedPath, ok: false }
+    end for
+end sub
+
+' Downloads one logo into its cached path. false (remembered for this run) when it may not be fetched or failed.
+function fetch(item as object) as boolean
+    if m.fs.Exists(item.path) then return true
+    playlistURL = m.top.playlistURL
+    host = Log.host(item.url)
+    if not URLPolicy.allows(item.url, playlistURL).ok
+        return failed(item, host, "not allowed")
+    end if
+    part = item.path + LogoCache.partSuffix
+    m.fs.Delete(part)
+    port = CreateObject("roMessagePort")
+    transfer = CreateObject("roUrlTransfer")
+    transfer.SetUrl(item.url)
+    transfer.SetPort(port)
+    if LCase(Left(item.url, 8)) = "https://" then transfer.SetCertificatesFile("common:/certs/ca-bundle.crt")
+    transfer.RetainBodyOnError(false)
+    if not transfer.AsyncGetToFile(part) then return failed(item, host, "couldn't start")
+    timer = CreateObject("roTimespan")
+    reason = ""
+    while true
+        remaining = LogoCache.timeoutSeconds * 1000 - timer.TotalMilliseconds()
+        if remaining <= 0
+            transfer.AsyncCancel()
+            reason = "timed out"
+            exit while
+        end if
+        if remaining > 250 then remaining = 250
+        msg = Wait(remaining, port)
+        if type(msg) = "roUrlEvent"
+            if msg.GetInt() = 1
+                code = msg.GetResponseCode()
+                if code >= 200 and code < 300
+                    peer = checkPeer(msg, playlistURL)
+                    if not peer.ok then reason = "reached an address a logo may not use (" + peer.reason + ")"
+                else if code < 0
+                    reason = "network error " + code.ToStr()
+                else
+                    reason = "HTTP " + code.ToStr()
+                end if
+                exit while
+            end if
+        end if
+        if fileBytes(part) > LogoCache.maximumBytes
+            transfer.AsyncCancel()
+            reason = "too large"
+            exit while
+        end if
+    end while
+    if reason = "" and fileBytes(part) > LogoCache.maximumBytes then reason = "too large"
+    if reason = "" and fileBytes(part) = 0 then reason = "empty"
+    if reason <> ""
+        m.fs.Delete(part)
+        return failed(item, host, reason)
+    end if
+    if not m.fs.Rename(part, item.path)
+        m.fs.Delete(part)
+        return failed(item, host, "couldn't keep it")
+    end if
+    return true
+end function
+
+function failed(item as object, host as string, reason as string) as boolean
+    m.failed[item.path] = true
+    Log.info("Logos", Log.withHost("A logo", host) + " wasn't loaded: " + reason)
+    return false
+end function
+
+' As GuideTask.checkPeer for a url-tvg guide: public only, unless the playlist itself is on the LAN. Never logs the
+' address.
+function checkPeer(msg as object, playlistURL as string) as object
+    peer = msg.GetTargetIpAddress()
+    if not URLPolicy.isText(peer) then peer = ""
+    if peer = ""
+        if not m.peerWarned
+            m.peerWarned = true
+            Log.warn("Logos", "This Roku didn't report the address a logo download reached, so it wasn't checked")
+        end if
+        return { ok: true, reason: "" }
+    end if
+    publicChain = true
+    if playlistURL <> "" then publicChain = not URLPolicy.isLANHop(playlistURL)
+    return URLPolicy.allowsPeer(peer, publicChain)
+end function
+
+sub pruneCache()
+    names = m.fs.GetDirectoryListing(LogoCache.directory)
+    stale = LogoCache.prunable(names, LogoCache.maximumFiles)
+    for each name in stale
+        m.fs.Delete(LogoCache.directory + "/" + name)
+    end for
+    if stale.Count() > 0 then Log.info("Logos", "Deleted " + stale.Count().ToStr() + " cached logo file(s)")
+end sub
+
+function fileBytes(path as string) as dynamic
+    info = m.fs.Stat(path)
+    if type(info) <> "roAssociativeArray" then return 0
+    if Refresh.isNumber(info.size) then return info.size
+    return 0
+end function

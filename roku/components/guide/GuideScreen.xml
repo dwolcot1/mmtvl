@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The guide (M12 step 12, L3, L4, D49, D51; frames "Guide A" LMTqH, "group column open" lB8XX, 720p vNN1n). The
+     focused programme's info top left; the playing channel's video top right (the player's Video, moved there by the
+     scene: PlayerScreen.preview, drawn under this screen, which has no background of its own); the group name above
+     the channel column; Roku's TimeGrid with GuideChannelCell rows; the key hint. Left from a channel cell opens the
+     group column (Search, then the lineup's groups, looping), a MenuListView over menuDim on a panel_solid.
+     Keys: TimeGrid moves between rows and programmes itself; what it lets through (Back, *, Play, Replay, Rewind and
+     Fast Forward with ignoreTrickPlayKeys, Left from a channel cell, and whatever it doesn't use at its edges) goes
+     to GuideKeys with the focus TimeGrid reports, and so do its OK selections. The column is this screen's own and
+     takes its keys from GuideKeys directly. The screen tells the scene what to do through action.
+     The guide data: this screen is the only reader of the scene's guideHolder (GuideReader, once per guideRevision);
+     the scene gets one channel's programmes for the player's banner and the channel menu with programmesFor.
+     Programmes are put into TimeGrid only for the rows around the focused one (GuideReader.fillRange); unmatched
+     channels show "No guide". Logos come from LogoTask (cachefs:), only for those rows too. -->
+<component name="GuideScreen" extends="Group">
+    <interface>
+        <!-- Lineup.build's result. A change keeps the group and row (GuideKeys.setLineup). -->
+        <field id="lineup" type="assocarray" onChange="onLineup" />
+        <field id="guideHolder" type="node" />
+        <field id="guideRevision" type="integer" value="0" onChange="onGuideRevision" />
+        <!-- { canReturn, isPlaying }: LiveTVModel.canReturnToChannel and whether the playing channel plays (paused
+             counts; failed doesn't), for Back (GuideKeys.backAction) and the preview's text. -->
+        <field id="playback" type="assocarray" onChange="onPlayback" />
+        <!-- SettingsStore's settings (channelLogos). -->
+        <field id="settings" type="assocarray" />
+        <field id="logoTask" type="node" onChange="onLogoTask" />
+        <!-- With no channels: what the info area says (the playlist's status) and the app's version. -->
+        <field id="status" type="string" onChange="showInfo" />
+        <field id="version" type="string" onChange="showInfo" />
+        <!-- Out, to the scene: GuideKeys' actions ({ type: "play", channelID }, { type: "channelMenu", channelID,
+             group }, { type: "groupChanged", group }, { type: "openSearch" }, { type: "openTeamPicker" },
+             { type: "togglePause" }, { type: "returnToChannel", reload }) and, in DEBUG builds, { type: "openProbes" }. -->
+        <field id="action" type="assocarray" alwaysNotify="true" />
+        <!-- Out: set on each key and focus move (the scene's idle return, D51). -->
+        <field id="input" type="boolean" alwaysNotify="true" />
+        <!-- open({ lastGroup, channelID }): the remembered group and the channel to focus (GuideKeys.open).
+             takeFocus(): focus on the grid or the column (the scene's focusCurrent; open doesn't take focus).
+             programmesFor(channelID): that channel's programmes (a copy of one list) or invalid. -->
+        <function name="open" />
+        <function name="takeFocus" />
+        <function name="programmesFor" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Lineup.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/GuideKeys.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/GuideReader.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/BannerText.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/LogoCache.bs" />
+    <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
+    <children>
+        <Group id="info">
+            <Label id="infoChannel" />
+            <Label id="infoTitle" />
+            <Label id="infoTime" />
+            <Label id="infoDescription" />
+        </Group>
+        <!-- MMTVL's preview text: "Nothing playing" / "Can't play this channel", over the preview's place. -->
+        <Label id="previewText" />
+        <Label id="groupName" />
+        <Label id="groupHint" text="‹ Groups" />
+        <TimeGrid id="grid" />
+        <Label id="hint" />
+        <Group id="column" visible="false">
+            <Rectangle id="columnDim" />
+            <Poster id="columnPanel" />
+            <MenuListView id="columnList" />
+        </Group>
+    </children>
+</component>

@@ -1,0 +1,83 @@
+' The channel cell (fields in GuideChannelCell.xml).
+
+sub init()
+    m.theme = Theme.make()
+    fonts = m.theme.fonts
+    m.focus = m.top.findNode("focus")
+    m.focus.uri = m.theme.images.guideFocus
+    m.number = m.top.findNode("number")
+    m.number.font = Theme.font(fonts.guideChannelNumber)
+    m.number.horizAlign = "right"
+    m.number.vertAlign = "center"
+    m.number.wrap = false
+    m.logo = m.top.findNode("logo")
+    m.name = m.top.findNode("name")
+    m.name.font = Theme.font(fonts.guideChannel)
+    m.name.vertAlign = "center"
+    m.name.wrap = false
+    m.observed = invalid
+    applyColors()
+end sub
+
+sub onContent()
+    if m.observed <> invalid then m.observed.unobserveFieldScoped("hdSmallIconUrl")
+    content = m.top.content
+    m.observed = content
+    if content = invalid then return
+    m.number.text = content.shortDescriptionLine1
+    m.name.text = content.title
+    content.observeFieldScoped("hdSmallIconUrl", "onLogo")
+    onLogo()
+end sub
+
+sub onLogo()
+    content = m.top.content
+    uri = ""
+    if content <> invalid then uri = content.hdSmallIconUrl
+    m.logo.uri = uri
+    m.logo.visible = uri <> ""
+    layout()
+end sub
+
+sub layout()
+    tokens = m.theme.layout
+    width = m.top.width
+    height = m.top.height
+    if width <= 0 then width = tokens.guideChannelColumnWidth
+    if height <= 0 then height = tokens.guideRowHeight
+    padding = tokens.guideChannelCellPadding
+    spacing = tokens.guideChannelCellSpacing
+    lineHeight = Theme.lineHeight(m.theme.fonts.guideChannel)
+    textY = Int((height - lineHeight) / 2)
+    m.focus.width = width
+    m.focus.height = height
+    m.number.translation = [padding, textY]
+    m.number.width = tokens.guideChannelNumberWidth
+    m.number.height = lineHeight
+    x = padding + tokens.guideChannelNumberWidth + spacing
+    if m.logo.visible
+        m.logo.width = tokens.guideLogoSize
+        m.logo.height = tokens.guideLogoSize
+        m.logo.translation = [x, Int((height - tokens.guideLogoSize) / 2)]
+        x = x + tokens.guideLogoSize + spacing
+    end if
+    m.name.translation = [x, textY]
+    m.name.width = width - x - padding
+    m.name.height = lineHeight
+end sub
+
+sub onFocus()
+    m.focus.visible = m.top.hasFocus
+    applyColors()
+end sub
+
+sub applyColors()
+    colors = m.theme.colors
+    if m.top.hasFocus
+        m.number.color = colors.focusedRowSecondaryText
+        m.name.color = colors.focusedRowText
+    else
+        m.number.color = colors.secondaryText
+        m.name.color = colors.primaryText
+    end if
+end sub

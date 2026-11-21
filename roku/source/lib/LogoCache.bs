@@ -1,0 +1,136 @@
+' Channel logos in cachefs: (M12 step 12, L5, L7 as amended 2026-11-21): where a logo is kept and what to prune.
+' LogoTask downloads; the guide's channel cells and the player's banner show the cached file, never the URL. Pure
+' functions, no nodes (cacheID uses roEVPDigest, as GuideSources.cacheID).
+'
+'   wanted(channel, settings) -> the channel's logo URL when Channel Logos is on (settings.channelLogos; a missing
+'     or mistyped value reads as on, L7) and the channel has one, else "". Whether the URL may be fetched is
+'     LogoTask's check (URLPolicy.allows with the playlist as the referrer, as url-tvg guides).
+'   path(url) -> "cachefs:/logos/<sha1 of the URL><extension>": the extension of the URL's path when it is .png,
+'     .jpg, .jpeg, .webp or .gif (lowercased), else .png. Never holds the URL itself.
+'   isOwnPath(url, path) -> whether path is path(url) (LogoTask writes nowhere else).
+'   prunable(names, maximum) -> the files of the logos folder to delete when LogoTask starts: leftover ".part"
+'     files, then, when more than maximum logos are kept, the first ones in sorted order until maximum remain.
+'
+' LogoTask's waiting requests (last in, first out: the rows just scrolled to come first):
+'   newQueue() -> { items, paths }: items oldest first ({ url, path }), paths the set of their paths.
+'   enqueue(queue, request, maximum) -> { added, dropped }: puts request ({ url, path }) last; a path already
+'     waiting is skipped (added false). Beyond maximum the oldest go (dropped: their paths, which LogoTask answers
+'     as not loaded, so they may be asked for again). Changes queue. (A path already cached or failed is LogoTask's
+'     check, before this.)
+'   popNewest(queue) -> the newest request, taken out, or invalid when none waits.
+namespace LogoCache
+
+    const directory = "cachefs:/logos"
+    const partSuffix = ".part"
+    ' At most this many bytes per logo (a logo is a small picture; anything bigger isn't kept).
+    const maximumBytes = 524288
+    ' At most this many logos kept between launches.
+    const maximumFiles = 600
+    const timeoutSeconds = 15
+    ' At most this many waiting requests; the oldest go first (they have scrolled out of view).
+    const maximumQueue = 120
+
+    function wanted(channel as dynamic, settings as dynamic) as string
+        if LCase(type(channel)) <> "roassociativearray" then return ""
+        if LCase(type(settings)) = "roassociativearray"
+            value = settings.channelLogos
+            kind = LCase(type(value))
+            if kind = "boolean" or kind = "roboolean"
+                if not value then return ""
+            end if
+        end if
+        logo = channel.logo
+        if not LogoCache.isText(logo) then return ""
+        return logo
+    end function
+
+    function path(url as string) as string
+        bytes = CreateObject("roByteArray")
+        bytes.FromAsciiString(url)
+        digest = CreateObject("roEVPDigest")
+        digest.Setup("sha1")
+        return LogoCache.directory + "/" + LCase(digest.Process(bytes)) + LogoCache.extensionOf(url)
+    end function
+
+    function isOwnPath(url as dynamic, candidate as dynamic) as boolean
+        if not LogoCache.isText(url) or not LogoCache.isText(candidate) then return false
+        if url = "" then return false
+        return LogoCache.path(url) = candidate
+    end function
+
+    function extensionOf(url as string) as string
+        rest = url
+        for each stopper in ["?", "#"]
+            cut = Instr(1, rest, stopper)
+            if cut > 0 then rest = Left(rest, cut - 1)
+        end for
+        dot = 0
+        slash = 0
+        for i = Len(rest) to 1 step -1
+            character = Mid(rest, i, 1)
+            if character = "." and dot = 0 then dot = i
+            if character = "/"
+                slash = i
+                exit for
+            end if
+        end for
+        if dot = 0 or dot < slash then return ".png"
+        extension = LCase(Mid(rest, dot))
+        for each known in [".png", ".jpg", ".jpeg", ".webp", ".gif"]
+            if extension = known then return known
+        end for
+        return ".png"
+    end function
+
+    function prunable(names as dynamic, maximum as integer) as object
+        result = []
+        kind = LCase(type(names))
+        if kind <> "roarray" and kind <> "rolist" then return result
+        kept = []
+        for each name in names
+            if LogoCache.isText(name)
+                if Right(name, Len(LogoCache.partSuffix)) = LogoCache.partSuffix then result.Push(name) else kept.Push(name)
+            end if
+        end for
+        kept.Sort()
+        excess = kept.Count() - maximum
+        for i = 0 to excess - 1
+            result.Push(kept[i])
+        end for
+        return result
+    end function
+
+    function newQueue() as object
+        paths = {}
+        paths.SetModeCaseSensitive()
+        return { items: [], paths: paths }
+    end function
+
+    function enqueue(queue as object, request as object, maximum as integer) as object
+        result = { added: false, dropped: [] }
+        requestPath = request.path
+        if queue.paths.DoesExist(requestPath) then return result
+        result.added = true
+        queue.items.Push({ url: request.url, path: requestPath })
+        queue.paths[requestPath] = true
+        while queue.items.Count() > maximum and queue.items.Count() > 0
+            oldest = queue.items.Shift()
+            queue.paths.Delete(oldest.path)
+            result.dropped.Push(oldest.path)
+        end while
+        return result
+    end function
+
+    function popNewest(queue as object) as dynamic
+        if queue.items.Count() = 0 then return invalid
+        newest = queue.items.Pop()
+        queue.paths.Delete(newest.path)
+        return newest
+    end function
+
+    function isText(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "string" or kind = "rostring"
+    end function
+
+end namespace

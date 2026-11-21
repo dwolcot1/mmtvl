@@ -1,0 +1,194 @@
+' The channel menu (M12 step 12; frame "Channel menu", Z3UnCj): a port of LiveTVModel.channelMenu(for:) and
+' perform (IPTV/LiveTVModel.swift:912-1000), LiveMenu.handle (IPTV/LiveMenu.swift) and IPTVLibrary's favorite and
+' hiding edits (IPTV/IPTVLibrary.swift:443-479), as pure functions. No nodes.
+'
+' Rows (MMTVL's order, without what Roku hasn't got or later steps add):
+'   Watch; Add to Favorites / Remove from Favorites; Move Up and Move Down (only from the guide's Favorites group,
+'   for a saved favorite below the team games, lineup.movableFavorites, and only where there is a neighbour);
+'   Hide Channel. Not here: Add to Multiview (Out of scope), the teams' rows (step 18), Match Guide (step 20).
+'
+'   items(context) -> [{ id, title, action }]  context: { channelID, isFavorite, group, movableIDs }
+'     group: the guide's selected group, or "" when the menu opens over the player (no Move Up/Down: the guide
+'     isn't open, MMTVL M7 L5). movableIDs: lineup.movableFavorites' ids, in order.
+'     action: { type: "watch" | "toggleFavorite" | "moveFavorite" | "hideChannel", channelID, step (moveFavorite) }
+'   make(title, subtitle, items, focusedIndex, visibleRows) -> menu { title, subtitle, items, focusedIndex,
+'     firstVisible, visibleRows }: the focused index clamped, the window of visibleRows rows (Theme's
+'     liveMenuVisibleRows, the rows ChannelMenuView draws; at least 1) showing it.
+'   handle(menu, key, press) -> { menu, outcome, action }: LiveMenu.handle. Up/Down move, clamped; Rewind/Fast Forward
+'     and channelup/channeldown by a page (menu.visibleRows, MMTVL's Channel Up/Down); OK chooses the focused row
+'     (outcome "choose", its action); Back and * close (outcome "close"); other keys and releases do nothing
+'     ("none"). The menu takes every key (Back never leaves Live TV, D49).
+'   prefsAfter(prefs, action, movableIDs) -> SettingsStore's prefs after the action (a new object): toggleFavorite
+'     adds the id at the end or removes it; moveFavorite swaps it, in the saved list, with its neighbour step
+'     places away among movableIDs (nothing past either end); hideChannel adds it to hiddenChannels. Other actions
+'     change nothing.
+'   focusAfterMove(items, itemID, index) -> where the menu reopens after Move Up/Down: the same row id if it's
+'     still there, else index, clamped (MMTVL M6b L8).
+'   isFavorite(prefs, id) -> boolean.
+namespace ChannelMenu
+
+    function items(context as object) as object
+        id = context.channelID
+        rows = [ChannelMenu.item("watch", "Watch", { type: "watch", channelID: id })]
+        favoriteTitle = "Add to Favorites"
+        if ChannelMenu.isTrue(context.isFavorite) then favoriteTitle = "Remove from Favorites"
+        rows.Push(ChannelMenu.item("favorite", favoriteTitle, { type: "toggleFavorite", channelID: id }))
+        if ChannelMenu.isText(context.group) and context.group = Lineup.favoritesGroup
+            movable = context.movableIDs
+            if LCase(type(movable)) <> "roarray" then movable = []
+            position = ChannelMenu.indexOf(movable, id)
+            if position >= 0
+                if position > 0 then rows.Push(ChannelMenu.item("moveUp", "Move Up", { type: "moveFavorite", channelID: id, step: -1 }))
+                if position < movable.Count() - 1 then rows.Push(ChannelMenu.item("moveDown", "Move Down", { type: "moveFavorite", channelID: id, step: 1 }))
+            end if
+        end if
+        rows.Push(ChannelMenu.item("hide", "Hide Channel", { type: "hideChannel", channelID: id }))
+        return rows
+    end function
+
+    function make(title as string, subtitle as string, list as object, focusedIndex as integer, visibleRows as integer) as object
+        rowsShown = visibleRows
+        if rowsShown < 1 then rowsShown = 1
+        focused = focusedIndex
+        if focused > list.Count() - 1 then focused = list.Count() - 1
+        if focused < 0 then focused = 0
+        return {
+            title: title,
+            subtitle: subtitle,
+            items: list,
+            focusedIndex: focused,
+            firstVisible: GuideKeys.visibleStart(0, focused, list.Count(), rowsShown),
+            visibleRows: rowsShown
+        }
+    end function
+
+    function handle(menu as object, key as dynamic, press as dynamic) as object
+        result = { menu: menu, outcome: "none", action: invalid }
+        if press <> true or not ChannelMenu.isText(key) then return result
+        count = menu.items.Count()
+        stepSize = 0
+        if key = "up"
+            stepSize = -1
+        else if key = "down"
+            stepSize = 1
+        else if key = "rewind" or key = "channelup"
+            stepSize = -menu.visibleRows
+        else if key = "fastforward" or key = "channeldown"
+            stepSize = menu.visibleRows
+        else if key = "OK"
+            if menu.focusedIndex >= 0 and menu.focusedIndex < count
+                result.outcome = "choose"
+                result.action = menu.items[menu.focusedIndex].action
+            end if
+            return result
+        else if key = "back" or key = "options"
+            result.outcome = "close"
+            return result
+        end if
+        if stepSize = 0 or count = 0 then return result
+        focused = menu.focusedIndex + stepSize
+        if focused < 0 then focused = 0
+        if focused > count - 1 then focused = count - 1
+        moved = {}
+        moved.Append(menu)
+        moved.focusedIndex = focused
+        moved.firstVisible = GuideKeys.visibleStart(menu.firstVisible, focused, count, menu.visibleRows)
+        result.menu = moved
+        return result
+    end function
+
+    function prefsAfter(prefs as dynamic, chosen as dynamic, movable as dynamic) as object
+        result = ChannelMenu.copyPrefs(prefs)
+        if LCase(type(chosen)) <> "roassociativearray" then return result
+        id = chosen.channelID
+        if not ChannelMenu.isText(id) then return result
+        kind = chosen.type
+        if kind = "toggleFavorite"
+            if ChannelMenu.indexOf(result.favorites, id) >= 0
+                kept = []
+                for each favorite in result.favorites
+                    if favorite <> id then kept.Push(favorite)
+                end for
+                result.favorites = kept
+            else
+                result.favorites.Push(id)
+            end if
+        else if kind = "moveFavorite"
+            visible = movable
+            if LCase(type(visible)) <> "roarray" then visible = []
+            position = ChannelMenu.indexOf(visible, id)
+            if position < 0 or not ChannelMenu.isNumber(chosen.step) then return result
+            neighbour = position + chosen.step
+            if neighbour < 0 or neighbour > visible.Count() - 1 then return result
+            fromIndex = ChannelMenu.indexOf(result.favorites, id)
+            target = ChannelMenu.indexOf(result.favorites, visible[neighbour])
+            if fromIndex < 0 or target < 0 then return result
+            swapped = result.favorites[fromIndex]
+            result.favorites[fromIndex] = result.favorites[target]
+            result.favorites[target] = swapped
+        else if kind = "hideChannel"
+            if ChannelMenu.indexOf(result.hiddenChannels, id) < 0 then result.hiddenChannels.Push(id)
+        end if
+        return result
+    end function
+
+    function focusAfterMove(list as object, itemID as string, index as integer) as integer
+        for i = 0 to list.Count() - 1
+            if list[i].id = itemID then return i
+        end for
+        if index > list.Count() - 1 then index = list.Count() - 1
+        if index < 0 then index = 0
+        return index
+    end function
+
+    function isFavorite(prefs as dynamic, id as string) as boolean
+        if LCase(type(prefs)) <> "roassociativearray" then return false
+        if LCase(type(prefs.favorites)) <> "roarray" then return false
+        return ChannelMenu.indexOf(prefs.favorites, id) >= 0
+    end function
+
+    ' A copy of prefs' four lists (each [] when missing), so the caller's prefs never change.
+    function copyPrefs(prefs as dynamic) as object
+        result = {}
+        for each field in ["favorites", "hiddenChannels", "hiddenGroups", "teams"]
+            list = []
+            if LCase(type(prefs)) = "roassociativearray"
+                source = prefs[field]
+                if LCase(type(source)) = "roarray" then list.Append(source)
+            end if
+            result[field] = list
+        end for
+        return result
+    end function
+
+    function item(id as string, title as string, chosen as object) as object
+        return { id: id, title: title, action: chosen }
+    end function
+
+    function indexOf(list as object, value as string) as integer
+        for i = 0 to list.Count() - 1
+            if ChannelMenu.isText(list[i])
+                if list[i] = value then return i
+            end if
+        end for
+        return -1
+    end function
+
+    ' true only for a boolean true (comparing invalid with true is a type mismatch on a Roku).
+    function isTrue(value as dynamic) as boolean
+        kind = LCase(type(value))
+        if kind <> "boolean" and kind <> "roboolean" then return false
+        return value
+    end function
+
+    function isText(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "string" or kind = "rostring"
+    end function
+
+    function isNumber(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "integer" or kind = "roint" or kind = "rointeger" or kind = "longinteger" or kind = "rolonginteger" or kind = "float" or kind = "rofloat" or kind = "double" or kind = "rodouble"
+    end function
+
+end namespace

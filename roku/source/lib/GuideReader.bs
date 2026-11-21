@@ -1,0 +1,166 @@
+' The guide data, read once and shared (M12 step 12; the 2026-11-21 step 11 decision: the guide and the player share
+' one copy). The scene keeps the finished GuideTask as guideHolder (MainScene.xml); its guideData field is
+' GuideFetch.guideData's shape. Reading a node field copies the whole value, so exactly one component reads it: the
+' guide screen, with a reader made here, once per guideRevision. The player is given only its channel's programmes
+' (the guide screen's programmesFor, through the scene). Pure functions, no nodes: the holder is anything with a
+' guideData field (a node on the Roku, an AA in tests). Also the TimeGrid rows' programmes and the guide's info text.
+'
+'   newReader() -> { data, revision, reads }: a reader that has read nothing.
+'   read(reader, holder, revision) -> the guide data: holder.guideData, read only when revision differs from the
+'     revision last read (one plain field get per revision; never MoveFromField, which would empty the holder).
+'     invalid when there is no holder (the reader forgets what it had). reads counts the field gets.
+'   programmesFor(data, channelID) -> the channel's programmes ({ start, stop, title, subtitle?, summary?, ... },
+'     seconds since 1970) or invalid (GuidePipeline.programmesFor on this shape).
+'   gridProgrammes(programmes, windowStart, windowEnd) -> the row TimeGrid gets: [{ index, start, duration, title }]
+'     by start time (stable), only programmes that overlap [windowStart, windowEnd) and last more than 0 s. TimeGrid
+'     needs each programme to end at or before the next starts, so an overlapped programme ends where the next one
+'     starts, and of two that start together the first in the list is kept. index: the programme's place in the list.
+'   contentStart(now) -> the half hour at or before now (TimeGrid's contentStartTime).
+'   maxDays(contentStart, windowEnd) -> whole days from contentStart to windowEnd, at least 1 (TimeGrid's maxDays).
+'   fillRange(row, rowCount) -> { first, last }: the rows whose programmes are loaded around the focused row (a
+'     page above and two below), clamped to the rows there are; last < first when there are none.
+'   minutesLeft(programme, now) -> whole minutes to its end, rounded up (0 once it ended).
+'   timeDetail(rangeText, programme, now) -> "6:00 – 7:00 PM · 40 min left" while it airs, else the range alone.
+namespace GuideReader
+
+    const halfHourSeconds = 1800
+    const daySeconds = 86400
+    const fillBefore = 6
+    const fillAfter = 12
+
+    function newReader() as object
+        return { data: invalid, revision: -1, reads: 0 }
+    end function
+
+    function read(reader as object, holder as dynamic, revision as dynamic) as dynamic
+        if holder = invalid or not GuideReader.isNumber(revision)
+            reader.data = invalid
+            reader.revision = -1
+            return invalid
+        end if
+        if reader.revision <> revision
+            reader.data = holder.guideData
+            reader.revision = revision
+            reader.reads = reader.reads + 1
+        end if
+        return reader.data
+    end function
+
+    function programmesFor(data as dynamic, channelID as dynamic) as dynamic
+        if LCase(type(data)) <> "roassociativearray" or not GuideReader.isText(channelID) then return invalid
+        if LCase(type(data.matches)) <> "roassociativearray" or LCase(type(data.guides)) <> "roarray" then return invalid
+        ref = data.matches[channelID]
+        if LCase(type(ref)) <> "roassociativearray" then return invalid
+        if not GuideReader.isNumber(ref.guide) then return invalid
+        guide = data.guides[ref.guide]
+        if LCase(type(guide)) <> "roassociativearray" then return invalid
+        if LCase(type(guide.programmes)) <> "roassociativearray" then return invalid
+        list = guide.programmes[ref.epgID]
+        if LCase(type(list)) <> "roarray" then return invalid
+        return list
+    end function
+
+    function gridProgrammes(programmes as dynamic, windowStart as dynamic, windowEnd as dynamic) as object
+        result = []
+        if LCase(type(programmes)) <> "roarray" then return result
+        if not GuideReader.isNumber(windowStart) or not GuideReader.isNumber(windowEnd) then return result
+        ' Insertion sort by start: stable, and linear on a guide's usual (already sorted) order.
+        sorted = []
+        for i = 0 to programmes.Count() - 1
+            item = programmes[i]
+            if GuideReader.isProgramme(item)
+                if item.stop > item.start and item.stop > windowStart and item.start < windowEnd
+                    entry = { index: i, start: item.start, stop: item.stop, title: GuideReader.textOf(item.title) }
+                    position = sorted.Count()
+                    while position > 0 and sorted[position - 1].start > entry.start
+                        position = position - 1
+                    end while
+                    GuideReader.insertAt(sorted, position, entry)
+                end if
+            end if
+        end for
+        for each entry in sorted
+            keep = true
+            if result.Count() > 0
+                last = result[result.Count() - 1]
+                if entry.start <= last.start
+                    keep = false
+                else if entry.start < last.start + last.duration
+                    last.duration = entry.start - last.start
+                end if
+            end if
+            if keep then result.Push({ index: entry.index, start: entry.start, duration: entry.stop - entry.start, title: entry.title })
+        end for
+        return result
+    end function
+
+    function contentStart(now as dynamic) as dynamic
+        if not GuideReader.isNumber(now) then return 0
+        return now - (now mod GuideReader.halfHourSeconds)
+    end function
+
+    function maxDays(startTime as dynamic, windowEnd as dynamic) as integer
+        if not GuideReader.isNumber(startTime) or not GuideReader.isNumber(windowEnd) then return 1
+        span = windowEnd - startTime
+        if span <= GuideReader.daySeconds then return 1
+        days = Int(span / GuideReader.daySeconds)
+        if days * GuideReader.daySeconds < span then days = days + 1
+        return days
+    end function
+
+    function fillRange(row as integer, rowCount as integer) as object
+        first = row - GuideReader.fillBefore
+        if first < 0 then first = 0
+        last = row + GuideReader.fillAfter
+        if last > rowCount - 1 then last = rowCount - 1
+        return { first: first, last: last }
+    end function
+
+    function minutesLeft(programme as object, now as dynamic) as integer
+        if not GuideReader.isNumber(now) then return 0
+        seconds = programme.stop - now
+        if seconds <= 0 then return 0
+        minutes = Int(seconds / 60)
+        if minutes * 60 < seconds then minutes = minutes + 1
+        return minutes
+    end function
+
+    function timeDetail(rangeText as string, programme as dynamic, now as dynamic) as string
+        if not GuideReader.isProgramme(programme) or not GuideReader.isNumber(now) then return rangeText
+        if programme.start <= now and now < programme.stop
+            return rangeText + " " + Chr(183) + " " + GuideReader.minutesLeft(programme, now).ToStr() + " min left"
+        end if
+        return rangeText
+    end function
+
+    sub insertAt(list as object, position as integer, item as object)
+        list.Push(item)
+        i = list.Count() - 1
+        while i > position
+            list[i] = list[i - 1]
+            i = i - 1
+        end while
+        list[position] = item
+    end sub
+
+    function isProgramme(value as dynamic) as boolean
+        if LCase(type(value)) <> "roassociativearray" then return false
+        return GuideReader.isNumber(value.start) and GuideReader.isNumber(value.stop)
+    end function
+
+    function textOf(value as dynamic) as string
+        if GuideReader.isText(value) then return value
+        return ""
+    end function
+
+    function isText(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "string" or kind = "rostring"
+    end function
+
+    function isNumber(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "integer" or kind = "roint" or kind = "rointeger" or kind = "longinteger" or kind = "rolonginteger" or kind = "float" or kind = "rofloat" or kind = "double" or kind = "rodouble"
+    end function
+
+end namespace

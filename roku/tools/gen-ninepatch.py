@@ -26,6 +26,7 @@ Colours and sizes come from roku/components/theme/Theme.bs (which maps them to M
 Plain gradients (not 9-patches; a Poster stretches them, loadDisplayMode scaleToFill):
   overlay_bottom    behind the player banner: clear at the top to liveOverlayBottom (black 0.85) at the bottom
   background        behind the guide, Settings and Import: background (0x1C1C1E) at the top to black at the bottom
+  clear             fully transparent (step 12): TimeGrid's time bar and bottom overlay, which the frames don't draw
 """
 import math
 import os
@@ -181,6 +182,7 @@ def main():
         gradient("overlay_bottom", (4, 256), (0, 0, 0, 0), (0, 0, 0, 0xD9)),
         # Theme.bs background 0x1C1C1EFF to backgroundBottom 0x000000FF.
         gradient("background", (4, 256), (0x1C, 0x1C, 0x1E, 0xFF), (0, 0, 0, 0xFF)),
+        gradient("clear", (4, 4), (0, 0, 0, 0), (0, 0, 0, 0)),
     ]
     for suffix, items in ((".9.png", specs), (".png", plain)):
         for name, w, h, rows in items:

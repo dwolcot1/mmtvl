@@ -1,0 +1,102 @@
+' The channel menu's look and keys (fields in ChannelMenuView.xml). Layout from frame Z3UnCj: the panel padded
+' menuPanelPadding; the header's text menuRowPadding in from the rows' edge, the title and the programme line
+' liveMenuHeaderSpacing apart; menuTitleSpacing between the header, the rows and the hint; the panel as tall as its
+' content and centred on the canvas (on the 3-px grid).
+
+sub init()
+    m.theme = Theme.make()
+    colors = m.theme.colors
+    fonts = m.theme.fonts
+    layout = m.theme.layout
+    canvas = m.theme.canvas
+    shade = m.top.findNode("dim")
+    shade.color = colors.menuDim
+    shade.width = canvas.width
+    shade.height = canvas.height
+    m.panel = m.top.findNode("panel")
+    m.panel.uri = m.theme.images.panelSolid
+    m.panel.width = layout.liveMenuWidth
+    m.title = styleLabel("title", fonts.liveMenuTitle, colors.primaryText)
+    m.subtitle = styleLabel("subtitle", fonts.liveMenuValue, colors.secondaryText)
+    m.hint = styleLabel("hint", fonts.settingsHint, colors.secondaryText)
+    m.list = m.top.findNode("list")
+    m.list.visibleRows = layout.liveMenuVisibleRows
+    m.list.rowWidth = layout.liveMenuWidth - 2 * layout.menuPanelPadding
+    m.list.rowHeight = layout.liveMenuRowHeight
+    m.list.textInset = layout.menuRowPadding
+    m.list.fontSpec = fonts.liveMenuRow
+    m.menu = invalid
+end sub
+
+function styleLabel(id as string, spec as object, color as string) as object
+    label = m.top.findNode(id)
+    label.font = Theme.font(spec)
+    label.color = color
+    label.height = Theme.lineHeight(spec)
+    label.vertAlign = "center"
+    label.wrap = false
+    return label
+end function
+
+sub onMenu()
+    menu = m.top.menu
+    if type(menu) <> "roAssociativeArray" then return
+    m.menu = menu
+    layout = m.theme.layout
+    fonts = m.theme.fonts
+    padding = layout.menuPanelPadding
+    textX = padding + layout.menuRowPadding
+    textWidth = layout.liveMenuWidth - 2 * textX
+    y = padding
+    m.title.text = menu.title
+    m.title.width = textWidth
+    m.title.translation = [textX, y]
+    y = y + Theme.lineHeight(fonts.liveMenuTitle)
+    if menu.subtitle <> ""
+        y = y + layout.liveMenuHeaderSpacing
+        m.subtitle.text = menu.subtitle
+        m.subtitle.width = textWidth
+        m.subtitle.translation = [textX, y]
+        m.subtitle.visible = true
+        y = y + Theme.lineHeight(fonts.liveMenuValue)
+    else
+        m.subtitle.visible = false
+    end if
+    y = y + layout.menuTitleSpacing
+    m.list.translation = [padding, y]
+    shown = menu.items.Count()
+    if shown > layout.liveMenuVisibleRows then shown = layout.liveMenuVisibleRows
+    y = y + shown * layout.liveMenuRowHeight + layout.menuTitleSpacing
+    m.hint.translation = [textX, y]
+    m.hint.width = textWidth
+    height = y + Theme.lineHeight(fonts.settingsHint) + padding
+    m.panel.height = height
+    canvas = m.theme.canvas
+    panelTop = Int((canvas.height - height) / 6) * 3
+    m.top.findNode("panelGroup").translation = [Int((canvas.width - layout.liveMenuWidth) / 2), panelTop]
+    showRows()
+end sub
+
+sub showRows()
+    titles = []
+    for each item in m.menu.items
+        titles.Push(item.title)
+    end for
+    m.list.items = titles
+    m.list.firstVisible = m.menu.firstVisible
+    m.list.focusedIndex = m.menu.focusedIndex
+end sub
+
+function onKeyEvent(key as string, press as boolean) as boolean
+    if m.menu = invalid then return true
+    if press then m.top.input = true
+    result = ChannelMenu.handle(m.menu, key, press)
+    m.menu = result.menu
+    showRows()
+    if result.outcome = "choose"
+        m.top.choice = { outcome: "choose", action: result.action }
+    else if result.outcome = "close"
+        m.top.choice = { outcome: "close" }
+    end if
+    return true
+end function

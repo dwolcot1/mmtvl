@@ -53,8 +53,6 @@ sub init()
     m.overlays = PlayerSession.noOverlays()
     m.shown = invalid
     m.errorShown = false
-    m.guideData = invalid
-    m.guideDataRevision = -1
     m.playClock = CreateObject("roTimespan")
     m.waitingForStart = false
 end sub
@@ -156,15 +154,27 @@ end function
 
 sub showError()
     m.errorShown = true
-    m.errorPanel.visible = true
+    m.top.failed = true
+    m.errorPanel.visible = not m.top.preview
 end sub
 
 sub hideError()
     m.errorShown = false
+    m.top.failed = false
     m.errorPanel.visible = false
 end sub
 
 sub onControl()
+    if m.top.control = "showBanner"
+        ' Back to full screen from the guide without a reconnect (MMTVL's showBanner).
+        if m.channel <> invalid then applyOverlay("channel")
+        return
+    end if
+    if m.top.control = "togglePause"
+        if m.channel = invalid or m.errorShown then return
+        if isPaused() then m.video.control = "resume" else m.video.control = "pause"
+        return
+    end if
     if m.top.control <> "stop" then return
     m.video.control = "stop"
     m.channel = invalid
@@ -282,6 +292,8 @@ end sub
 ' while the bar shows behind live. While everything fades out, the last layout stays.
 sub render()
     shown = PlayerSession.visible(m.overlays, isPaused())
+    ' In the guide's preview nothing shows over the video.
+    if m.top.preview then shown = { banner: false, timeshift: false, any: false }
     m.top.timeshiftShown = shown.timeshift
     m.shown = shown
     if shown.timeshift
@@ -369,7 +381,7 @@ end sub
 sub updateBanner()
     if m.channel = invalid then return
     now = CreateObject("roDateTime").AsSeconds()
-    programmes = PlayerSession.programmesFor(currentGuideData(), textOf(m.channel.id))
+    programmes = m.top.programmes
     picked = BannerText.nowNext(programmes, now)
     info = { title: textOf(m.channel.title), logo: textOf(m.channel.logo), nowTitle: "", timeText: "", progress: 0, nextText: "" }
     current = picked.now
@@ -384,25 +396,38 @@ sub updateBanner()
     m.banner.info = info
 end sub
 
-sub onGuideRevision()
-    ' The old copy goes now; the new one is read when the banner next needs it.
-    m.guideData = invalid
+' A new list (a channel change, a new guide): the banner, if it shows.
+sub onProgrammes()
     if m.shown <> invalid
         if m.shown.banner then updateBanner()
     end if
 end sub
 
-' The programmes, read from the holder once per guideRevision (MainScene.xml's rule: one plain field get, kept in
-' this screen's m; never per row, never MoveFromField).
-function currentGuideData() as dynamic
-    holder = m.top.guideHolder
-    if holder = invalid then return invalid
-    if m.guideData = invalid or m.guideDataRevision <> m.top.guideRevision
-        m.guideData = holder.guideData
-        m.guideDataRevision = m.top.guideRevision
+' The cached logo arrived after the channel started.
+sub onLogo()
+    if m.channel = invalid then return
+    m.channel.logo = m.top.logo
+    onProgrammes()
+end sub
+
+' The guide's preview place, or full screen again (the error panel comes back if it was up).
+sub onPreview()
+    canvas = m.theme.canvas
+    if m.top.preview
+        rect = m.theme.layout.guidePreviewRect
+        m.video.translation = [rect.x, rect.y]
+        m.video.width = rect.width
+        m.video.height = rect.height
+        m.errorPanel.visible = false
+        applyOverlay("hideOverlays")
+    else
+        m.video.translation = [0, 0]
+        m.video.width = canvas.width
+        m.video.height = canvas.height
+        m.errorPanel.visible = m.errorShown
+        render()
     end if
-    return m.guideData
-end function
+end sub
 
 ' Local clock parts for BannerText.
 function localParts(seconds as dynamic) as object

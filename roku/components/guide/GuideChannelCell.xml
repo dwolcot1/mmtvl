@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- A channel cell in the guide (M12 step 12): TimeGrid's channelInfoComponentName (frame LMTqH's channel column,
+     MMTVL's GuideView.channelCell). Padded guideChannelCellPadding: the number (guideChannelNumber, secondaryText,
+     right-aligned in guideChannelNumberWidth), the logo (guideLogoSize, the cached file only) and the name
+     (guideChannel), guideChannelCellSpacing apart; without a logo the name moves left (MMTVL). Focused (Left from
+     the grid, channelInfoFocusable): the guide_focus cell with focusedRowText (unverified: whether TimeGrid sets
+     hasFocus on this component, step 15).
+     The content is the row's channel ContentNode (GuideScreen.makeRow): title (the name), shortDescriptionLine1 (the
+     number) and hdSmallIconUrl (a cachefs: logo, set when LogoTask has it; observed, as it can arrive later). -->
+<component name="GuideChannelCell" extends="Group">
+    <interface>
+        <field id="content" type="node" onChange="onContent" />
+        <field id="width" type="float" onChange="layout" />
+        <field id="height" type="float" onChange="layout" />
+        <field id="hasFocus" type="boolean" onChange="onFocus" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
+    <children>
+        <Poster id="focus" visible="false" />
+        <Label id="number" />
+        <Poster id="logo" loadDisplayMode="scaleToFit" visible="false" />
+        <Label id="name" />
+    </children>
+</component>

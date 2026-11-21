@@ -79,7 +79,8 @@ namespace Theme
             "guideCellTime": { "uri": regular, "size": 24 }, ' TimeGrid timeLabelFont (Theme.swift 18)
             "guideChannel": { "uri": regular, "size": 24 }, ' the channel info component's name
             "guideChannelNumber": { "uri": regular, "size": 24 }, ' Theme.swift guideCellTimeFont (18) for the number
-            "guideGroup": { "uri": regular, "size": 27 }, ' Roku-only: the group LabelList (font and focusedFont)
+            "guideGroup": { "uri": regular, "size": 27 }, ' Roku-only: the group column's rows
+            "guideGroupTitle": { "uri": bold, "size": 24 }, ' Roku-only: the selected group's name above the channel column
             "liveMenuTitle": { "uri": bold, "size": 33 },
             "liveMenuRow": { "uri": regular, "size": 30 }, ' Theme.swift settingsRowFont
             "liveMenuValue": { "uri": regular, "size": 24 },
@@ -159,6 +160,21 @@ namespace Theme
             "guideGridLeading": 471,
             "guideGridWidth": 1329,
             "guideGroupPanelWidth": 420,
+            ' Roku-only (step 12, frames LMTqH and lB8XX): the info area's lines are guideInfoSpacing apart; a channel cell
+            ' (TimeGrid's channel info component) is padded guideChannelCellPadding with guideChannelCellSpacing between
+            ' the number, the logo and the name; the group name and "‹ Groups" guideGroupLabelSpacing apart above the
+            ' channel column; the key hint's top at guideHintTop. The group column: a panel_solid at guideGroupPanelOrigin,
+            ' guideGroupPanelPadding inside, guideGroupVisibleRows rows of guideGroupRowHeight, text inset menuRowPadding.
+            "guideInfoSpacing": 12,
+            "guideChannelCellPadding": 9,
+            "guideChannelCellSpacing": 12,
+            "guideGroupLabelSpacing": 12,
+            "guideHintTop": 1017,
+            "guideGroupPanelOrigin": { "x": 60, "y": 441 },
+            "guideGroupPanelPadding": 21,
+            "guideGroupVisibleRows": 8,
+            "guideInfoTitleMaxLines": 2, ' MMTVL's lineLimit(2)
+            "guideInfoDescriptionMaxLines": 4, ' MMTVL's lineLimit(4)
             "guideGroupRowHeight": 63, ' Roku-only: the group LabelList itemSize height (Theme.swift guideRowHeight - 16, on 3 px)
             "guideLogoSize": 48,
             "guideChannelNumberWidth": 51,
@@ -175,6 +191,7 @@ namespace Theme
             "menuPanelPadding": 33,
             "menuTitleSpacing": 15,
             "menuRowPadding": 21,
+            "liveMenuHeaderSpacing": 3, ' Roku-only (frame Z3UnCj): between the channel menu's title and its programme line
             ' Search (Theme.swift search*): Roku's DynamicMiniKeyboard on the left, results on the right.
             "searchTitleTop": 81,
             "searchKeyboardOrigin": { "x": 120, "y": 201 },
@@ -224,6 +241,9 @@ namespace Theme
             "guideFocus": "pkg:/images/guide_focus.9.png", ' TimeGrid focusBitmapUri, variant A (filled)
             "guideFocusRing": "pkg:/images/guide_focus_ring.9.png", ' TimeGrid focusBitmapUri, variant B (ring)
             "bar": "pkg:/images/bar.9.png", ' progress bar and track (blendColor); also TimeGrid nowBarBitmapUri
+            ' Fully transparent (step 12): TimeGrid's time bar background and bottom overlay, which the frames don't draw
+            ' (an empty uri would keep Roku's default bitmaps).
+            "clear": "pkg:/images/clear.png",
             ' Plain gradients, stretched by a Poster (loadDisplayMode scaleToFill).
             "overlayBottom": "pkg:/images/overlay_bottom.png", ' behind the player banner (liveOverlayBottom)
             "background": "pkg:/images/background.png", ' behind the guide, Settings, Import (background to black)

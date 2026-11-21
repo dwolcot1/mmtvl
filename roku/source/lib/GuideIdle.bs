@@ -1,0 +1,50 @@
+' The return to the video after a while without input (M12 step 12, D51; MMTVL's LiveTVModel.restartGuideIdle and
+' returnToVideo, IPTV/LiveTVModel.swift:695-750). Pure functions, no nodes: the scene notes when input last came
+' (any key or focus move in the guide or the channel menu, and opening the guide), runs a one-shot timer of
+' Theme's timing.guideIdleReturn (180 s) from it, and when the timer fires asks these what to do.
+'
+'   isDue(lastInputAt, now, limitSeconds) -> true when at least limitSeconds have passed since lastInputAt (both
+'     UpTime seconds); false when either isn't a number (no input noted yet: nothing is due).
+'   outcome(context) -> { closeMenu, returnToChannel, changed }
+'     context { screen ("player", "guide", or another screen), menuOpen, isPlaying }
+'     MMTVL's returnToVideo: only in Live TV (the player or the guide) and only while a channel plays (paused counts;
+'     a failed or stopped one doesn't: it never starts a play, and still screens are the idle dimmer's). Then an
+'     open channel menu closes, and the guide goes back to the playing channel full screen, without a reconnect.
+'     changed: something happened (MMTVL logs only then).
+namespace GuideIdle
+
+    function isDue(lastInputAt as dynamic, now as dynamic, limitSeconds as dynamic) as boolean
+        if not GuideIdle.isNumber(lastInputAt) or not GuideIdle.isNumber(now) or not GuideIdle.isNumber(limitSeconds) then return false
+        return now - lastInputAt >= limitSeconds
+    end function
+
+    function outcome(context as dynamic) as object
+        result = { closeMenu: false, returnToChannel: false, changed: false }
+        if LCase(type(context)) <> "roassociativearray" then return result
+        screen = context.screen
+        if not GuideIdle.isText(screen) then return result
+        if screen <> "player" and screen <> "guide" then return result
+        if not GuideIdle.isTrue(context.isPlaying) then return result
+        result.closeMenu = GuideIdle.isTrue(context.menuOpen)
+        result.returnToChannel = screen = "guide"
+        result.changed = result.closeMenu or result.returnToChannel
+        return result
+    end function
+
+    function isTrue(value as dynamic) as boolean
+        kind = LCase(type(value))
+        if kind <> "boolean" and kind <> "roboolean" then return false
+        return value
+    end function
+
+    function isText(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "string" or kind = "rostring"
+    end function
+
+    function isNumber(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "integer" or kind = "roint" or kind = "rointeger" or kind = "longinteger" or kind = "rolonginteger" or kind = "float" or kind = "rofloat" or kind = "double" or kind = "rodouble"
+    end function
+
+end namespace
