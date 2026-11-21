@@ -123,6 +123,20 @@ namespace Theme
             "liveBannerProgressWidth": 321,
             "liveBannerProgressGap": 21, ' between the time range and the progress track (Theme.swift 20, on 3 px)
             "liveOverlayHeight": 561, ' the overlay_bottom gradient behind the banner, from the bottom of the screen
+            ' The timeshift bar (step 11b; MMTVL's TimeshiftBarView, M7m L15): on the banner panel, under Banner A when
+            ' both show (liveBannerBarGap) or alone; the track spans the panel's width (the pause buffer), bar.9.png
+            ' tinted tileFill, then focusHighlight, then primaryText to the playhead (at least liveBarHeight wide).
+            ' Under it: the paused symbol, "LIVE" or "−m:ss", and the key hint at the right (liveBannerDetail).
+            "liveBannerBarGap": 24, ' Theme.swift: the VStack spacing between the banner and the bar
+            "timeshiftBarSpacing": 15, ' track to the label row (Theme.swift 16, on 3 px)
+            "timeshiftRowSpacing": 15, ' symbol, label (Theme.swift 16, on 3 px)
+            "timeshiftPauseSymbolSize": 24,
+            "liveOverlayTopPadding": 120, ' the gradient starts this far above the panel (Theme.swift .padding(.top, 120))
+            ' The behind-live badge: top right, timeshiftBadgeTop from the top, sideMargin from the right; a badge_banner
+            ' capsule around "−m:ss" (liveBannerDetail), padding 15 x 9 (Theme.swift 16 x 8, on 3 px).
+            "timeshiftBadgeTop": 60,
+            "timeshiftBadgeHeight": 48,
+            "timeshiftBadgeHorizontalPadding": 15,
             "errorPanelPadding": 60,
             "errorPanelSymbolSize": 72, ' Theme.swift tileSymbolSize
             "errorPanelSpacing": 21, ' between the symbol, the message and the hint (Theme.swift 20, on 3 px)
@@ -215,14 +229,16 @@ namespace Theme
             "overlayBottom": "pkg:/images/overlay_bottom.png", ' behind the player banner (liveOverlayBottom)
             "background": "pkg:/images/background.png", ' behind the guide, Settings, Import (background to black)
             ' Icons (roku/tools/gen-icons.py): white glyphs on transparent, tinted with Poster blendColor.
-            "iconWarning": "pkg:/images/icon_warning.png" ' the error panel's symbol (errorPanelSymbolSize, secondaryText)
+            "iconWarning": "pkg:/images/icon_warning.png", ' the error panel's symbol (errorPanelSymbolSize, secondaryText)
+            "iconPause": "pkg:/images/icon_pause.png", ' the timeshift bar's paused symbol (timeshiftPauseSymbolSize)
+            "behindLiveBadge": "pkg:/images/badge_banner.9.png" ' the behind-live badge's capsule (banner role)
         }
     end function
 
     ' Seconds.
     function timing() as object
         return {
-            "bannerDuration": 5, ' the banner hides 5 s after a change or OK (step 11)
+            "bannerDuration": 5, ' the banner hides 5 s after a change or OK (step 11); the bar 5 s after a skip
             "pausedOverlayDuration": 15, ' D51
             "guideIdleReturn": 180, ' D51
             "menuFade": 0.2, ' Theme.swift menuFadeAnimation

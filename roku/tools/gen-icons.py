@@ -7,6 +7,9 @@ to its size on the 1920 x 1080 canvas. A Poster tints it with blendColor (Theme.
 
   icon_warning   72 x 72 (Theme.bs layout errorPanelSymbolSize): the error panel's warning sign, a rounded
                  triangle with an exclamation mark; tinted secondaryText (frame "Error panel", LsUbW)
+  icon_pause     24 x 24 (Theme.bs layout timeshiftPauseSymbolSize): the timeshift bar's paused symbol, MMTVL's
+                 SF Symbol pause.fill (two filled, slightly rounded bars); tinted primaryText (frame "Timeshift:
+                 paused")
 """
 import math
 import os
@@ -66,6 +69,18 @@ def warning(units_x, units_y):
     return math.hypot(units_x - 12.0, units_y - 17.0) <= half
 
 
+def rounded_rect(units_x, units_y, x0, y0, x1, y1, radius):
+    cx = min(max(units_x, x0 + radius), x1 - radius)
+    cy = min(max(units_y, y0 + radius), y1 - radius)
+    return x0 <= units_x <= x1 and y0 <= units_y <= y1 and math.hypot(units_x - cx, units_y - cy) <= radius
+
+
+def pause(units_x, units_y):
+    """True where the 24-unit point is inked: two filled bars, 4 wide and 16 high, 4 apart, corner radius 1."""
+    return (rounded_rect(units_x, units_y, 6.0, 4.0, 10.0, 20.0, 1.0)
+            or rounded_rect(units_x, units_y, 14.0, 4.0, 18.0, 20.0, 1.0))
+
+
 def icon(name, size, shape):
     rows = []
     scale = 24.0 / size
@@ -84,7 +99,7 @@ def icon(name, size, shape):
 
 def main():
     images = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "images")
-    for name, w, h, rows in [icon("icon_warning", 72, warning)]:
+    for name, w, h, rows in [icon("icon_warning", 72, warning), icon("icon_pause", 24, pause)]:
         path = os.path.join(images, name + ".png")
         png(path, w, h, rows)
         print(f"{name}.png {w}x{h} {os.path.getsize(path)} bytes")
