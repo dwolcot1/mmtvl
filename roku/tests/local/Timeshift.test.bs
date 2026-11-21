@@ -1,0 +1,68 @@
+' Timeshift (M12 step 11b): MMTVLTests/TimeshiftTests.swift's cases that apply on a Roku (parsesSpikeSample,
+' nearCacheEndIsLive, longLabels; the mpv JSON parsing, seek targets and LiveEdgeSmoother don't: Roku gives the
+' pause buffer as numbers, PlayerKeys.seekTarget clamps the skips, and there's no smoother), over the pause buffer
+' with the Roku's 30 s slack, plus the bar's playhead fill and the missing-field case. Off-device.
+namespace TimeshiftTests
+
+    ' The spike's numbers (buffer 0...92.053667, position 18.1): 92.05 - 18.1 - 30 = 43.95 behind ("−0:44").
+    sub test_theSpikeSampleOverThePauseBuffer(t as object)
+        state = Timeshift.make(18.1, 0, 92.053667)
+        t.assertEqual(state.rangeStart, 0)
+        t.assertTrue(Abs(state.behindLive - 43.953667) < 0.01, "behind live")
+        t.assertFalse(state.isLive)
+        t.assertEqual(state.label, Chr(8722) + "0:44")
+        t.assertTrue(Abs(state.buffered - 92.05) < 0.01, "buffered")
+        t.assertTrue(Abs(state.fraction - 18.1 / 92.053667) < 0.0001, "playhead")
+    end sub
+
+    sub test_nearTheEndIsLive(t as object)
+        state = Timeshift.make(78, 0, 92.053667)
+        t.assertTrue(state.isLive)
+        t.assertEqual(state.label, "LIVE")
+        t.assertEqual(state.behindLive, 0)
+    end sub
+
+    ' As far forward as Fast Forward goes (PlayerKeys.seekTarget: 30 s from the edge) reads live; a second more doesn't.
+    sub test_theSlackIsTheRokusLiveMargin(t as object)
+        t.assertEqual(Timeshift.liveSlackSeconds(), PlayerKeys.liveEdgeMarginSeconds)
+        edge = PlayerKeys.seekTarget(50, 1000, 0, 100)
+        t.assertTrue(Timeshift.make(edge, 0, 100).isLive, "the furthest skip")
+        t.assertTrue(Timeshift.make(69.5, 0, 100).isLive, "half a second behind")
+        t.assertFalse(Timeshift.make(69, 0, 100).isLive, "a second behind")
+        t.assertEqual(Timeshift.make(69, 0, 100).label, Chr(8722) + "0:01")
+    end sub
+
+    sub test_longLabels(t as object)
+        state = Timeshift.make(0, 0, 3725 + Timeshift.liveSlackSeconds())
+        t.assertEqual(state.label, Chr(8722) + "1:02:05")
+        t.assertEqual(Timeshift.make(0, 0, 600 + Timeshift.liveSlackSeconds()).label, Chr(8722) + "10:00")
+    end sub
+
+    sub test_thePlayheadIsClampedAndAnEmptyBufferIsFull(t as object)
+        t.assertEqual(Timeshift.make(-5, 0, 100).fraction, 0)
+        t.assertEqual(Timeshift.make(150, 0, 100).fraction, 1)
+        t.assertEqual(Timeshift.make(10, 10, 10).fraction, 1, "nothing buffered: MMTVL's playhead at the end")
+        t.assertEqual(Timeshift.make(10, 20, 10).buffered, 0, "a reversed buffer")
+    end sub
+
+    ' The frames: the 1614-px track holds an 888-px fill at 55 %.
+    sub test_theFillWidth(t as object)
+        t.assertEqual(Timeshift.view(55, 0, 100, 1614, 9), { label: Chr(8722) + "0:15", isLive: false, fillWidth: 888 })
+        t.assertEqual(Timeshift.view(0, 0, 100, 1614, 9).fillWidth, 9, "at least the bar's height")
+        t.assertEqual(Timeshift.view(100, 0, 100, 1614, 9).fillWidth, 1614, "at the end")
+    end sub
+
+    ' pauseBufferStart/End are unverified on a device: without numbers the bar says LIVE, with no badge and no fill.
+    sub test_missingBufferFieldsShowLiveWithNoFill(t as object)
+        for each inputs in [[invalid, 0, 100], [50, invalid, 100], [50, 0, invalid], ["50", 0, 100]]
+            t.assertInvalid(Timeshift.make(inputs[0], inputs[1], inputs[2]), FormatJson(inputs))
+            t.assertEqual(Timeshift.view(inputs[0], inputs[1], inputs[2], 1614, 9), { label: "LIVE", isLive: true, fillWidth: 0 }, FormatJson(inputs))
+        end for
+    end sub
+
+    ' The frames' hint (MMTVL's says Left/Right 10 s, Rewind/FF 30 s; the Roku skips 10 s on Rewind/Fast Forward).
+    sub test_theHint(t as object)
+        t.assertEqual(Timeshift.hint, "Rewind/Fast Forward: 10 s " + Chr(183) + " Play/Pause")
+    end sub
+
+end namespace

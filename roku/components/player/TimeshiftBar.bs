@@ -1,0 +1,67 @@
+' The timeshift bar (fields in TimeshiftBar.xml). Layout as the frames: the track at (0, 0), liveBarHeight high and
+' contentWidth wide; the label row timeshiftBarSpacing below it, one liveBannerDetail line high: the paused symbol
+' (timeshiftPauseSymbolSize, centred on the line), then the label timeshiftRowSpacing after it (at 0 when playing),
+' and the hint right-aligned to the track's end.
+
+sub init()
+    m.theme = Theme.make()
+    colors = m.theme.colors
+    layout = m.theme.layout
+    images = m.theme.images
+    spec = m.theme.fonts.liveBannerDetail
+    m.lineHeight = Theme.lineHeight(spec)
+    m.rowY = layout.liveBarHeight + layout.timeshiftBarSpacing
+    for each part in [["track", colors.tileFill], ["buffered", colors.focusHighlight], ["playhead", colors.primaryText]]
+        poster = m.top.findNode(part[0])
+        poster.uri = images.bar
+        poster.blendColor = part[1]
+        poster.height = layout.liveBarHeight
+    end for
+    symbol = m.top.findNode("pauseSymbol")
+    symbol.uri = images.iconPause
+    symbol.blendColor = colors.primaryText
+    symbol.width = layout.timeshiftPauseSymbolSize
+    symbol.height = layout.timeshiftPauseSymbolSize
+    symbol.translation = [0, m.rowY + Int((m.lineHeight - layout.timeshiftPauseSymbolSize) / 2)]
+    styleLabel(m.top.findNode("label"), spec, colors.primaryText)
+    hint = m.top.findNode("hint")
+    styleLabel(hint, spec, colors.secondaryText)
+    hint.text = Timeshift.hint
+    hint.horizAlign = "right"
+    m.top.contentHeight = m.rowY + m.lineHeight
+    layoutBar()
+end sub
+
+sub styleLabel(label as object, spec as object, color as string)
+    label.font = Theme.font(spec)
+    label.color = color
+    label.height = m.lineHeight
+    label.vertAlign = "center"
+    label.wrap = false
+end sub
+
+sub layoutBar()
+    if m.theme = invalid then return
+    layout = m.theme.layout
+    width = m.top.contentWidth
+    info = m.top.info
+    if type(info) <> "roAssociativeArray" then info = {}
+    m.top.findNode("track").width = width
+    m.top.findNode("buffered").width = width
+    playhead = m.top.findNode("playhead")
+    fillWidth = 0
+    if Refresh.isNumber(info.fillWidth) then fillWidth = info.fillWidth
+    playhead.width = fillWidth
+    playhead.visible = fillWidth > 0
+    paused = PlayerSession.isTrue(info.paused)
+    m.top.findNode("pauseSymbol").visible = paused
+    labelX = 0
+    if paused then labelX = layout.timeshiftPauseSymbolSize + layout.timeshiftRowSpacing
+    label = m.top.findNode("label")
+    label.text = Timeshift.live
+    if type(info.label) = "roString" or type(info.label) = "String" then label.text = info.label
+    label.translation = [labelX, m.rowY]
+    hint = m.top.findNode("hint")
+    hint.width = width
+    hint.translation = [0, m.rowY]
+end sub

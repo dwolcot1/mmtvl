@@ -91,7 +91,7 @@ namespace PlayerSession
         result = PlayerSession.noOverlays()
         if LCase(type(overlays)) = "roassociativearray"
             for each field in ["banner", "bar", "paused"]
-                if overlays[field] = true then result[field] = true
+                if PlayerSession.isTrue(overlays[field]) then result[field] = true
             end for
         end if
         timers = { banner: "", bar: "", paused: "" }
@@ -124,13 +124,20 @@ namespace PlayerSession
 
     function visible(overlays as dynamic, paused as boolean) as object
         state = PlayerSession.apply(overlays, "").overlays
-        timeshift = state.bar or (paused and state.paused)
-        return { banner: state.banner, timeshift: timeshift, any: state.banner or timeshift }
+        barShown = state.bar or (paused and state.paused)
+        return { banner: state.banner, timeshift: barShown, any: state.banner or barShown }
     end function
 
     function isText(value as dynamic) as boolean
         kind = LCase(type(value))
         return kind = "string" or kind = "rostring"
+    end function
+
+    ' true only for a boolean true (comparing invalid with true is a type mismatch on a Roku).
+    function isTrue(value as dynamic) as boolean
+        kind = LCase(type(value))
+        if kind <> "boolean" and kind <> "roboolean" then return false
+        return value
     end function
 
 end namespace

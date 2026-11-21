@@ -60,6 +60,27 @@ namespace LowMemoryNoticeTests
         end for
     end sub
 
+    ' Step 11b (orchestrator, 2026-11-21): Back answers OK, from either button, so the notice is dismissed for good.
+    sub test_backAnswersOK(t as object)
+        t.assertEqual(LowMemoryNotice.handleKey("back", 0), { focused: 0, choice: "ok" })
+        t.assertEqual(LowMemoryNotice.handleKey("back", 1), { focused: 1, choice: "ok" }, "with Open Settings focused")
+        answered = LowMemoryNotice.dismissedState(SettingsStore.defaultValue("state"))
+        t.assertFalse(LowMemoryNotice.shouldShow({ deviceClass: "Low" }, answered, SettingsStore.defaultSettings()), "never again")
+    end sub
+
+    sub test_leftRightMoveAndOKPicksTheFocusedButton(t as object)
+        t.assertEqual(LowMemoryNotice.buttons(), ["ok", "openSettings"])
+        t.assertEqual(LowMemoryNotice.handleKey("right", 0), { focused: 1, choice: "" })
+        t.assertEqual(LowMemoryNotice.handleKey("right", 1), { focused: 1, choice: "" }, "stops at the end")
+        t.assertEqual(LowMemoryNotice.handleKey("left", 1), { focused: 0, choice: "" })
+        t.assertEqual(LowMemoryNotice.handleKey("left", 0), { focused: 0, choice: "" }, "stops at the start")
+        t.assertEqual(LowMemoryNotice.handleKey("OK", 0), { focused: 0, choice: "ok" })
+        t.assertEqual(LowMemoryNotice.handleKey("OK", 1), { focused: 1, choice: "openSettings" })
+        for each key in ["up", "down", "options", "play", "replay"]
+            t.assertEqual(LowMemoryNotice.handleKey(key, 1), { focused: 1, choice: "" }, key)
+        end for
+    end sub
+
     ' The frame's wording.
     sub test_theText(t as object)
         t.assertEqual(LowMemoryNotice.title, "This Roku has limited memory")

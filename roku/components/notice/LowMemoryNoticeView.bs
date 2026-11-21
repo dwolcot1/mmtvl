@@ -17,7 +17,6 @@ sub init()
     styleLabel(m.top.findNode("title"), fonts.settingsTitle, colors.primaryText, LowMemoryNotice.title)
     styleLabel(m.top.findNode("body"), fonts.settingsDescription, colors.secondaryText, LowMemoryNotice.body)
     styleLabel(m.top.findNode("footnote"), fonts.settingsHint, colors.secondaryText, LowMemoryNotice.footnote)
-    m.buttonIDs = ["ok", "openSettings"]
     m.focusedButton = 0
     m.answered = false
     buildButtons()
@@ -131,18 +130,18 @@ sub layoutNotice()
     m.top.findNode("panelGroup").translation = [Int((canvas.width - width) / 6) * 3, Int((canvas.height - height) / 6) * 3]
 end sub
 
-' Every key is the notice's while it shows (the screen underneath gets none; Back never leaves, D49).
+' Every key is the notice's while it shows (the screen underneath gets none; Back never leaves, D49). Keys as
+' LowMemoryNotice.handleKey: Back answers OK.
 function onKeyEvent(key as string, press as boolean) as boolean
     if not press or m.answered then return true
-    if key = "left" and m.focusedButton > 0
-        m.focusedButton = m.focusedButton - 1
+    result = LowMemoryNotice.handleKey(key, m.focusedButton)
+    if result.focused <> m.focusedButton
+        m.focusedButton = result.focused
         showFocus()
-    else if key = "right" and m.focusedButton < m.buttonIDs.Count() - 1
-        m.focusedButton = m.focusedButton + 1
-        showFocus()
-    else if key = "OK"
+    end if
+    if result.choice <> ""
         m.answered = true
-        m.top.choice = m.buttonIDs[m.focusedButton]
+        m.top.choice = result.choice
     end if
     return true
 end function

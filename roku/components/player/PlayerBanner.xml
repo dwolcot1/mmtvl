@@ -1,19 +1,22 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <!-- Banner A (M12 step 11; frame "Banner A", tpzUV, chosen 2026-11-21): the channel, its logo, now and next with the
-     time range and progress, on the banner-role glass panel (panel_banner.9.png) that spans the screen inside
-     sideMargin, liveBannerBottom above the bottom. Set info; the banner lays itself out and places itself. Sizes,
-     colours and fonts come from Theme.bs. MMTVL's LiveBannerView (IPTV/LiveTVView.swift). -->
+     time range and progress. Step 11b: the content only, laid out from its own origin, contentWidth wide; the player
+     screen puts it on the banner-role panel it shares with the timeshift bar (frame qDm9F) and reads contentHeight.
+     Sizes, colours and fonts come from Theme.bs. MMTVL's LiveBannerView (IPTV/LiveTVView.swift). -->
 <component name="PlayerBanner" extends="Group">
     <interface>
         <!-- { title, logo, nowTitle, timeText, progress, nextText }: title "<number>  <name>"; logo a URL or "";
              nowTitle "" when there's no programme (the banner then says BannerText.noProgramme); timeText the
              range; progress 0...1; nextText "" for none. -->
         <field id="info" type="assocarray" onChange="onInfo" />
+        <!-- In: the width the text may use (the panel's inner width). -->
+        <field id="contentWidth" type="integer" value="0" />
+        <!-- Out: the height of the laid-out content (at least the logo's when there is one). -->
+        <field id="contentHeight" type="integer" value="0" />
     </interface>
     <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/BannerText.bs" />
     <children>
-        <Poster id="panel" />
         <Poster id="logo" loadDisplayMode="scaleToFit" />
         <Label id="title" />
         <Label id="now" />

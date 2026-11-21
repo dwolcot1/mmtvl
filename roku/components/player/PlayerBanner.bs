@@ -1,8 +1,8 @@
-' Banner A (fields in PlayerBanner.xml). The layout as the frame: logo liveBannerLogoSize at the panel's padding, the
-' text column liveBannerLogoGap to its right (at the padding without a logo), lines liveBannerSpacing apart, the
-' progress track liveBannerProgressGap after the time range and centred on its line. The panel's height follows its
-' lines (MMTVL's banner sizes to its content), at least the logo's; its bottom stays liveBannerBottom above the
-' screen's bottom.
+' Banner A (fields in PlayerBanner.xml). The layout as the frame, from the content's origin: logo
+' liveBannerLogoSize at (0, 0), the text column liveBannerLogoGap to its right (at 0 without a logo), lines
+' liveBannerSpacing apart, the progress track liveBannerProgressGap after the time range and centred on its line.
+' contentHeight follows the lines (MMTVL's banner sizes to its content), at least the logo's; the player screen
+' sizes and places the panel (step 11b).
 
 sub init()
     m.theme = Theme.make()
@@ -10,8 +10,6 @@ sub init()
     fonts = m.theme.fonts
     images = m.theme.images
     layout = m.theme.layout
-    m.panelWidth = m.theme.canvas.width - 2 * layout.sideMargin
-    m.top.findNode("panel").uri = images.bannerPanel
     styleLabel("title", fonts.liveBannerTitle, colors.primaryText)
     styleLabel("now", fonts.liveBannerProgramme, colors.primaryText)
     styleLabel("time", fonts.liveBannerDetail, colors.secondaryText)
@@ -19,7 +17,7 @@ sub init()
     logo = m.top.findNode("logo")
     logo.width = layout.liveBannerLogoSize
     logo.height = layout.liveBannerLogoSize
-    logo.translation = [layout.liveBannerPadding, layout.liveBannerPadding]
+    logo.translation = [0, 0]
     track = m.top.findNode("track")
     track.uri = images.bar
     track.blendColor = colors.shelfProgressTrack
@@ -45,22 +43,21 @@ sub onInfo()
     if type(info) <> "roAssociativeArray" then return
     layout = m.theme.layout
     fonts = m.theme.fonts
-    padding = layout.liveBannerPadding
     spacing = layout.liveBannerSpacing
 
     logo = m.top.findNode("logo")
-    textX = padding
+    textX = 0
     if isFilled(info.logo)
         logo.uri = info.logo
         logo.visible = true
-        textX = padding + layout.liveBannerLogoSize + layout.liveBannerLogoGap
+        textX = layout.liveBannerLogoSize + layout.liveBannerLogoGap
     else
         logo.visible = false
         logo.uri = ""
     end if
-    textWidth = m.panelWidth - textX - padding
+    textWidth = m.top.contentWidth - textX
 
-    y = padding
+    y = 0
     y = placeLine("title", textOf(info.title), textX, y, textWidth)
     nowLabel = m.top.findNode("now")
     timeLabel = m.top.findNode("time")
@@ -103,12 +100,9 @@ sub onInfo()
         nextLabel.visible = false
     end if
 
-    height = y + padding
-    if logo.visible and height < 2 * padding + layout.liveBannerLogoSize then height = 2 * padding + layout.liveBannerLogoSize
-    panel = m.top.findNode("panel")
-    panel.width = m.panelWidth
-    panel.height = height
-    m.top.translation = [layout.sideMargin, m.theme.canvas.height - layout.liveBannerBottom - height]
+    height = y
+    if logo.visible and height < layout.liveBannerLogoSize then height = layout.liveBannerLogoSize
+    m.top.contentHeight = height
 end sub
 
 ' Puts a one-line label at (x, y) and returns the y under it.
