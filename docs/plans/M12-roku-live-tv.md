@@ -332,7 +332,7 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
   - Then write `roku/components/theme/Theme.bs` (colors, fonts, sizes) and the 9-patch images.
   - **The user picks** before steps 11–13 build the screens.
   - Done when: the user has approved a frame for each screen, and `Theme.bs` builds.
-- [ ] **11. Player** `[implementer]`, files: `roku/components/player/**`, `MainScene`
+- [x] **11. Player** `[implementer]`, files: `roku/components/player/**`, `MainScene`
   - L4 player keys.
   - The banner shows on a channel change and on OK, and hides after 5 s.
   - Paused overlays fade after 15 s (D51).
