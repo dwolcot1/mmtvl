@@ -10,7 +10,7 @@
 ## Next session starts here
 
 - **Phase 0 (PR #1)** and **phase 1 (PR #2, stacked on PR #1)** are done off-device. Steps 1, 4 and every device check wait for the remote tester's Roku. The probe build is `cd roku && npm run build` → `roku/out/mmtvl-live-tv.zip`. **Ask the user before sending it.**
-- **Phase 2 (UI) in progress** on branch `m12-phase2` (worktree `.claude/worktrees/step9`; pushed to origin with `m12-step12-wip`, no PR yet; its PR will stack on PR #2). Done and QA-passed: **step 10** (frames in `design/roku-live-tv.pen`), **step 11** (player, Banner A, error panel, low-memory notice) and **step 11b** (timeshift bar); `test:local` 383 passed at f853d96. **Next: step 12 (guide).** A first attempt was stopped partway through (2026-11-21, session time limit) and parked on local branch **`m12-step12-wip`** (be9b21d, one commit on f853d96). It has the guide components, `LogoTask`, and the pure logic `GuideReader` (one shared copy of the guide data), `ChannelMenu`, `GuideIdle` and `LogoCache` with tests. It was **interrupted mid-rewrite of `MainScene.bs`**, so it's untested and may not build. Start step 12 by reviewing that branch: keep what passes the gates, then finish it. Step 12's obligations from the earlier entries are listed in the 2026-11-21 step 11 entry. Pencil: open `design/roku-live-tv.pen` in Pen first (Pencil writes only to the document in front; the project-local MCP points at Pen desktop).
+- **Phase 2 (UI) in progress** on branch `m12-step12` (worktree `.claude/worktrees/step9`, cut from `m12-phase2`; not pushed yet; the phase's PR will stack on PR #2). Done and QA-passed: **step 10** (frames in `design/roku-live-tv.pen`), **step 11** (player, Banner A, error panel, low-memory notice), **step 11b** (timeshift bar) and **step 12** (guide, channel menu, logos, idle return; `test:local` 427 passed at 307d275). The parked `m12-step12-wip` branch (local and origin) is superseded by 307d275 and can be deleted. **Next: step 13 (Settings)**, built to the approved Settings frames (2026-11-21 step 10 entry), replacing MainScene's `settingsPlaceholder`; see the step 9 entry's "For step 13" note. Pencil: open `design/roku-live-tv.pen` in Pen first (Pencil writes only to the document in front; the project-local MCP points at Pen desktop).
 - Gates for every Roku step: `cd roku && npm run build && npm run lint && npm run test:local` (264 passed at the end of phase 1), plus `npm run build:release`. No simulator runs with network access. Use a separate git worktree for parallel steps (`git worktree add -b m12-stepN .claude/worktrees/stepN <commit>`); the built-in isolation started from the wrong commit.
 
 ## Goal
@@ -340,7 +340,7 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
   - Keep the last channel and recents (10) in `state`.
   - At launch, open the last channel full screen if there is one, else the guide.
   - Done when: `PlayerKeyTests` (a key-to-action table: zap direction, Replay, Back states) pass, and with a device, zapping and Back show as L4 says.
-- [ ] **12. Guide** `[implementer]`, files: `roku/components/guide/**`
+- [x] **12. Guide** `[implementer]`, files: `roku/components/guide/**`
   - L3 and L4 guide keys.
   - TimeGrid fed lazily, per visible channel, from the GuideTask results; "No guide" rows for unmatched channels.
   - Channel logos through `LogoTask` (cachefs, off on low devices).
@@ -616,3 +616,47 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
 - **2026-11-21, step 11b (built; QA PASS).** `Timeshift.bs` is a port of MMTVL's `Timeshift`: the track is `pauseBufferStart`→`pauseBufferEnd`, and the labels read "LIVE", "−m:ss" or "−h:mm:ss". New `TimeshiftBar`. The player owns one banner panel for Banner A and the bar, and the behind-live badge sits top right. Back on the low-memory notice answers OK. `test:local`: 383 passed.
   - **Decisions:** the gradient always starts 120 px above the panel (MMTVL's rule), so it's shorter behind Banner A alone than in frame tpzUV. "Live" uses Roku's 30 s live-edge margin (`PlayerKeys.liveEdgeMarginSeconds`), not MMTVL's 15 s. Missing `pauseBuffer*` fields show "LIVE", with no fill and no badge.
   - **Device checks (step 15):** what `pauseBufferStart`, `pauseBufferEnd` and `position` hold, and whether they update while paused (both 0 would fill the whole track); how close to `pauseBufferEnd` a Roku plays; the U+2212 glyph; badge widths; the fades; and the 720p bar.
+- **2026-11-21, step 12 (built; QA PASS after two fix rounds).** Added `GuideScreen` (a MenuListView group column and TimeGrid, with `GuideChannelCell` as its channel column), `ChannelMenuView`, `MenuListView` and `LogoTask`, plus pure logic in `GuideReader`, `ChannelMenu`, `GuideIdle` and `LogoCache`, and additions to `GuideKeys`. `test:local`: 427 passed.
+  - **Shared guide data:** GuideScreen is the only reader. It does one plain field get per `guideRevision`. The player's banner and the channel menu get one channel's list through `callFunc("programmesFor")`; `PlayerSession.programmesFor` moved into `GuideReader`.
+  - **Back:** Back retries a failed channel. It uses the player's new `failed` field, set while the error panel is up.
+  - **Logos:** LogoTask fetches the newest request first and keeps at most 120 waiting. It answers a request it drops, so the guide can ask again when the row comes back into view.
+  - **QA fixes:**
+    - The group column keeps focus when the lineup or the guide refreshes while it is open (`GuideKeys.gridReport`, `pendingFor`).
+    - Back or Left from the column lands on the programme cell.
+    - Only key presses and the user's own focus moves restart the 3-minute idle return.
+    - ChannelMenu's visible rows come from Theme.
+    - GuideScreen reads the lineup once per change.
+  - **Orchestrator decisions:**
+    - "Fed lazily": each open builds a ContentNode for every row of the group, but programmes only for the focused row −6/+12.
+    - Match Guide's menu row is left out until step 20.
+    - The group column shows 8 rows (frame lB8XX) and pages by 7 (MMTVL).
+    - The step needed MainScene, PlayerScreen, LogoTask and `lib` beyond `components/guide/**`.
+  - **Reference:** Roku's TimeGrid doc returned 403, so the fields were checked against brs-node's TimeGrid. `rowHeight` and `numRows` are set only if the node has them.
+  - **Device checks (step 15):**
+    - **TimeGrid's channel cell and wrapping:**
+      - the interface `channelInfoComponentName` gets;
+      - whether TimeGrid wraps vertically, and the rows near the end (`GuideReader.fillRange` clamps);
+      - whether it takes or passes channelup/channeldown;
+      - that `*`, Back and Rewind/FF reach GuideScreen;
+      - that children added after `content` is set are drawn.
+    - **TimeGrid's focus reports:**
+      - whether `jumpToChannel` reports synchronously or later, and whether it reports at all when focus doesn't move;
+      - whether `focusIndex` counts gap cells (`fillProgramGaps`).
+    - **Times in TimeGrid:**
+      - **`playStart` is Float per roku-types**: epoch seconds in a 32-bit float step by 128 s, so cell edges may be off; check, and if so use `contentStartTime`-relative values;
+      - the real row height and visible rows.
+    - **Speed:**
+      - the guide opens in under 2 s on All Channels;
+      - `Lineup.build` on the render thread after a favorites edit.
+    - **The column:**
+      - with the column open, a lineup refresh keeps Up/Down in the column;
+      - Back lands on the programme cell;
+      - the info area matches the highlight.
+    - **Logos:**
+      - with a slow logo host, rows scrolled to arrive first, and dropped rows fill in after scrolling back;
+      - logos over https into cachefs.
+    - **Other:**
+      - the 3-minute return;
+      - the Video in the preview place;
+      - `callFunc` with no arguments;
+      - the `‹`, `…` and `·` glyphs.
