@@ -1,0 +1,164 @@
+' PlayerSession (M12 step 11): launch routing (MMTVL's LiveTVModel.open: the last channel, else the guide), the
+' state kept after a channel plays (last channel, recents capped at 10, other fields kept), the player item, the
+' guide-data lookup, and the overlay timing (MMTVL's banner, timeshift bar and paused overlay, M7m L15, D51).
+' Off-device.
+namespace PlayerSessionTests
+
+    ' MARK: launch
+
+    sub test_launchOpensTheLastChannelWhenThePlaylistHasIt(t as object)
+        channels = PlayerSessionTests.sampleChannels()
+        target = PlayerSession.launchTarget(channels, "id:two.example")
+        t.assertEqual(target.screen, "player")
+        t.assertEqual(target.channel.id, "id:two.example")
+    end sub
+
+    sub test_launchOpensTheGuideWithoutALastChannel(t as object)
+        channels = PlayerSessionTests.sampleChannels()
+        for each last in ["", invalid, 5]
+            target = PlayerSession.launchTarget(channels, last)
+            t.assertEqual(target.screen, "guide", FormatJson(last))
+            t.assertInvalid(target.channel)
+        end for
+    end sub
+
+    sub test_launchOpensTheGuideWhenTheLastChannelLeftThePlaylist(t as object)
+        t.assertEqual(PlayerSession.launchTarget(PlayerSessionTests.sampleChannels(), "id:gone.example").screen, "guide")
+        t.assertEqual(PlayerSession.launchTarget([], "id:one.example").screen, "guide", "no channels yet")
+        t.assertEqual(PlayerSession.launchTarget(invalid, "id:one.example").screen, "guide", "no list")
+    end sub
+
+    ' As MMTVL (library.channels): a channel hidden since it was last watched still opens.
+    sub test_launchFindsAHiddenChannelToo(t as object)
+        channels = PlayerSessionTests.sampleChannels()
+        built = Lineup.build(channels, { hiddenChannels: ["id:three.example"] })
+        t.assertFalse(Lineup.isVisible(built, "id:three.example"))
+        t.assertEqual(PlayerSession.launchTarget(channels, "id:three.example").screen, "player")
+    end sub
+
+    sub test_idsCompareCaseSensitively(t as object)
+        t.assertInvalid(PlayerSession.channelByID(PlayerSessionTests.sampleChannels(), "ID:ONE.EXAMPLE"))
+    end sub
+
+    ' MARK: state
+
+    sub test_playingRemembersTheChannelAndKeepsTheOtherFields(t as object)
+        state = { lastChannelID: "id:one.example", lastGroup: "News", recentChannelIDs: ["id:one.example"], lowMemoryNoticeShown: true }
+        after = PlayerSession.stateAfterPlaying(state, "id:two.example")
+        t.assertEqual(after, { lastChannelID: "id:two.example", lastGroup: "News", recentChannelIDs: ["id:two.example", "id:one.example"], lowMemoryNoticeShown: true })
+        t.assertEqual(state.lastChannelID, "id:one.example", "the old state isn't changed")
+    end sub
+
+    sub test_recentsAreCappedAtTenAndHoldEachChannelOnce(t as object)
+        state = { lastChannelID: "", lastGroup: "", recentChannelIDs: [] }
+        for i = 1 to 12
+            state = PlayerSession.stateAfterPlaying(state, "id:c" + i.ToStr())
+        end for
+        t.assertEqual(state.recentChannelIDs.Count(), 10)
+        t.assertEqual(state.recentChannelIDs[0], "id:c12")
+        t.assertEqual(state.recentChannelIDs[9], "id:c3")
+        state = PlayerSession.stateAfterPlaying(state, "id:c5")
+        t.assertEqual(state.recentChannelIDs.Count(), 10, "a repeat doesn't grow the list")
+        t.assertEqual(state.recentChannelIDs[0], "id:c5")
+        t.assertEqual(state.recentChannelIDs[1], "id:c12")
+        seen = 0
+        for each id in state.recentChannelIDs
+            if id = "id:c5" then seen++
+        end for
+        t.assertEqual(seen, 1)
+    end sub
+
+    sub test_aMissingStateStartsFresh(t as object)
+        t.assertEqual(PlayerSession.stateAfterPlaying(invalid, "id:a"), { lastChannelID: "id:a", recentChannelIDs: ["id:a"] })
+    end sub
+
+    ' Replay after a zap goes back, and again goes forward (L4, the user's decision of 2026-11-18).
+    sub test_replayAlternatesBetweenTheLastTwoChannels(t as object)
+        state = PlayerSession.stateAfterPlaying({}, "id:a")
+        state = PlayerSession.stateAfterPlaying(state, "id:b")
+        previous = PlayerKeys.previousChannelID(state.recentChannelIDs, "id:b")
+        t.assertEqual(previous, "id:a")
+        state = PlayerSession.stateAfterPlaying(state, previous)
+        t.assertEqual(PlayerKeys.previousChannelID(state.recentChannelIDs, "id:a"), "id:b")
+    end sub
+
+    ' MARK: the player item
+
+    sub test_thePlayerItemCarriesMMTVLsBannerTitle(t as object)
+        channels = PlayerSessionTests.sampleChannels()
+        item = PlayerSession.playerItem(channels[1], "https://logos.example/two.png")
+        t.assertEqual(item, { id: "id:two.example", title: "204  Metro News 24", url: "https://iptv.example/live/2.m3u8", logo: "https://logos.example/two.png" })
+        t.assertEqual(PlayerSession.playerItem(channels[0], invalid).logo, "", "no logo")
+        antenna = { id: "antenna:5.1", number: 9, name: "Local 5 HD", group: "Antenna", url: "http://tuner.example/auto/v5.1", source: "antenna", guideNumber: "5.1" }
+        t.assertEqual(PlayerSession.playerItem(antenna, "").title, "5.1  Local 5 HD", "the tuner's number")
+    end sub
+
+    ' MARK: guide data
+
+    sub test_programmesForReadsTheMatchedGuide(t as object)
+        list = [{ start: 100, stop: 200, title: "A" }]
+        data = { matches: { "id:one.example": { guide: 1, sourceID: "1", epgID: "one.epg" } }, guides: [{ programmes: {} }, { programmes: { "one.epg": list } }] }
+        t.assertEqual(PlayerSession.programmesFor(data, "id:one.example"), list)
+        t.assertInvalid(PlayerSession.programmesFor(data, "id:two.example"), "no match")
+        t.assertInvalid(PlayerSession.programmesFor(invalid, "id:one.example"), "no guide yet")
+        t.assertInvalid(PlayerSession.programmesFor({ matches: {} }, "id:one.example"), "no guides")
+    end sub
+
+    ' MARK: overlays
+
+    sub test_okShowsTheBannerAndTheBarThenHidesAll(t as object)
+        shown = PlayerSession.apply(PlayerSession.noOverlays(), "showOverlays")
+        t.assertEqual(shown.overlays, { banner: true, bar: true, paused: false })
+        t.assertEqual(shown.timers, { banner: "start", bar: "start", paused: "" })
+        hidden = PlayerSession.apply(shown.overlays, "hideOverlays")
+        t.assertEqual(hidden.overlays, PlayerSession.noOverlays())
+        t.assertEqual(hidden.timers, { banner: "stop", bar: "stop", paused: "stop" })
+    end sub
+
+    sub test_aChannelShowsTheBannerOnly(t as object)
+        result = PlayerSession.apply(PlayerSession.noOverlays(), "channel")
+        t.assertEqual(result.overlays, { banner: true, bar: false, paused: false })
+        t.assertEqual(result.timers, { banner: "start", bar: "", paused: "" })
+        t.assertEqual(PlayerSession.visible(result.overlays, false), { banner: true, timeshift: false, any: true })
+        gone = PlayerSession.apply(result.overlays, "bannerTimeout")
+        t.assertFalse(PlayerSession.visible(gone.overlays, false).any, "5 s later")
+    end sub
+
+    sub test_pauseShowsTheBarAndItStaysWhilePausedUntil15sAfterTheLastPress(t as object)
+        overlays = PlayerSession.apply(PlayerSession.noOverlays(), "press").overlays
+        overlays = PlayerSession.apply(overlays, "timeshift").overlays
+        t.assertTrue(PlayerSession.visible(overlays, true).timeshift)
+        overlays = PlayerSession.apply(overlays, "barTimeout").overlays
+        t.assertTrue(PlayerSession.visible(overlays, true).timeshift, "paused: still there after the bar's 5 s")
+        t.assertTrue(PlayerSession.visible(overlays, true).any, "so Back hides it first")
+        t.assertFalse(PlayerSession.visible(overlays, false).timeshift, "playing: gone")
+        again = PlayerSession.apply(overlays, "press")
+        t.assertEqual(again.timers.paused, "start", "each press restarts the 15 s")
+        overlays = PlayerSession.apply(again.overlays, "pausedTimeout").overlays
+        t.assertFalse(PlayerSession.visible(overlays, true).any, "D51: gone 15 s after the last press")
+    end sub
+
+    sub test_aPressAloneShowsNothingWhilePlaying(t as object)
+        result = PlayerSession.apply(PlayerSession.noOverlays(), "press")
+        t.assertEqual(result.timers, { banner: "", bar: "", paused: "start" })
+        t.assertFalse(PlayerSession.visible(result.overlays, false).any)
+    end sub
+
+    sub test_aTimeoutLeavesTheOtherOverlays(t as object)
+        overlays = PlayerSession.apply(PlayerSession.noOverlays(), "showOverlays").overlays
+        overlays = PlayerSession.apply(overlays, "barTimeout").overlays
+        t.assertEqual(overlays, { banner: true, bar: false, paused: false })
+        t.assertEqual(PlayerSession.apply(invalid, "unknown").overlays, PlayerSession.noOverlays(), "invalid reads as none")
+    end sub
+
+    ' MARK: helpers
+
+    function sampleChannels() as object
+        return [
+            { id: "id:one.example", number: 201, name: "Channel Five", group: "News", url: "https://iptv.example/live/1.m3u8", tvgID: "one.example", tvgName: invalid, logo: invalid },
+            { id: "id:two.example", number: 204, name: "Metro News 24", group: "News", url: "https://iptv.example/live/2.m3u8", tvgID: "two.example", tvgName: invalid, logo: invalid },
+            { id: "id:three.example", number: 210, name: "Sports Net East", group: "Sports", url: "https://iptv.example/live/3.m3u8", tvgID: "three.example", tvgName: invalid, logo: invalid }
+        ]
+    end function
+
+end namespace

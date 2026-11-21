@@ -1,0 +1,104 @@
+' The player banner's text (M12 step 11, Banner A): MMTVL's LiveBannerView (IPTV/LiveTVView.swift:212-272) as pure
+' functions. Times come in as local clock parts { hours (0-23), minutes }, which the screen makes with roDateTime
+' (ToLocalTime), so nothing here depends on the Roku's time zone. MMTVL's US-English 12-hour format.
+'
+'   nowNext(programmes, now) -> { now, next }: the programme airing at now (start <= now < stop; the first such in
+'     the list), and the soonest one starting at or after its stop (or after now, with nothing on). invalid each
+'     when there is none. Programmes are GuidePipeline's { start, stop, title, ... } in seconds since 1970.
+'   timeRange(startParts, stopParts) -> "6:00 – 7:00 PM", or "11:30 AM – 12:30 PM" across noon or midnight
+'   clock(parts) -> "7:00 PM"
+'   nextLine(title, startParts) -> "Next: Weather Now · 7:00 PM"
+'   progress(programme, now) -> 0...1 (0 for a programme with no length)
+'   progressWidth(fraction, total, minimum) -> the fill's width: 0 for nothing, else at least minimum (the bar's
+'     9-patch needs its height in width) and at most total
+'   noProgramme: what the banner says for a channel without a guide (MMTVL's text).
+namespace BannerText
+
+    const noProgramme = "No programme information"
+
+    function nowNext(programmes as dynamic, now as dynamic) as object
+        result = { now: invalid, next: invalid }
+        if LCase(type(programmes)) <> "roarray" or not BannerText.isNumber(now) then return result
+        for each programme in programmes
+            if BannerText.isProgramme(programme)
+                if programme.start <= now and now < programme.stop
+                    result.now = programme
+                    exit for
+                end if
+            end if
+        end for
+        after = now
+        if result.now <> invalid then after = result.now.stop
+        for each programme in programmes
+            if BannerText.isProgramme(programme)
+                if programme.start >= after
+                    if result.next = invalid
+                        result.next = programme
+                    else if programme.start < result.next.start
+                        result.next = programme
+                    end if
+                end if
+            end if
+        end for
+        return result
+    end function
+
+    function timeRange(startParts as object, stopParts as object) as string
+        dash = " " + Chr(8211) + " "
+        if BannerText.period(startParts) = BannerText.period(stopParts)
+            return BannerText.hourMinute(startParts) + dash + BannerText.clock(stopParts)
+        end if
+        return BannerText.clock(startParts) + dash + BannerText.clock(stopParts)
+    end function
+
+    function clock(parts as object) as string
+        return BannerText.hourMinute(parts) + " " + BannerText.period(parts)
+    end function
+
+    function nextLine(title as string, startParts as object) as string
+        return "Next: " + title + " " + Chr(183) + " " + BannerText.clock(startParts)
+    end function
+
+    function progress(programme as object, now as dynamic) as float
+        length = programme.stop - programme.start
+        if length <= 0 or not BannerText.isNumber(now) then return 0
+        fraction = (now - programme.start) / length
+        if fraction < 0 then return 0
+        if fraction > 1 then return 1
+        return fraction
+    end function
+
+    function progressWidth(fraction as dynamic, total as integer, minimum as integer) as integer
+        if not BannerText.isNumber(fraction) then return 0
+        if fraction <= 0 then return 0
+        width = Int(total * fraction + 0.5)
+        if width < minimum then width = minimum
+        if width > total then width = total
+        return width
+    end function
+
+    ' "6:00": 12-hour, no leading zero.
+    function hourMinute(parts as object) as string
+        hours = parts.hours mod 12
+        if hours = 0 then hours = 12
+        minutes = parts.minutes.ToStr()
+        if parts.minutes < 10 then minutes = "0" + minutes
+        return hours.ToStr() + ":" + minutes
+    end function
+
+    function period(parts as object) as string
+        if parts.hours < 12 then return "AM"
+        return "PM"
+    end function
+
+    function isProgramme(value as dynamic) as boolean
+        if LCase(type(value)) <> "roassociativearray" then return false
+        return BannerText.isNumber(value.start) and BannerText.isNumber(value.stop)
+    end function
+
+    function isNumber(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "integer" or kind = "roint" or kind = "rointeger" or kind = "longinteger" or kind = "rolonginteger" or kind = "float" or kind = "rofloat" or kind = "double" or kind = "rodouble"
+    end function
+
+end namespace

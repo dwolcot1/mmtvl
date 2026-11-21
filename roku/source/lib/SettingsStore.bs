@@ -3,11 +3,14 @@
 '   guides     the pasted guide URLs, in priority order (at most 6)
 '   prefs      { favorites, hiddenChannels, hiddenGroups, teams }: lists of ids or group names
 '   overrides  { overrideKey (lowercased): EPG channel id, or "" for no guide }
-'   state      { lastChannelID, lastGroup, recentChannelIDs }: "" = none; recents most recent first, at most 10
+'   state      { lastChannelID, lastGroup, recentChannelIDs, lowMemoryNoticeShown }: "" = none; recents most recent
+'                first, at most 10; lowMemoryNoticeShown (Roku-only, step 11, L7): the low-memory notice was answered
 '   settings   { channelUpMovesUpList, usePlaylistGuide, teamMatchInitials, teamMatchNicknames, antennaEnabled,
-'                antennaGuide }
+'                antennaGuide, channelLogos }; channelLogos (Roku-only, L7 as amended 2026-11-21) is on by default
+'                on every device class, and Settings → Device turns it off (step 13)
 '   schema     1
-' Defaults are MMTVL's (App/AppSettings.swift, IPTV/Sources/ChannelPreferences.swift, IPTV/IPTVState.swift). A
+' Defaults are MMTVL's (App/AppSettings.swift, IPTV/Sources/ChannelPreferences.swift, IPTV/IPTVState.swift). The
+' Roku-only fields (lowMemoryNoticeShown, channelLogos) aren't in an import bundle, so replaceAll keeps them. A
 ' missing key reads as its default; a value that isn't JSON reads as the key's default; a field of the wrong type
 ' or past a limit reads as that field's default (list entries are dropped one by one), never a crash. The limits
 ' are the import's (step 14): URLs at most 2 KB, ids at most 256 characters, at most 500 entries per list.
@@ -135,6 +138,8 @@ namespace SettingsStore
             Log.error("Settings", "Import bundle isn't an object")
             return { "ok": false, "message": SettingsStore.saveFailedMessage }
         end if
+        ' The Roku-only fields aren't in bundle v1: the current values stay (an import doesn't bring the notice back
+        ' or turn the logos on again).
         values = {
             "source": bundle.playlistURL,
             "guides": bundle.guideURLs,
@@ -148,7 +153,8 @@ namespace SettingsStore
             "state": {
                 "lastChannelID": bundle.lastChannelID,
                 "lastGroup": bundle.lastGroup,
-                "recentChannelIDs": bundle.recentChannelIDs
+                "recentChannelIDs": bundle.recentChannelIDs,
+                "lowMemoryNoticeShown": store.state.lowMemoryNoticeShown
             },
             "settings": {
                 "channelUpMovesUpList": bundle.channelUpMovesUpList,
@@ -156,7 +162,8 @@ namespace SettingsStore
                 "teamMatchInitials": bundle.teamMatchInitials,
                 "teamMatchNicknames": bundle.teamMatchNicknames,
                 "antennaEnabled": bundle.antennaEnabled,
-                "antennaGuide": bundle.antennaGuide
+                "antennaGuide": bundle.antennaGuide,
+                "channelLogos": store.settings.channelLogos
             }
         }
         for each key in SettingsStore.keys()
@@ -193,12 +200,12 @@ namespace SettingsStore
         if key = "guides" then return []
         if key = "prefs" then return { "favorites": [], "hiddenChannels": [], "hiddenGroups": [], "teams": [] }
         if key = "overrides" then return {}
-        if key = "state" then return { "lastChannelID": "", "lastGroup": "", "recentChannelIDs": [] }
+        if key = "state" then return { "lastChannelID": "", "lastGroup": "", "recentChannelIDs": [], "lowMemoryNoticeShown": false }
         if key = "settings" then return SettingsStore.defaultSettings()
         return invalid
     end function
 
-    ' MMTVL's defaults (App/AppSettings.swift).
+    ' MMTVL's defaults (App/AppSettings.swift), plus the Roku-only channelLogos (L7 as amended: on everywhere).
     function defaultSettings() as object
         return {
             "channelUpMovesUpList": true,
@@ -206,7 +213,8 @@ namespace SettingsStore
             "teamMatchInitials": false,
             "teamMatchNicknames": false,
             "antennaEnabled": true,
-            "antennaGuide": true
+            "antennaGuide": true,
+            "channelLogos": true
         }
     end function
 
@@ -226,6 +234,7 @@ namespace SettingsStore
             result["lastChannelID"] = SettingsStore.boundedText(value.lastChannelID, SettingsStore.maximumIDLength)
             result["lastGroup"] = SettingsStore.boundedText(value.lastGroup, SettingsStore.maximumIDLength)
             result["recentChannelIDs"] = SettingsStore.textList(value.recentChannelIDs, SettingsStore.maximumIDLength, SettingsStore.maximumRecents)
+            if SettingsStore.isBoolean(value.lowMemoryNoticeShown) then result["lowMemoryNoticeShown"] = value.lowMemoryNoticeShown
         else if key = "settings"
             for each field in result.Keys()
                 if SettingsStore.isBoolean(value[field]) then result[field] = value[field]

@@ -6,7 +6,9 @@
 ' and derives:
 '   deviceClass "Low" (memory limit unknown or at most lowMemoryLimitMB, or a 720p UI) or "High"; classReason says why
 '   guideHours, logosDefault, inflateMaxCompressedBytes (invalid: no limit), programmeLimit (the most guide
-'   programmes kept in one run: QA-M2 / security M-2 of step 9)
+'   programmes kept in one run: QA-M2 / security M-2 of step 9). logosDefault is true on every class (L7 as
+'   amended 2026-11-21: logos stay on, Settings → Device turns them off, and a Low Roku shows the low-memory
+'   notice once; see LowMemoryNotice.bs)
 '   features    [{ id, on, reason }] for Settings → Device: reason is "" when on, else why it's off
 ' Both objects are passed in, so tests use fakes; Capabilities.detectDevice() uses the real roDeviceInfo and
 ' roAppMemoryMonitor. Every call is guarded: a call this Roku OS lacks reads as unknown, never a crash.
@@ -61,7 +63,7 @@ namespace Capabilities
             caps["deviceClass"] = "Low"
             caps["classReason"] = "Low-end Roku: " + reasons.Join(", ")
             caps["guideHours"] = Capabilities.lowGuideHours
-            caps["logosDefault"] = false
+            caps["logosDefault"] = true
             caps["inflateMaxCompressedBytes"] = Capabilities.lowInflateMaxCompressedBytes
             caps["programmeLimit"] = Capabilities.lowProgrammeLimit
         else
@@ -74,7 +76,7 @@ namespace Capabilities
         end if
         caps["features"] = [
             Capabilities.feature("longGuide", not low, caps.classReason + "; the guide shows 24 hours"),
-            Capabilities.feature("logos", not low, caps.classReason + "; channel logos are off by default"),
+            Capabilities.feature("logos", true, ""),
             Capabilities.feature("inflateLargeGuides", not low, caps.classReason + "; .gz guides over 2 MB aren't read"),
             Capabilities.feature("mpeg2", caps.mpeg2, "This Roku can't play MPEG-2; antenna MPEG-2 channels are hidden"),
             Capabilities.feature("ac3", caps.ac3, "This Roku can't decode Dolby Digital (AC-3)")

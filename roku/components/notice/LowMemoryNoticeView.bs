@@ -1,0 +1,148 @@
+' The low-memory notice (fields in LowMemoryNoticeView.xml). Layout as the frame: noticePadding inside the panel;
+' the header (title, noticeHeaderSpacing, body), the rows, the buttons and the footnote noticeSectionSpacing apart;
+' rows settingsRowMinHeight high, settingsRowSpacing apart, their title and value settingsRowTextInset from the
+' ends; buttons noticeButtonSpacing apart, their labels buttonTextInset from the ends. The focused button is the
+' white focus capsule with focusedRowText, the other a settings_row capsule with primaryText (as MMTVL's Settings).
+
+sub init()
+    m.theme = Theme.make()
+    colors = m.theme.colors
+    fonts = m.theme.fonts
+    canvas = m.theme.canvas
+    dimmer = m.top.findNode("dim")
+    dimmer.width = canvas.width
+    dimmer.height = canvas.height
+    dimmer.color = colors.searchDim
+    m.top.findNode("panel").uri = m.theme.images.panelSolid
+    styleLabel(m.top.findNode("title"), fonts.settingsTitle, colors.primaryText, LowMemoryNotice.title)
+    styleLabel(m.top.findNode("body"), fonts.settingsDescription, colors.secondaryText, LowMemoryNotice.body)
+    styleLabel(m.top.findNode("footnote"), fonts.settingsHint, colors.secondaryText, LowMemoryNotice.footnote)
+    m.buttonIDs = ["ok", "openSettings"]
+    m.focusedButton = 0
+    m.answered = false
+    buildButtons()
+    layoutNotice()
+end sub
+
+sub styleLabel(label as object, spec as object, color as string, text as string)
+    label.font = Theme.font(spec)
+    label.color = color
+    label.height = Theme.lineHeight(spec)
+    label.vertAlign = "center"
+    label.wrap = false
+    label.text = text
+end sub
+
+sub buildButtons()
+    layout = m.theme.layout
+    spec = m.theme.fonts.settingsRow
+    buttons = m.top.findNode("buttons")
+    x = 0
+    for each text in [LowMemoryNotice.okLabel, LowMemoryNotice.settingsLabel]
+        button = buttons.createChild("Group")
+        background = button.createChild("Poster")
+        label = button.createChild("Label")
+        styleLabel(label, spec, m.theme.colors.primaryText, text)
+        labelWidth = Int(label.boundingRect().width + 0.5)
+        width = Int((labelWidth + 2 * layout.buttonTextInset + 2) / 3) * 3
+        background.width = width
+        background.height = layout.settingsRowMinHeight
+        label.width = width
+        label.horizAlign = "center"
+        label.translation = [0, Int((layout.settingsRowMinHeight - label.height) / 2)]
+        button.translation = [x, 0]
+        x = x + width + layout.noticeButtonSpacing
+    end for
+    showFocus()
+end sub
+
+sub showFocus()
+    buttons = m.top.findNode("buttons")
+    for i = 0 to buttons.getChildCount() - 1
+        button = buttons.getChild(i)
+        background = button.getChild(0)
+        label = button.getChild(1)
+        if i = m.focusedButton
+            background.uri = m.theme.images.focusCapsule
+            label.color = m.theme.colors.focusedRowText
+        else
+            background.uri = m.theme.images.settingsRow
+            label.color = m.theme.colors.primaryText
+        end if
+    end for
+end sub
+
+sub layoutNotice()
+    if m.theme = invalid then return
+    layout = m.theme.layout
+    colors = m.theme.colors
+    spec = m.theme.fonts.settingsRow
+    padding = layout.noticePadding
+    width = layout.liveMenuWideWidth
+    inner = width - 2 * padding
+    sectionSpacing = layout.noticeSectionSpacing
+
+    title = m.top.findNode("title")
+    body = m.top.findNode("body")
+    title.width = inner
+    body.width = inner
+    title.translation = [padding, padding]
+    y = padding + title.height + layout.noticeHeaderSpacing
+    body.translation = [padding, y]
+    y = y + body.height + sectionSpacing
+
+    rows = m.top.findNode("rows")
+    rows.removeChildrenIndex(rows.getChildCount(), 0)
+    rows.translation = [padding, y]
+    items = m.top.items
+    if type(items) <> "roArray" then items = []
+    rowY = 0
+    for each item in items
+        row = rows.createChild("Group")
+        row.translation = [0, rowY]
+        background = row.createChild("Poster")
+        background.uri = m.theme.images.settingsInfoRow
+        background.width = inner
+        background.height = layout.settingsRowMinHeight
+        labelY = Int((layout.settingsRowMinHeight - Theme.lineHeight(spec)) / 2)
+        name = row.createChild("Label")
+        styleLabel(name, spec, colors.primaryText, item.title)
+        name.translation = [layout.settingsRowTextInset, labelY]
+        value = row.createChild("Label")
+        styleLabel(value, spec, colors.secondaryText, item.value)
+        value.width = inner - 2 * layout.settingsRowTextInset
+        value.horizAlign = "right"
+        value.translation = [layout.settingsRowTextInset, labelY]
+        rowY = rowY + layout.settingsRowMinHeight + layout.settingsRowSpacing
+    end for
+    if items.Count() > 0 then y = y + rowY - layout.settingsRowSpacing + sectionSpacing
+
+    m.top.findNode("buttons").translation = [padding, y]
+    y = y + layout.settingsRowMinHeight + sectionSpacing
+    footnote = m.top.findNode("footnote")
+    footnote.width = inner
+    footnote.translation = [padding, y]
+    height = y + footnote.height + padding
+
+    panel = m.top.findNode("panel")
+    panel.width = width
+    panel.height = height
+    canvas = m.theme.canvas
+    m.top.findNode("panelGroup").translation = [Int((canvas.width - width) / 6) * 3, Int((canvas.height - height) / 6) * 3]
+end sub
+
+' Every key is the notice's while it shows (the screen underneath gets none; Back never leaves, D49).
+function onKeyEvent(key as string, press as boolean) as boolean
+    if not press or m.answered then return true
+    if key = "left" and m.focusedButton > 0
+        m.focusedButton = m.focusedButton - 1
+        showFocus()
+    else if key = "right" and m.focusedButton < m.buttonIDs.Count() - 1
+        m.focusedButton = m.focusedButton + 1
+        showFocus()
+    else if key = "OK"
+        m.answered = true
+        m.top.choice = m.buttonIDs[m.focusedButton]
+    end if
+    return true
+end function

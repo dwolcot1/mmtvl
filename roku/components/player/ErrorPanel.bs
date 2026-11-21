@@ -1,0 +1,60 @@
+' The error panel (fields in ErrorPanel.xml): symbol errorPanelSymbolSize, then the message (errorTitle) and the hint
+' (settingsHint), errorPanelSpacing apart, all centred; the panel errorPanelPadding around them, centred on the
+' screen.
+
+sub init()
+    m.theme = Theme.make()
+    colors = m.theme.colors
+    fonts = m.theme.fonts
+    m.top.findNode("panel").uri = m.theme.images.bannerPanel
+    symbol = m.top.findNode("symbol")
+    symbol.uri = m.theme.images.iconWarning
+    symbol.blendColor = colors.secondaryText
+    symbol.width = m.theme.layout.errorPanelSymbolSize
+    symbol.height = m.theme.layout.errorPanelSymbolSize
+    styleLabel(m.top.findNode("messageLabel"), fonts.errorTitle, colors.primaryText)
+    styleLabel(m.top.findNode("hint"), fonts.settingsHint, colors.secondaryText)
+    layoutPanel()
+end sub
+
+sub styleLabel(label as object, spec as object, color as string)
+    label.font = Theme.font(spec)
+    label.color = color
+    label.height = Theme.lineHeight(spec)
+    label.vertAlign = "center"
+    label.horizAlign = "center"
+end sub
+
+sub layoutPanel()
+    if m.theme = invalid then return
+    layout = m.theme.layout
+    padding = layout.errorPanelPadding
+    spacing = layout.errorPanelSpacing
+    symbolSize = layout.errorPanelSymbolSize
+    messageLabel = m.top.findNode("messageLabel")
+    hint = m.top.findNode("hint")
+    messageLabel.text = m.top.message
+    messageLabel.width = 0
+    hint.width = 0
+    inner = symbolSize
+    for each label in [messageLabel, hint]
+        width = Int(label.boundingRect().width + 0.5)
+        if width > inner then inner = width
+    end for
+    ' On the 3-px grid, as every size in the frames.
+    inner = Int((inner + 2) / 3) * 3
+    width = inner + 2 * padding
+    height = 2 * padding + symbolSize + spacing + messageLabel.height + spacing + hint.height
+    panel = m.top.findNode("panel")
+    panel.width = width
+    panel.height = height
+    m.top.findNode("symbol").translation = [padding + Int((inner - symbolSize) / 2), padding]
+    y = padding + symbolSize + spacing
+    messageLabel.width = inner
+    messageLabel.translation = [padding, y]
+    y = y + messageLabel.height + spacing
+    hint.width = inner
+    hint.translation = [padding, y]
+    canvas = m.theme.canvas
+    m.top.translation = [Int((canvas.width - width) / 6) * 3, Int((canvas.height - height) / 6) * 3]
+end sub

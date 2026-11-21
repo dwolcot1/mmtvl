@@ -1,0 +1,71 @@
+' LowMemoryNotice (M12 step 11, L7 as amended 2026-11-21): shown on a Low Roku until it has been answered once,
+' listing the features that are on (Channel Logos for now). Off-device.
+namespace LowMemoryNoticeTests
+
+    sub test_aLowRokuShowsItTheFirstTime(t as object)
+        state = SettingsStore.defaultValue("state")
+        settings = SettingsStore.defaultSettings()
+        t.assertTrue(LowMemoryNotice.shouldShow({ deviceClass: "Low" }, state, settings))
+    end sub
+
+    sub test_aHighRokuNeverShowsIt(t as object)
+        state = SettingsStore.defaultValue("state")
+        t.assertFalse(LowMemoryNotice.shouldShow({ deviceClass: "High" }, state, SettingsStore.defaultSettings()))
+        t.assertFalse(LowMemoryNotice.shouldShow(invalid, state, SettingsStore.defaultSettings()), "no capabilities")
+    end sub
+
+    ' OK and Open Settings both record it; then it never shows again.
+    sub test_onceAnsweredItNeverShowsAgain(t as object)
+        state = SettingsStore.defaultValue("state")
+        state.lastChannelID = "id:one.example"
+        answered = LowMemoryNotice.dismissedState(state)
+        t.assertTrue(answered.lowMemoryNoticeShown)
+        t.assertEqual(answered.lastChannelID, "id:one.example", "the other fields are kept")
+        t.assertFalse(state.lowMemoryNoticeShown, "the old state isn't changed")
+        t.assertFalse(LowMemoryNotice.shouldShow({ deviceClass: "Low" }, answered, SettingsStore.defaultSettings()))
+    end sub
+
+    ' Through the store: the answer is saved in state and survives a relaunch (a fresh load).
+    sub test_theAnswerSurvivesARelaunch(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        caps = { deviceClass: "Low" }
+        t.assertTrue(LowMemoryNotice.shouldShow(caps, store.state, store.settings))
+        t.assertTrue(SettingsStore.save(store, "state", LowMemoryNotice.dismissedState(store.state)).ok)
+        relaunched = SettingsStore.load(registry)
+        t.assertFalse(LowMemoryNotice.shouldShow(caps, relaunched.state, relaunched.settings))
+    end sub
+
+    sub test_itListsTheFeaturesThatAreOn(t as object)
+        t.assertEqual(LowMemoryNotice.items(SettingsStore.defaultSettings()), [{ id: "channelLogos", title: "Channel Logos", value: "On" }])
+        t.assertEqual(LowMemoryNotice.items(invalid), [{ id: "channelLogos", title: "Channel Logos", value: "On" }], "missing settings read as on")
+        off = SettingsStore.defaultSettings()
+        off.channelLogos = false
+        t.assertEqual(LowMemoryNotice.items(off), [])
+    end sub
+
+    ' With every listed feature off there is nothing to warn about: no notice, and it stays due.
+    sub test_nothingOnNoNotice(t as object)
+        off = SettingsStore.defaultSettings()
+        off.channelLogos = false
+        t.assertFalse(LowMemoryNotice.shouldShow({ deviceClass: "Low" }, SettingsStore.defaultValue("state"), off))
+    end sub
+
+    ' Every feature names a settings field that exists, so the list can't drift from the store.
+    sub test_everyFeatureIsASetting(t as object)
+        defaults = SettingsStore.defaultSettings()
+        for each feature in LowMemoryNotice.features()
+            t.assertTrue(defaults.DoesExist(feature.setting), feature.id)
+            t.assertTrue(feature.title <> "", feature.id + " has a title")
+        end for
+    end sub
+
+    ' The frame's wording.
+    sub test_theText(t as object)
+        t.assertEqual(LowMemoryNotice.title, "This Roku has limited memory")
+        t.assertEqual(LowMemoryNotice.body, "If the guide or channels feel slow, turn these off in Settings → Device.")
+        t.assertEqual(LowMemoryNotice.footnote, "Shown once, the first time MMTVL Live TV opens on this Roku.")
+        t.assertEqual([LowMemoryNotice.okLabel, LowMemoryNotice.settingsLabel], ["OK", "Open Settings"])
+    end sub
+
+end namespace
