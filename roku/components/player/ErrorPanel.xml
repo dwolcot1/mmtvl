@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The player's error panel (M12 step 11; frame "Error panel", LsUbW): the warning symbol, the message and the key
+     hint, centred on the screen on the banner-role glass panel (panel_banner.9.png), errorPanelPadding inside. The
+     panel is as wide as its widest line. MMTVL's PlayerOverlayView.errorPanel (IPTV/LiveTVView.swift). -->
+<component name="ErrorPanel" extends="Group">
+    <interface>
+        <field id="message" type="string" value="Can't play this channel" onChange="layoutPanel" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
+    <children>
+        <Poster id="panel" />
+        <Poster id="symbol" />
+        <Label id="messageLabel" />
+        <Label id="hint" text="OK: try again · Up/Down: change channel · Back: guide" />
+    </children>
+</component>

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The full-screen player (M12 step 11, L4, D49, D51). The screen is the focused Group; its Video never has focus,
+     so every key (including *) reaches onKeyEvent, which hands it to PlayerKeys and carries out the action. Over the
+     video: the bottom gradient and Banner A (shown on a channel change and on OK, gone 5 s later), and the error
+     panel (a Video error, or buffering for PlayerSession.stallSeconds; OK retries). Zapping, Replay, the guide and
+     the channel menu are the scene's: the screen asks for them through action, and the scene sets channel.
+     Logs show the stream's host only (L6). -->
+<component name="PlayerScreen" extends="Group">
+    <interface>
+        <!-- The channel to play: PlayerSession.playerItem's { id, title, url, logo }. Each set plays it (again). -->
+        <field id="channel" type="assocarray" alwaysNotify="true" onChange="onChannel" />
+        <!-- What Replay goes to (PlayerKeys.previousChannelID), "" for none. -->
+        <field id="previousChannelID" type="string" value="" />
+        <field id="channelUpMovesUpList" type="boolean" value="true" />
+        <!-- The scene's guideHolder and guideRevision (MainScene.xml): the banner's now and next. -->
+        <field id="guideHolder" type="node" />
+        <field id="guideRevision" type="integer" value="0" onChange="onGuideRevision" />
+        <!-- To the scene: { type: "zap", step }, { type: "previousChannel", channelID }, { type: "openGuide" },
+             { type: "openChannelMenu", channelID }. -->
+        <field id="action" type="assocarray" alwaysNotify="true" />
+        <!-- "stop": stop playing and forget the channel (the scene, before something else uses the video). -->
+        <field id="control" type="string" alwaysNotify="true" onChange="onControl" />
+        <!-- Out: whether MMTVL's timeshift bar would show now (after a pause, resume or skip, and while paused until
+             15 s after the last press, D51). No frame draws the bar yet: see the step 11 report. -->
+        <field id="timeshiftShown" type="boolean" value="false" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Refresh.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Lineup.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/PlayerKeys.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/PlayerSession.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/BannerText.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/URLPolicy.bs" />
+    <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
+    <children>
+        <Video id="video" />
+        <Group id="overlay" visible="false" opacity="0">
+            <Poster id="overlayGradient" loadDisplayMode="scaleToFill" />
+            <PlayerBanner id="banner" />
+        </Group>
+        <ErrorPanel id="errorPanel" visible="false" />
+        <Animation id="overlayFade" repeat="false" easeFunction="linear">
+            <FloatFieldInterpolator id="overlayFadeValue" key="[0.0, 1.0]" keyValue="[0.0, 1.0]" fieldToInterp="overlay.opacity" />
+        </Animation>
+        <Timer id="bannerTimer" repeat="false" />
+        <Timer id="barTimer" repeat="false" />
+        <Timer id="pausedTimer" repeat="false" />
+        <Timer id="stallTimer" repeat="false" />
+    </children>
+</component>

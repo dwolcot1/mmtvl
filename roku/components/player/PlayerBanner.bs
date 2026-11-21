@@ -1,0 +1,133 @@
+' Banner A (fields in PlayerBanner.xml). The layout as the frame: logo liveBannerLogoSize at the panel's padding, the
+' text column liveBannerLogoGap to its right (at the padding without a logo), lines liveBannerSpacing apart, the
+' progress track liveBannerProgressGap after the time range and centred on its line. The panel's height follows its
+' lines (MMTVL's banner sizes to its content), at least the logo's; its bottom stays liveBannerBottom above the
+' screen's bottom.
+
+sub init()
+    m.theme = Theme.make()
+    colors = m.theme.colors
+    fonts = m.theme.fonts
+    images = m.theme.images
+    layout = m.theme.layout
+    m.panelWidth = m.theme.canvas.width - 2 * layout.sideMargin
+    m.top.findNode("panel").uri = images.bannerPanel
+    styleLabel("title", fonts.liveBannerTitle, colors.primaryText)
+    styleLabel("now", fonts.liveBannerProgramme, colors.primaryText)
+    styleLabel("time", fonts.liveBannerDetail, colors.secondaryText)
+    styleLabel("next", fonts.liveBannerDetail, colors.secondaryText)
+    logo = m.top.findNode("logo")
+    logo.width = layout.liveBannerLogoSize
+    logo.height = layout.liveBannerLogoSize
+    logo.translation = [layout.liveBannerPadding, layout.liveBannerPadding]
+    track = m.top.findNode("track")
+    track.uri = images.bar
+    track.blendColor = colors.shelfProgressTrack
+    track.width = layout.liveBannerProgressWidth
+    track.height = layout.liveBarHeight
+    fill = m.top.findNode("fill")
+    fill.uri = images.bar
+    fill.blendColor = colors.shelfProgressFill
+    fill.height = layout.liveBarHeight
+end sub
+
+sub styleLabel(id as string, spec as object, color as string)
+    label = m.top.findNode(id)
+    label.font = Theme.font(spec)
+    label.color = color
+    label.height = Theme.lineHeight(spec)
+    label.vertAlign = "center"
+    label.wrap = false
+end sub
+
+sub onInfo()
+    info = m.top.info
+    if type(info) <> "roAssociativeArray" then return
+    layout = m.theme.layout
+    fonts = m.theme.fonts
+    padding = layout.liveBannerPadding
+    spacing = layout.liveBannerSpacing
+
+    logo = m.top.findNode("logo")
+    textX = padding
+    if isFilled(info.logo)
+        logo.uri = info.logo
+        logo.visible = true
+        textX = padding + layout.liveBannerLogoSize + layout.liveBannerLogoGap
+    else
+        logo.visible = false
+        logo.uri = ""
+    end if
+    textWidth = m.panelWidth - textX - padding
+
+    y = padding
+    y = placeLine("title", textOf(info.title), textX, y, textWidth)
+    nowLabel = m.top.findNode("now")
+    timeLabel = m.top.findNode("time")
+    track = m.top.findNode("track")
+    fill = m.top.findNode("fill")
+    nextLabel = m.top.findNode("next")
+    if isFilled(info.nowTitle)
+        nowLabel.font = Theme.font(fonts.liveBannerProgramme)
+        nowLabel.height = Theme.lineHeight(fonts.liveBannerProgramme)
+        nowLabel.color = m.theme.colors.primaryText
+        y = placeLine("now", info.nowTitle, textX, y + spacing, textWidth)
+        timeLabel.text = textOf(info.timeText)
+        timeLabel.width = 0
+        timeLabel.translation = [textX, y + spacing]
+        timeLabel.visible = true
+        lineHeight = Theme.lineHeight(fonts.liveBannerDetail)
+        trackX = textX + Int(timeLabel.boundingRect().width + 0.5) + layout.liveBannerProgressGap
+        trackY = y + spacing + Int((lineHeight - layout.liveBarHeight) / 2 + 0.5)
+        track.translation = [trackX, trackY]
+        track.visible = true
+        fillWidth = BannerText.progressWidth(info.progress, layout.liveBannerProgressWidth, layout.liveBarHeight)
+        fill.translation = [trackX, trackY]
+        fill.width = fillWidth
+        fill.visible = fillWidth > 0
+        y = y + spacing + lineHeight
+        if isFilled(info.nextText)
+            y = placeLine("next", info.nextText, textX, y + spacing, textWidth)
+        else
+            nextLabel.visible = false
+        end if
+    else
+        ' MMTVL: "No programme information" in the detail style where the programme would be.
+        nowLabel.font = Theme.font(fonts.liveBannerDetail)
+        nowLabel.height = Theme.lineHeight(fonts.liveBannerDetail)
+        nowLabel.color = m.theme.colors.secondaryText
+        y = placeLine("now", BannerText.noProgramme, textX, y + spacing, textWidth)
+        timeLabel.visible = false
+        track.visible = false
+        fill.visible = false
+        nextLabel.visible = false
+    end if
+
+    height = y + padding
+    if logo.visible and height < 2 * padding + layout.liveBannerLogoSize then height = 2 * padding + layout.liveBannerLogoSize
+    panel = m.top.findNode("panel")
+    panel.width = m.panelWidth
+    panel.height = height
+    m.top.translation = [layout.sideMargin, m.theme.canvas.height - layout.liveBannerBottom - height]
+end sub
+
+' Puts a one-line label at (x, y) and returns the y under it.
+function placeLine(id as string, text as string, x as integer, y as integer, width as integer) as integer
+    label = m.top.findNode(id)
+    label.text = text
+    label.width = width
+    label.translation = [x, y]
+    label.visible = true
+    return Int(y + label.height)
+end function
+
+function isFilled(value as dynamic) as boolean
+    kind = LCase(type(value))
+    if kind <> "string" and kind <> "rostring" then return false
+    return value <> ""
+end function
+
+function textOf(value as dynamic) as string
+    if isFilled(value) then return value
+    return ""
+end function

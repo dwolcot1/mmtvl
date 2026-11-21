@@ -1,0 +1,322 @@
+' The full-screen player (fields in PlayerScreen.xml). Keys go through PlayerKeys.handle; overlays through
+' PlayerSession.apply/visible (MMTVL's banner, timeshift bar and paused overlay timing); the banner's text through
+' BannerText. The stream URL is checked with URLPolicy.allowsStream (http or https, any host: MMTVL's rule, decided
+' 2026-11-18) and never logged: only its host (L6).
+
+sub init()
+    m.theme = Theme.make()
+    layout = m.theme.layout
+    canvas = m.theme.canvas
+    timing = m.theme.timing
+    m.video = m.top.findNode("video")
+    m.video.width = canvas.width
+    m.video.height = canvas.height
+    m.video.observeField("state", "onVideoState")
+    gradient = m.top.findNode("overlayGradient")
+    gradient.uri = m.theme.images.overlayBottom
+    gradient.width = canvas.width
+    gradient.height = layout.liveOverlayHeight
+    gradient.translation = [0, canvas.height - layout.liveOverlayHeight]
+    m.overlay = m.top.findNode("overlay")
+    m.banner = m.top.findNode("banner")
+    m.errorPanel = m.top.findNode("errorPanel")
+    m.fade = m.top.findNode("overlayFade")
+    m.fade.duration = timing.overlayFade
+    m.fadeValue = m.top.findNode("overlayFadeValue")
+    m.fade.observeField("state", "onFadeState")
+    m.fadeTarget = 0
+    m.bannerTimer = makeTimer("bannerTimer", timing.bannerDuration, "onBannerTimeout")
+    m.barTimer = makeTimer("barTimer", timing.bannerDuration, "onBarTimeout")
+    m.pausedTimer = makeTimer("pausedTimer", timing.pausedOverlayDuration, "onPausedTimeout")
+    m.stallTimer = makeTimer("stallTimer", PlayerSession.stallSeconds, "onStall")
+    m.channel = invalid
+    m.overlays = PlayerSession.noOverlays()
+    m.errorShown = false
+    m.guideData = invalid
+    m.guideDataRevision = -1
+    m.playClock = CreateObject("roTimespan")
+    m.waitingForStart = false
+end sub
+
+function makeTimer(id as string, seconds as dynamic, handler as string) as object
+    timer = m.top.findNode(id)
+    timer.duration = seconds
+    timer.observeField("fire", handler)
+    return timer
+end function
+
+' --- playing --------------------------------------------------------------------------------------------------
+
+sub onChannel()
+    item = m.top.channel
+    if type(item) <> "roAssociativeArray" then return
+    m.channel = item
+    play()
+end sub
+
+sub play()
+    hideError()
+    url = textOf(m.channel.url)
+    host = Log.host(url)
+    if not URLPolicy.allowsStream(url).ok
+        Log.warn("Player", "Not playing " + textOf(m.channel.title) + ": the stream isn't http or https")
+        m.video.control = "stop"
+        showError()
+        applyOverlay("channel")
+        return
+    end if
+    content = CreateObject("roSGNode", "ContentNode")
+    content.url = url
+    content.streamFormat = "hls"
+    content.live = true
+    ' Roku's CA bundle for https streams (as PlaylistTask's transfers).
+    content.HttpCertificatesFile = "common:/certs/ca-bundle.crt"
+    m.video.content = content
+    m.playClock.Mark()
+    m.waitingForStart = true
+    m.video.control = "play"
+    restartTimer(m.stallTimer)
+    Log.info("Player", Log.withHost("Playing " + textOf(m.channel.title), host))
+    applyOverlay("channel")
+end sub
+
+sub onVideoState()
+    state = m.video.state
+    if state = "playing"
+        m.stallTimer.control = "stop"
+        if m.waitingForStart
+            m.waitingForStart = false
+            Log.info("Player", "Playing after " + m.playClock.TotalMilliseconds().ToStr() + " ms")
+        end if
+    else if state = "buffering"
+        restartTimer(m.stallTimer)
+    else if state = "paused"
+        m.stallTimer.control = "stop"
+    else if state = "error"
+        Log.warn("Player", "Stream error " + m.video.errorCode.ToStr() + " on " + channelLabel())
+        failed()
+    else if state = "finished"
+        ' A live stream doesn't end: the provider stopped sending it.
+        Log.warn("Player", "The stream ended on " + channelLabel())
+        failed()
+    end if
+    render()
+end sub
+
+' Buffering for PlayerSession.stallSeconds with no picture: as an error (step 11).
+sub onStall()
+    if m.channel = invalid or m.errorShown then return
+    state = m.video.state
+    if state = "playing" or state = "paused" then return
+    Log.warn("Player", "No picture for " + Str(PlayerSession.stallSeconds).Trim() + " s on " + channelLabel())
+    failed()
+end sub
+
+sub failed()
+    if m.channel = invalid or m.errorShown then return
+    m.waitingForStart = false
+    m.stallTimer.control = "stop"
+    m.video.control = "stop"
+    showError()
+end sub
+
+' The channel's title and its stream's host, for the log (never the URL).
+function channelLabel() as string
+    if m.channel = invalid then return "no channel"
+    return Log.withHost(textOf(m.channel.title), Log.host(textOf(m.channel.url)))
+end function
+
+sub showError()
+    m.errorShown = true
+    m.errorPanel.visible = true
+end sub
+
+sub hideError()
+    m.errorShown = false
+    m.errorPanel.visible = false
+end sub
+
+sub onControl()
+    if m.top.control <> "stop" then return
+    m.video.control = "stop"
+    m.channel = invalid
+    m.waitingForStart = false
+    m.stallTimer.control = "stop"
+    hideError()
+    applyOverlay("hideOverlays")
+end sub
+
+' --- keys -----------------------------------------------------------------------------------------------------
+
+' Every PlayerKeys key is handled here (so Back never reaches the scene from the player); others bubble up.
+function onKeyEvent(key as string, press as boolean) as boolean
+    result = PlayerKeys.handle(key, press, keyState())
+    if not result.handled then return false
+    if press and m.channel <> invalid then applyOverlay("press")
+    perform(result.action)
+    return true
+end function
+
+function keyState() as object
+    paused = isPaused()
+    shown = PlayerSession.visible(m.overlays, paused)
+    return {
+        hasChannel: m.channel <> invalid,
+        overlaysShown: shown.any,
+        errorShown: m.errorShown,
+        paused: paused,
+        previousChannelID: m.top.previousChannelID,
+        channelUpMovesUpList: m.top.channelUpMovesUpList
+    }
+end function
+
+sub perform(action as object)
+    kind = action.type
+    if kind = "zap"
+        m.top.action = { type: "zap", step: action.step }
+    else if kind = "retry"
+        play()
+    else if kind = "showOverlays" or kind = "hideOverlays"
+        applyOverlay(kind)
+    else if kind = "openGuide"
+        m.top.action = { type: "openGuide" }
+    else if kind = "openChannelMenu"
+        m.top.action = { type: "openChannelMenu", channelID: m.channel.id }
+    else if kind = "previousChannel"
+        m.top.action = { type: "previousChannel", channelID: action.channelID }
+    else if kind = "pause"
+        m.video.control = "pause"
+        applyOverlay("timeshift")
+    else if kind = "resume"
+        m.video.control = "resume"
+        applyOverlay("timeshift")
+    else if kind = "seek"
+        seekBy(action.seconds)
+        applyOverlay("timeshift")
+    end if
+end sub
+
+' Rewind / Fast Forward: within Roku's pause buffer, 30 s from the live edge (PlayerKeys.seekTarget). What the
+' pause-buffer fields hold is a device check (step 15); without them the clamp leaves the position alone.
+sub seekBy(seconds as integer)
+    position = m.video.position
+    target = PlayerKeys.seekTarget(position, seconds, nodeField(m.video, "pauseBufferStart"), nodeField(m.video, "pauseBufferEnd"))
+    if Refresh.isNumber(target) and target <> position then m.video.seek = target
+end sub
+
+function nodeField(node as object, name as string) as dynamic
+    if not node.hasField(name) then return invalid
+    return node.getField(name)
+end function
+
+function isPaused() as boolean
+    return m.video.state = "paused"
+end function
+
+' --- overlays -------------------------------------------------------------------------------------------------
+
+sub applyOverlay(event as string)
+    result = PlayerSession.apply(m.overlays, event)
+    m.overlays = result.overlays
+    setTimer(m.bannerTimer, result.timers.banner)
+    setTimer(m.barTimer, result.timers.bar)
+    setTimer(m.pausedTimer, result.timers.paused)
+    if event = "channel" or event = "showOverlays" then updateBanner()
+    render()
+end sub
+
+sub setTimer(timer as object, command as string)
+    if command = "start"
+        restartTimer(timer)
+    else if command = "stop"
+        timer.control = "stop"
+    end if
+end sub
+
+sub restartTimer(timer as object)
+    timer.control = "stop"
+    timer.control = "start"
+end sub
+
+sub onBannerTimeout()
+    applyOverlay("bannerTimeout")
+end sub
+
+sub onBarTimeout()
+    applyOverlay("barTimeout")
+end sub
+
+sub onPausedTimeout()
+    applyOverlay("pausedTimeout")
+end sub
+
+sub render()
+    shown = PlayerSession.visible(m.overlays, isPaused())
+    m.top.timeshiftShown = shown.timeshift
+    if shown.banner then fadeTo(1) else fadeTo(0)
+end sub
+
+sub fadeTo(target as integer)
+    if m.fadeTarget = target then return
+    m.fadeTarget = target
+    m.fade.control = "stop"
+    m.fadeValue.keyValue = [m.overlay.opacity, target]
+    if target = 1 then m.overlay.visible = true
+    m.fade.control = "start"
+end sub
+
+sub onFadeState()
+    if m.fade.state = "stopped" and m.fadeTarget = 0 then m.overlay.visible = false
+end sub
+
+' --- the banner -----------------------------------------------------------------------------------------------
+
+sub updateBanner()
+    if m.channel = invalid then return
+    now = CreateObject("roDateTime").AsSeconds()
+    programmes = PlayerSession.programmesFor(currentGuideData(), textOf(m.channel.id))
+    picked = BannerText.nowNext(programmes, now)
+    info = { title: textOf(m.channel.title), logo: textOf(m.channel.logo), nowTitle: "", timeText: "", progress: 0, nextText: "" }
+    current = picked.now
+    if current <> invalid
+        info.nowTitle = textOf(current.title)
+        ends = current.stop
+        if ends < current.start then ends = current.start
+        info.timeText = BannerText.timeRange(localParts(current.start), localParts(ends))
+        info.progress = BannerText.progress(current, now)
+        if picked.next <> invalid then info.nextText = BannerText.nextLine(textOf(picked.next.title), localParts(picked.next.start))
+    end if
+    m.banner.info = info
+end sub
+
+sub onGuideRevision()
+    ' The old copy goes now; the new one is read when the banner next needs it.
+    m.guideData = invalid
+    if m.fadeTarget = 1 then updateBanner()
+end sub
+
+' The programmes, read from the holder once per guideRevision (MainScene.xml's rule: one plain field get, kept in
+' this screen's m; never per row, never MoveFromField).
+function currentGuideData() as dynamic
+    holder = m.top.guideHolder
+    if holder = invalid then return invalid
+    if m.guideData = invalid or m.guideDataRevision <> m.top.guideRevision
+        m.guideData = holder.guideData
+        m.guideDataRevision = m.top.guideRevision
+    end if
+    return m.guideData
+end function
+
+' Local clock parts for BannerText.
+function localParts(seconds as dynamic) as object
+    date = CreateObject("roDateTime")
+    date.FromSeconds(Int(seconds))
+    date.ToLocalTime()
+    return { hours: date.GetHours(), minutes: date.GetMinutes() }
+end function
+
+function textOf(value as dynamic) as string
+    kind = LCase(type(value))
+    if kind = "string" or kind = "rostring" then return value
+    return ""
+end function

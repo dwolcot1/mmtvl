@@ -1,0 +1,88 @@
+' BannerText (M12 step 11): the banner's now/next choice and MMTVL's text (LiveBannerView: the time range, "Next:
+' <title> · <time>", the progress), and the progress fill's width (Banner A: 321 wide, 9 high). Off-device.
+namespace BannerTextTests
+
+    sub test_nowIsTheProgrammeAiringAndNextTheOneAfterIt(t as object)
+        list = BannerTextTests.programmes()
+        picked = BannerText.nowNext(list, 1150)
+        t.assertEqual(picked.now.title, "Evening Report")
+        t.assertEqual(picked.next.title, "Weather Now")
+        t.assertEqual(BannerText.nowNext(list, 1000).now.title, "Evening Report", "start is inside")
+        t.assertEqual(BannerText.nowNext(list, 1200).now.title, "Weather Now", "stop is outside")
+    end sub
+
+    ' File order isn't time order: next is the soonest after now's stop, not the next in the list.
+    sub test_nextIsTheSoonestWhateverTheOrder(t as object)
+        list = [
+            { start: 1000, stop: 1200, title: "Now" },
+            { start: 1800, stop: 2000, title: "Later" },
+            { start: 1200, stop: 1800, title: "Soonest" }
+        ]
+        t.assertEqual(BannerText.nowNext(list, 1100).next.title, "Soonest")
+    end sub
+
+    sub test_aGapHasNoNowAndTheNextUpcoming(t as object)
+        list = [{ start: 1000, stop: 1100, title: "Before" }, { start: 1300, stop: 1400, title: "After" }]
+        picked = BannerText.nowNext(list, 1200)
+        t.assertInvalid(picked.now)
+        t.assertEqual(picked.next.title, "After")
+    end sub
+
+    sub test_noProgrammesNoNowNoNext(t as object)
+        for each list in [invalid, [], [{ title: "no times" }, "text"]]
+            picked = BannerText.nowNext(list, 1200)
+            t.assertInvalid(picked.now, FormatJson(list))
+            t.assertInvalid(picked.next, FormatJson(list))
+        end for
+        t.assertEqual(BannerText.noProgramme, "No programme information")
+    end sub
+
+    sub test_theTimeRangeNamesThePeriodOnceWhenItsShared(t as object)
+        dash = " " + Chr(8211) + " "
+        t.assertEqual(BannerText.timeRange(BannerTextTests.at(18, 0), BannerTextTests.at(19, 0)), "6:00" + dash + "7:00 PM")
+        t.assertEqual(BannerText.timeRange(BannerTextTests.at(11, 30), BannerTextTests.at(12, 30)), "11:30 AM" + dash + "12:30 PM")
+        t.assertEqual(BannerText.timeRange(BannerTextTests.at(23, 30), BannerTextTests.at(0, 30)), "11:30 PM" + dash + "12:30 AM")
+        t.assertEqual(BannerText.timeRange(BannerTextTests.at(9, 5), BannerTextTests.at(9, 45)), "9:05" + dash + "9:45 AM")
+    end sub
+
+    sub test_clockIsTwelveHour(t as object)
+        t.assertEqual(BannerText.clock(BannerTextTests.at(0, 0)), "12:00 AM")
+        t.assertEqual(BannerText.clock(BannerTextTests.at(12, 0)), "12:00 PM")
+        t.assertEqual(BannerText.clock(BannerTextTests.at(19, 7)), "7:07 PM")
+    end sub
+
+    sub test_theNextLine(t as object)
+        t.assertEqual(BannerText.nextLine("Weather Now", BannerTextTests.at(19, 0)), "Next: Weather Now " + Chr(183) + " 7:00 PM")
+    end sub
+
+    sub test_progressIsClamped(t as object)
+        programme = { start: 1000, stop: 2000 }
+        t.assertEqual(BannerText.progress(programme, 1400), 0.4)
+        t.assertEqual(BannerText.progress(programme, 500), 0)
+        t.assertEqual(BannerText.progress(programme, 2500), 1)
+        t.assertEqual(BannerText.progress({ start: 1000, stop: 1000 }, 1000), 0, "no length")
+    end sub
+
+    ' Banner A: the 321-px track holds a 129-px fill at 40 %.
+    sub test_theFillWidth(t as object)
+        t.assertEqual(BannerText.progressWidth(0.4, 321, 9), 128)
+        t.assertEqual(BannerText.progressWidth(0.402, 321, 9), 129)
+        t.assertEqual(BannerText.progressWidth(0, 321, 9), 0, "nothing")
+        t.assertEqual(BannerText.progressWidth(0.001, 321, 9), 9, "at least the bar's height")
+        t.assertEqual(BannerText.progressWidth(1.5, 321, 9), 321, "at most the track")
+        t.assertEqual(BannerText.progressWidth(invalid, 321, 9), 0)
+    end sub
+
+    function programmes() as object
+        return [
+            { start: 1000, stop: 1200, title: "Evening Report" },
+            { start: 1200, stop: 1400, title: "Weather Now" },
+            { start: 600, stop: 1000, title: "Earlier" }
+        ]
+    end function
+
+    function at(hours as integer, minutes as integer) as object
+        return { hours: hours, minutes: minutes }
+    end function
+
+end namespace

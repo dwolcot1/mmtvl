@@ -1,0 +1,136 @@
+' The player's session logic (M12 step 11) around PlayerKeys: what opens at launch, what `state` keeps after a
+' channel plays, the item the player screen is given, and which overlays show (MMTVL's LiveTVModel banner,
+' timeshift bar and paused overlay timing). Pure functions, no nodes. Uses Lineup (displayNumber) and PlayerKeys
+' (remembered), so a component that loads this file loads Lineup.bs, PlayerKeys.bs and Refresh.bs too.
+'
+'   launchTarget(channels, lastChannelID) -> { screen: "player", channel } or { screen: "guide", channel: invalid }
+'     MMTVL's LiveTVModel.open (IPTV/LiveTVModel.swift:243-247): the last channel full screen when the playlist
+'     still has it (hidden or not, as MMTVL looks in all its channels), else the guide.
+'   stateAfterPlaying(state, id) -> SettingsStore's state with id as lastChannelID and first in recentChannelIDs
+'     (PlayerKeys.remembered: each id once, at most 10); the other fields are kept (IPTVLibrary.rememberChannel).
+'   channelByID(channels, id) -> the channel or invalid.
+'   playerItem(channel, logo) -> what PlayerScreen.channel takes: { id, title, url, logo } (logo "" for none). The
+'     title is MMTVL's banner line "<number>  <name>".
+'   programmesFor(guideData, channelID) -> GuidePipeline.programmesFor on GuideFetch.guideData's shape, without
+'     loading the pipeline (its scanner and matcher) into the player: the channel's programmes or invalid.
+'
+' Overlays (MMTVL's banner, showsTimeshiftBar and pausedOverlayVisible): overlays is { banner, bar, paused }, all
+' booleans. apply(overlays, event) -> { overlays, timers: { banner, bar, paused } }, each timer "start" (restart
+' it), "stop" or "" (leave it). Events:
+'   press         any key the player handles (MMTVL's handle: showPausedOverlay on every command), first
+'   showOverlays  OK: the banner and the timeshift bar
+'   hideOverlays  OK again or Back: all three off
+'   timeshift     pause, resume or a skip: the timeshift bar
+'   channel       a channel starts (a zap, Replay, retry, launch): the banner
+'   bannerTimeout, barTimeout, pausedTimeout   a timer fired: that overlay goes
+' visible(overlays, paused) -> { banner, timeshift, any }: the timeshift bar shows after a pause, resume or skip,
+' and while paused until pausedOverlayDuration after the last press (M7m L15, D51). any is PlayerKeys' overlaysShown.
+namespace PlayerSession
+
+    ' A stream that stays buffering this long shows the error panel (step 11).
+    const stallSeconds = 15
+
+    function launchTarget(channels as dynamic, lastChannelID as dynamic) as object
+        found = PlayerSession.channelByID(channels, lastChannelID)
+        if found = invalid then return { screen: "guide", channel: invalid }
+        return { screen: "player", channel: found }
+    end function
+
+    function channelByID(channels as dynamic, id as dynamic) as dynamic
+        if LCase(type(channels)) <> "roarray" then return invalid
+        if not PlayerSession.isText(id) then return invalid
+        if id = "" then return invalid
+        for each channel in channels
+            if LCase(type(channel)) = "roassociativearray"
+                if PlayerSession.isText(channel.id) and channel.id = id then return channel
+            end if
+        end for
+        return invalid
+    end function
+
+    function stateAfterPlaying(state as dynamic, id as string) as object
+        result = {}
+        if LCase(type(state)) = "roassociativearray"
+            for each field in state
+                result[field] = state[field]
+            end for
+        end if
+        result["lastChannelID"] = id
+        result["recentChannelIDs"] = PlayerKeys.remembered(result.recentChannelIDs, id)
+        return result
+    end function
+
+    function playerItem(channel as object, logo as dynamic) as object
+        shownLogo = ""
+        if PlayerSession.isText(logo) then shownLogo = logo
+        name = ""
+        if PlayerSession.isText(channel.name) then name = channel.name
+        url = ""
+        if PlayerSession.isText(channel.url) then url = channel.url
+        return { id: channel.id, title: Lineup.displayNumber(channel) + "  " + name, url: url, logo: shownLogo }
+    end function
+
+    function programmesFor(guideData as dynamic, channelID as string) as dynamic
+        if LCase(type(guideData)) <> "roassociativearray" then return invalid
+        if LCase(type(guideData.matches)) <> "roassociativearray" or LCase(type(guideData.guides)) <> "roarray" then return invalid
+        ref = guideData.matches[channelID]
+        if LCase(type(ref)) <> "roassociativearray" then return invalid
+        guide = guideData.guides[ref.guide]
+        if LCase(type(guide)) <> "roassociativearray" then return invalid
+        if LCase(type(guide.programmes)) <> "roassociativearray" then return invalid
+        return guide.programmes[ref.epgID]
+    end function
+
+    ' --- overlays -------------------------------------------------------------------------------------------------
+
+    function noOverlays() as object
+        return { banner: false, bar: false, paused: false }
+    end function
+
+    function apply(overlays as dynamic, event as string) as object
+        result = PlayerSession.noOverlays()
+        if LCase(type(overlays)) = "roassociativearray"
+            for each field in ["banner", "bar", "paused"]
+                if overlays[field] = true then result[field] = true
+            end for
+        end if
+        timers = { banner: "", bar: "", paused: "" }
+        if event = "press"
+            result.paused = true
+            timers.paused = "start"
+        else if event = "showOverlays"
+            result.banner = true
+            result.bar = true
+            timers.banner = "start"
+            timers.bar = "start"
+        else if event = "hideOverlays"
+            result = PlayerSession.noOverlays()
+            timers = { banner: "stop", bar: "stop", paused: "stop" }
+        else if event = "timeshift"
+            result.bar = true
+            timers.bar = "start"
+        else if event = "channel"
+            result.banner = true
+            timers.banner = "start"
+        else if event = "bannerTimeout"
+            result.banner = false
+        else if event = "barTimeout"
+            result.bar = false
+        else if event = "pausedTimeout"
+            result.paused = false
+        end if
+        return { overlays: result, timers: timers }
+    end function
+
+    function visible(overlays as dynamic, paused as boolean) as object
+        state = PlayerSession.apply(overlays, "").overlays
+        timeshift = state.bar or (paused and state.paused)
+        return { banner: state.banner, timeshift: timeshift, any: state.banner or timeshift }
+    end function
+
+    function isText(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "string" or kind = "rostring"
+    end function
+
+end namespace

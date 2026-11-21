@@ -97,6 +97,16 @@ namespace Theme
         return node
     end function
 
+    ' A text line's height for a font spec, on the 3-px grid, as the frames set them (the notes frame: 24 -> 30,
+    ' 27 -> 33, 30 -> 36, 39 -> 48, 45 -> 54, 48 -> 60). Labels use it as their height with vertAlign "center".
+    ' Another size: 1.25 x, rounded up to a multiple of 3.
+    function lineHeight(spec as object) as integer
+        heights = { "24": 30, "27": 33, "30": 36, "39": 48, "45": 54, "48": 60 }
+        known = heights[spec.size.ToStr()]
+        if known <> invalid then return known
+        return Int((spec.size * 1.25 + 2) / 3) * 3
+    end function
+
     function layout() as object
         return {
             "sideMargin": 120,
@@ -111,8 +121,18 @@ namespace Theme
             "liveBannerLogoGap": 33,
             "liveBarHeight": 9,
             "liveBannerProgressWidth": 321,
+            "liveBannerProgressGap": 21, ' between the time range and the progress track (Theme.swift 20, on 3 px)
+            "liveOverlayHeight": 561, ' the overlay_bottom gradient behind the banner, from the bottom of the screen
             "errorPanelPadding": 60,
             "errorPanelSymbolSize": 72, ' Theme.swift tileSymbolSize
+            "errorPanelSpacing": 21, ' between the symbol, the message and the hint (Theme.swift 20, on 3 px)
+            ' Roku-only: the low-memory notice (step 11, L7): a liveMenuWideWidth panel_solid over searchDim, centred;
+            ' its rows are settings_info_row (settingsRowMinHeight, settingsRowTextInset, settingsRowSpacing).
+            "noticePadding": 48,
+            "noticeSectionSpacing": 27, ' between the header, the rows, the buttons and the footnote
+            "noticeHeaderSpacing": 12, ' between the title and the body
+            "noticeButtonSpacing": 24,
+            "buttonTextInset": 39, ' a capsule button's label inset (focus_capsule / settings_row at 72 high)
             ' Guide (Theme.swift guide*): info top-left, the playing channel's video top-right, the grid below.
             "guideInfoRect": { "x": 120, "y": 60, "width": 981, "height": 360 },
             "guidePreviewRect": { "x": 1161, "y": 60, "width": 639, "height": 360 },
@@ -193,7 +213,9 @@ namespace Theme
             "bar": "pkg:/images/bar.9.png", ' progress bar and track (blendColor); also TimeGrid nowBarBitmapUri
             ' Plain gradients, stretched by a Poster (loadDisplayMode scaleToFill).
             "overlayBottom": "pkg:/images/overlay_bottom.png", ' behind the player banner (liveOverlayBottom)
-            "background": "pkg:/images/background.png" ' behind the guide, Settings, Import (background to black)
+            "background": "pkg:/images/background.png", ' behind the guide, Settings, Import (background to black)
+            ' Icons (roku/tools/gen-icons.py): white glyphs on transparent, tinted with Poster blendColor.
+            "iconWarning": "pkg:/images/icon_warning.png" ' the error panel's symbol (errorPanelSymbolSize, secondaryText)
         }
     end function
 

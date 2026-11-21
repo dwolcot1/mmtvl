@@ -2,7 +2,12 @@
 <!-- The screen router (M12). Step 2: the app's name and version. Step 8: loads the settings and the playlist
      (PlaylistTask) at launch, then every 15 minutes when stale, and shows the playlist's status. Step 9: after
      each playlist load and on the 15-minute tick, reads the guides (GuideTask) when one is due (12 h) or the
-     guide sources changed. Screens come with steps 10-13 and read the fields below. -->
+     guide sources changed. Screens come with steps 10-13 and read the fields below. Step 11: the player
+     (PlayerScreen) and the screen router: at launch, once the playlist has answered, the last channel full screen
+     if the playlist has it, else the guide; the player's zaps, Replay and Back; the last channel and recents saved
+     in state; on a Low Roku's first launch, the low-memory notice over whatever opened first. Until steps 12 and
+     13 build them, the guide and Settings → Device are placeholders here (guidePlaceholder, settingsPlaceholder),
+     which those steps replace. Back never leaves the app (D49): the scene handles every key that reaches it. -->
 <component name="MainScene" extends="Scene">
     <interface>
         <!-- Lineup.build's result for the last playlist that loaded (kept when a later load fails). -->
@@ -34,29 +39,32 @@
     <script type="text/brighterscript" uri="pkg:/source/lib/GuideSources.bs" />
     <!-- Step 10: the Roku look (colours, fonts, sizes, 9-patches); the screens of steps 11-13 read it. -->
     <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
+    <!-- Step 11: launch routing, zapping, recents and the low-memory notice. -->
+    <script type="text/brighterscript" uri="pkg:/source/lib/Lineup.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/PlayerKeys.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/PlayerSession.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/URLPolicy.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Capabilities.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/LowMemoryNotice.bs" />
     <children>
-        <Rectangle id="background" width="1920" height="1080" color="0x1C1C1EFF" />
-        <Label
-            id="title"
-            text="MMTVL Live TV"
-            font="font:LargeBoldSystemFont"
-            color="0xFFFFFFFF"
-            width="1920"
-            horizAlign="center"
-            translation="[0, 470]" />
-        <Label
-            id="version"
-            font="font:MediumSystemFont"
-            color="0xFFFFFF99"
-            width="1920"
-            horizAlign="center"
-            translation="[0, 560]" />
-        <Label
-            id="status"
-            font="font:SmallSystemFont"
-            color="0xFFFFFFCC"
-            width="1920"
-            horizAlign="center"
-            translation="[0, 700]" />
+        <Poster id="background" />
+        <!-- Shown once a channel plays; it stays under the guide (still playing) until Back returns to it. -->
+        <PlayerScreen id="player" visible="false" />
+        <!-- Step 12 replaces this with the guide (GuideScreen). Until then: the app's name, version and playlist
+             status; OK plays (the playing channel, else the first visible one), Back returns to the playing channel. -->
+        <Group id="guidePlaceholder">
+            <Poster id="guideBackground" />
+            <Label id="title" text="MMTVL Live TV" />
+            <Label id="version" />
+            <Label id="status" />
+            <Label id="guideHint" text="The guide comes with step 12 · OK: play · Back: the playing channel" />
+        </Group>
+        <!-- Step 13 replaces this with Settings → Device. Until then the notice's Open Settings comes here; Back or
+             OK returns to the screen it came from. -->
+        <Group id="settingsPlaceholder" visible="false">
+            <Poster id="settingsBackground" />
+            <Label id="settingsTitle" text="Settings → Device" />
+            <Label id="settingsHint" text="Settings come with step 13 · Back: return" />
+        </Group>
     </children>
 </component>

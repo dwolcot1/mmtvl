@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The low-memory notice (M12 step 11, L7 as amended 2026-11-21; frame "Low-memory notice", cau6M): over whatever
+     screen opened first, a full-screen searchDim, then a liveMenuWideWidth panel_solid panel, centred: the title,
+     the body, one read-only row per feature that is on (LowMemoryNotice.items), OK and Open Settings, and the
+     footnote. Left and Right move between the buttons; OK answers. Every key is handled here, so none reaches the
+     screen underneath, and Back never leaves the app (D49). Text from LowMemoryNotice.bs, sizes from Theme.bs. -->
+<component name="LowMemoryNoticeView" extends="Group">
+    <interface>
+        <!-- LowMemoryNotice.items(settings): [{ id, title, value }]. -->
+        <field id="items" type="array" onChange="layoutNotice" />
+        <!-- Set once, when a button is chosen: "ok" or "openSettings". -->
+        <field id="choice" type="string" alwaysNotify="true" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/LowMemoryNotice.bs" />
+    <children>
+        <Rectangle id="dim" />
+        <Group id="panelGroup">
+            <Poster id="panel" />
+            <Label id="title" />
+            <Label id="body" />
+            <Group id="rows" />
+            <Group id="buttons" />
+            <Label id="footnote" />
+        </Group>
+    </children>
+</component>
