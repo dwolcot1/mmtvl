@@ -17614,6 +17614,501 @@
               ]
             }
           ]
+        },
+        {
+          "type": "text",
+          "id": "hkS0Q",
+          "name": "Section",
+          "fill": "$primaryText",
+          "content": "Timeshift bar (step 11b) → SceneGraph",
+          "fontFamily": "Montserrat",
+          "fontSize": 30,
+          "fontWeight": "700"
+        },
+        {
+          "type": "frame",
+          "id": "s1IVxT",
+          "name": "Table Timeshift bar",
+          "width": "fill_container",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "s43hGg",
+              "name": "Row",
+              "width": "fill_container",
+              "gap": 24,
+              "padding": [
+                10,
+                0
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "OY8Kj",
+                  "name": "Cell",
+                  "fill": "$secondaryText",
+                  "textGrowth": "fixed-width",
+                  "width": 520,
+                  "content": "Part (MMTVL)",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "IVCoQ",
+                  "name": "Cell",
+                  "fill": "$secondaryText",
+                  "textGrowth": "fixed-width",
+                  "width": 340,
+                  "content": "SceneGraph node",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "CcLsI",
+                  "name": "Cell",
+                  "fill": "$secondaryText",
+                  "textGrowth": "fixed-width",
+                  "width": 1000,
+                  "content": "Image / tokens",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24,
+                  "fontWeight": "700"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "jY4C8",
+              "name": "Row",
+              "width": "fill_container",
+              "stroke": "#FFFFFF1F",
+              "strokeWidth": {
+                "top": 1
+              },
+              "gap": 24,
+              "padding": [
+                10,
+                0
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "H8JRZ",
+                  "name": "Cell",
+                  "fill": "$primaryText",
+                  "textGrowth": "fixed-width",
+                  "width": 520,
+                  "content": "Panel (the banner's glass, role banner)",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                },
+                {
+                  "type": "text",
+                  "id": "wNtoA",
+                  "name": "Cell",
+                  "fill": "#FFFFFFCC",
+                  "textGrowth": "fixed-width",
+                  "width": 340,
+                  "content": "Poster",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                },
+                {
+                  "type": "text",
+                  "id": "skiVn",
+                  "name": "Cell",
+                  "fill": "#FFFFFFCC",
+                  "textGrowth": "fixed-width",
+                  "width": 1000,
+                  "content": "panel_banner.9.png; liveBannerPadding 33, liveBannerBottom 72, sideMargin; liveBannerBarGap 24 under Banner A",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "FCzQt",
+              "name": "Row",
+              "width": "fill_container",
+              "stroke": "#FFFFFF1F",
+              "strokeWidth": {
+                "top": 1
+              },
+              "gap": 24,
+              "padding": [
+                10,
+                0
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "XJPQj",
+                  "name": "Cell",
+                  "fill": "$primaryText",
+                  "textGrowth": "fixed-width",
+                  "width": 520,
+                  "content": "Gradient behind (liveOverlayGradient)",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                },
+                {
+                  "type": "text",
+                  "id": "nXymC",
+                  "name": "Cell",
+                  "fill": "#FFFFFFCC",
+                  "textGrowth": "fixed-width",
+                  "width": 340,
+                  "content": "Poster, scaleToFill",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                },
+                {
+                  "type": "text",
+                  "id": "cwHNv",
+                  "name": "Cell",
+                  "fill": "#FFFFFFCC",
+                  "textGrowth": "fixed-width",
+                  "width": 1000,
+                  "content": "overlay_bottom.png; starts liveOverlayTopPadding 120 above the panel",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "rDiSL",
+              "name": "Row",
+              "width": "fill_container",
+              "stroke": "#FFFFFF1F",
+              "strokeWidth": {
+                "top": 1
+              },
+              "gap": 24,
+              "padding": [
+                10,
+                0
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "AC7Q4",
+                  "name": "Cell",
+                  "fill": "$primaryText",
+                  "textGrowth": "fixed-width",
+                  "width": 520,
+                  "content": "Track, buffer, playhead (three Capsules)",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                },
+                {
+                  "type": "text",
+                  "id": "w4706",
+                  "name": "Cell",
+                  "fill": "#FFFFFFCC",
+                  "textGrowth": "fixed-width",
+                  "width": 340,
+                  "content": "3 Posters",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                },
+                {
+                  "type": "text",
+                  "id": "S4MiC",
+                  "name": "Cell",
+                  "fill": "#FFFFFFCC",
+                  "textGrowth": "fixed-width",
+                  "width": 1000,
+                  "content": "bar.9.png, blendColor tileFill, focusHighlight, primaryText; liveBarHeight 9; the track is the pause buffer (pauseBufferStart → pauseBufferEnd = the live end), the fill ends at the playhead, at least 9 wide",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "A2WdkT",
+              "name": "Row",
+              "width": "fill_container",
+              "stroke": "#FFFFFF1F",
+              "strokeWidth": {
+                "top": 1
+              },
+              "gap": 24,
+              "padding": [
+                10,
+                0
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "gDKY2",
+                  "name": "Cell",
+                  "fill": "$primaryText",
+                  "textGrowth": "fixed-width",
+                  "width": 520,
+                  "content": "pause.fill (only while paused)",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                },
+                {
+                  "type": "text",
+                  "id": "RAR5V",
+                  "name": "Cell",
+                  "fill": "#FFFFFFCC",
+                  "textGrowth": "fixed-width",
+                  "width": 340,
+                  "content": "Poster 24 × 24",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                },
+                {
+                  "type": "text",
+                  "id": "IzGrb",
+                  "name": "Cell",
+                  "fill": "#FFFFFFCC",
+                  "textGrowth": "fixed-width",
+                  "width": 1000,
+                  "content": "icon_pause.png (new, gen-icons.py), blendColor primaryText; timeshiftRowSpacing 15",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "F2Cni",
+              "name": "Row",
+              "width": "fill_container",
+              "stroke": "#FFFFFF1F",
+              "strokeWidth": {
+                "top": 1
+              },
+              "gap": 24,
+              "padding": [
+                10,
+                0
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "jdfo2",
+                  "name": "Cell",
+                  "fill": "$primaryText",
+                  "textGrowth": "fixed-width",
+                  "width": 520,
+                  "content": "\"LIVE\" or \"−m:ss\" (monospaced digits)",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                },
+                {
+                  "type": "text",
+                  "id": "XnVhc",
+                  "name": "Cell",
+                  "fill": "#FFFFFFCC",
+                  "textGrowth": "fixed-width",
+                  "width": 340,
+                  "content": "Label",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                },
+                {
+                  "type": "text",
+                  "id": "fnPfx",
+                  "name": "Cell",
+                  "fill": "#FFFFFFCC",
+                  "textGrowth": "fixed-width",
+                  "width": 1000,
+                  "content": "liveBannerDetail 24, primaryText; Roku fonts have no monospaced-digit option, so the width can shift as it counts",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Z6F9Wd",
+              "name": "Row",
+              "width": "fill_container",
+              "stroke": "#FFFFFF1F",
+              "strokeWidth": {
+                "top": 1
+              },
+              "gap": 24,
+              "padding": [
+                10,
+                0
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "BkgSk",
+                  "name": "Cell",
+                  "fill": "$primaryText",
+                  "textGrowth": "fixed-width",
+                  "width": 520,
+                  "content": "Key hint (right)",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                },
+                {
+                  "type": "text",
+                  "id": "vp5WN",
+                  "name": "Cell",
+                  "fill": "#FFFFFFCC",
+                  "textGrowth": "fixed-width",
+                  "width": 340,
+                  "content": "Label, horizAlign right",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                },
+                {
+                  "type": "text",
+                  "id": "gTzXD",
+                  "name": "Cell",
+                  "fill": "#FFFFFFCC",
+                  "textGrowth": "fixed-width",
+                  "width": 1000,
+                  "content": "liveBannerDetail, secondaryText; \"Rewind/Fast Forward: 10 s · Play/Pause\" (MMTVL: Left/Right 10 s, Rewind/FF 30 s)",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "N3rQO",
+              "name": "Row",
+              "width": "fill_container",
+              "stroke": "#FFFFFF1F",
+              "strokeWidth": {
+                "top": 1
+              },
+              "gap": 24,
+              "padding": [
+                10,
+                0
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "L3qCOT",
+                  "name": "Cell",
+                  "fill": "$primaryText",
+                  "textGrowth": "fixed-width",
+                  "width": 520,
+                  "content": "Behind-live badge (top right, only when not live)",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                },
+                {
+                  "type": "text",
+                  "id": "x6UM8",
+                  "name": "Cell",
+                  "fill": "#FFFFFFCC",
+                  "textGrowth": "fixed-width",
+                  "width": 340,
+                  "content": "Poster + Label",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                },
+                {
+                  "type": "text",
+                  "id": "O8GqaI",
+                  "name": "Cell",
+                  "fill": "#FFFFFFCC",
+                  "textGrowth": "fixed-width",
+                  "width": 1000,
+                  "content": "badge_banner.9.png (new), 48 high, padding 15; timeshiftBadgeTop 60, right edge at sideMargin",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Sc6Uz",
+              "name": "Row",
+              "width": "fill_container",
+              "stroke": "#FFFFFF1F",
+              "strokeWidth": {
+                "top": 1
+              },
+              "gap": 24,
+              "padding": [
+                10,
+                0
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "udjxo",
+                  "name": "Cell",
+                  "fill": "$primaryText",
+                  "textGrowth": "fixed-width",
+                  "width": 520,
+                  "content": "Timing",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                },
+                {
+                  "type": "text",
+                  "id": "aYAsb",
+                  "name": "Cell",
+                  "fill": "#FFFFFFCC",
+                  "textGrowth": "fixed-width",
+                  "width": 340,
+                  "content": "PlayerSession.visible",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                },
+                {
+                  "type": "text",
+                  "id": "waBLz",
+                  "name": "Cell",
+                  "fill": "#FFFFFFCC",
+                  "textGrowth": "fixed-width",
+                  "width": 1000,
+                  "content": "the bar 5 s after a skip (bannerDuration); while paused until pausedOverlayDuration 15 s after the pause or last press (D51)",
+                  "lineHeight": 1.3,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -27759,6 +28254,1480 @@
                   "textGrowth": "fixed-width",
                   "width": "fill_container",
                   "content": "Shown once, the first time MMTVL Live TV opens on this Roku.",
+                  "lineHeight": 1.25,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 16,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "rW6vt",
+      "x": 0,
+      "y": -1280,
+      "name": "Timeshift: paused (bar, paused symbol, behind-live badge)",
+      "clip": true,
+      "width": 1920,
+      "height": 1080,
+      "fill": [
+        {
+          "type": "gradient",
+          "gradientType": "linear",
+          "enabled": true,
+          "rotation": 180,
+          "size": {
+            "height": 1
+          },
+          "colors": [
+            {
+              "color": "#1F3346",
+              "position": 0
+            },
+            {
+              "color": "#2B4A37",
+              "position": 0.5
+            },
+            {
+              "color": "#13241A",
+              "position": 1
+            }
+          ]
+        },
+        {
+          "type": "gradient",
+          "gradientType": "radial",
+          "enabled": true,
+          "rotation": 0,
+          "size": {
+            "width": 1.1,
+            "height": 1.1
+          },
+          "colors": [
+            {
+              "color": "#9CC07A70",
+              "position": 0
+            },
+            {
+              "color": "#9CC07A00",
+              "position": 1
+            }
+          ],
+          "center": {
+            "x": 0.62,
+            "y": 0.42
+          }
+        },
+        {
+          "type": "gradient",
+          "gradientType": "radial",
+          "enabled": true,
+          "rotation": 0,
+          "size": {
+            "width": 0.7,
+            "height": 0.7
+          },
+          "colors": [
+            {
+              "color": "#E8D2A050",
+              "position": 0
+            },
+            {
+              "color": "#E8D2A000",
+              "position": 1
+            }
+          ],
+          "center": {
+            "x": 0.2,
+            "y": 0.25
+          }
+        }
+      ],
+      "layout": "none",
+      "children": [
+        {
+          "type": "frame",
+          "id": "jF8MT",
+          "x": 0,
+          "y": 768,
+          "name": "Overlay gradient (overlay_bottom.png; from liveOverlayTopPadding above the panel)",
+          "width": 1920,
+          "height": 312,
+          "fill": {
+            "type": "gradient",
+            "gradientType": "linear",
+            "enabled": true,
+            "rotation": 180,
+            "size": {
+              "height": 1
+            },
+            "colors": [
+              {
+                "color": "#00000000",
+                "position": 0
+              },
+              {
+                "color": "$liveOverlayBottom",
+                "position": 1
+              }
+            ]
+          },
+          "layout": "none"
+        },
+        {
+          "type": "frame",
+          "id": "PyqWf",
+          "x": 120,
+          "y": 888,
+          "name": "Banner panel (panel_banner.9.png)",
+          "width": 1680,
+          "height": 120,
+          "fill": "$bannerPanelFill",
+          "cornerRadius": 27,
+          "stroke": {
+            "type": "gradient",
+            "gradientType": "linear",
+            "enabled": true,
+            "rotation": 180,
+            "size": {
+              "height": 1
+            },
+            "colors": [
+              {
+                "color": "#FFFFFF47",
+                "position": 0
+              },
+              {
+                "color": "#FFFFFF08",
+                "position": 0.5
+              },
+              {
+                "color": "#FFFFFF21",
+                "position": 1
+              }
+            ]
+          },
+          "strokeWidth": 3,
+          "strokeAlignment": "inner",
+          "layout": "vertical",
+          "gap": 24,
+          "padding": 33,
+          "children": [
+            {
+              "type": "frame",
+              "id": "YEQkf",
+              "name": "Timeshift bar",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 15,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "Ojwbe",
+                  "name": "Track: the pause buffer, pauseBufferStart (left) to pauseBufferEnd = live (right)",
+                  "width": "fill_container",
+                  "height": 9,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "W1Jp5",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Track (bar.9.png, blendColor tileFill)",
+                      "width": 1614,
+                      "height": 9,
+                      "fill": "$tileFill",
+                      "cornerRadius": 4.5,
+                      "layout": "none"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "PMajL",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Buffered (bar.9.png, blendColor focusHighlight)",
+                      "width": 1614,
+                      "height": 9,
+                      "fill": "$focusHighlight",
+                      "cornerRadius": 4.5,
+                      "layout": "none"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Qus15",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Playhead fill (bar.9.png, blendColor primaryText; at least liveBarHeight wide)",
+                      "width": 888,
+                      "height": 9,
+                      "fill": "$primaryText",
+                      "cornerRadius": 4.5,
+                      "layout": "none"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "X7qok",
+                  "name": "Label row",
+                  "width": "fill_container",
+                  "gap": 15,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "D1lXl",
+                      "name": "Paused symbol (Poster icon_pause.png, 24, blendColor primaryText)",
+                      "width": 24,
+                      "height": 24,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "auIe3",
+                          "x": 6,
+                          "y": 4,
+                          "name": "pause bar",
+                          "width": 4,
+                          "height": 16,
+                          "fill": "$primaryText",
+                          "cornerRadius": 1,
+                          "layout": "none"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "oRcBd",
+                          "x": 14,
+                          "y": 4,
+                          "name": "pause bar",
+                          "width": 4,
+                          "height": 16,
+                          "fill": "$primaryText",
+                          "cornerRadius": 1,
+                          "layout": "none"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "f4zkmH",
+                      "name": "Behind live (Label, liveBannerDetail): LIVE or −m:ss",
+                      "fill": "$primaryText",
+                      "content": "−0:45",
+                      "lineHeight": 1.25,
+                      "fontFamily": "Montserrat",
+                      "fontSize": 24,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "k8yW03",
+                      "name": "Spacer",
+                      "width": "fill_container",
+                      "height": 3
+                    },
+                    {
+                      "type": "text",
+                      "id": "RYoYe",
+                      "name": "Hint (Label, liveBannerDetail, secondaryText)",
+                      "fill": "$secondaryText",
+                      "content": "Rewind/Fast Forward: 10 s · Play/Pause",
+                      "lineHeight": 1.25,
+                      "fontFamily": "Montserrat",
+                      "fontSize": 24,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "HLYWH",
+          "x": 120,
+          "y": 60,
+          "name": "Badge row (right-aligned at sideMargin)",
+          "width": 1680,
+          "justifyContent": "end",
+          "children": [
+            {
+              "type": "frame",
+              "id": "XW6qh",
+              "name": "Behind-live badge (badge_banner.9.png, 48 high)",
+              "height": 48,
+              "fill": "$bannerPanelFill",
+              "cornerRadius": 24,
+              "stroke": {
+                "type": "gradient",
+                "gradientType": "linear",
+                "enabled": true,
+                "rotation": 180,
+                "size": {
+                  "height": 1
+                },
+                "colors": [
+                  {
+                    "color": "#FFFFFF47",
+                    "position": 0
+                  },
+                  {
+                    "color": "#FFFFFF08",
+                    "position": 0.5
+                  },
+                  {
+                    "color": "#FFFFFF21",
+                    "position": 1
+                  }
+                ]
+              },
+              "strokeWidth": 3,
+              "strokeAlignment": "inner",
+              "padding": [
+                0,
+                15
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "NayPG",
+                  "name": "Behind live (Label, liveBannerDetail)",
+                  "fill": "$primaryText",
+                  "content": "−0:45",
+                  "lineHeight": 1.25,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "aZpEA",
+      "x": 2120,
+      "y": -1280,
+      "name": "Timeshift: after a skip back (playing, behind live)",
+      "clip": true,
+      "width": 1920,
+      "height": 1080,
+      "fill": [
+        {
+          "type": "gradient",
+          "gradientType": "linear",
+          "enabled": true,
+          "rotation": 180,
+          "size": {
+            "height": 1
+          },
+          "colors": [
+            {
+              "color": "#1F3346",
+              "position": 0
+            },
+            {
+              "color": "#2B4A37",
+              "position": 0.5
+            },
+            {
+              "color": "#13241A",
+              "position": 1
+            }
+          ]
+        },
+        {
+          "type": "gradient",
+          "gradientType": "radial",
+          "enabled": true,
+          "rotation": 0,
+          "size": {
+            "width": 1.1,
+            "height": 1.1
+          },
+          "colors": [
+            {
+              "color": "#9CC07A70",
+              "position": 0
+            },
+            {
+              "color": "#9CC07A00",
+              "position": 1
+            }
+          ],
+          "center": {
+            "x": 0.62,
+            "y": 0.42
+          }
+        },
+        {
+          "type": "gradient",
+          "gradientType": "radial",
+          "enabled": true,
+          "rotation": 0,
+          "size": {
+            "width": 0.7,
+            "height": 0.7
+          },
+          "colors": [
+            {
+              "color": "#E8D2A050",
+              "position": 0
+            },
+            {
+              "color": "#E8D2A000",
+              "position": 1
+            }
+          ],
+          "center": {
+            "x": 0.2,
+            "y": 0.25
+          }
+        }
+      ],
+      "layout": "none",
+      "children": [
+        {
+          "type": "frame",
+          "id": "gdbQe",
+          "x": 0,
+          "y": 768,
+          "name": "Overlay gradient (overlay_bottom.png; from liveOverlayTopPadding above the panel)",
+          "width": 1920,
+          "height": 312,
+          "fill": {
+            "type": "gradient",
+            "gradientType": "linear",
+            "enabled": true,
+            "rotation": 180,
+            "size": {
+              "height": 1
+            },
+            "colors": [
+              {
+                "color": "#00000000",
+                "position": 0
+              },
+              {
+                "color": "$liveOverlayBottom",
+                "position": 1
+              }
+            ]
+          },
+          "layout": "none"
+        },
+        {
+          "type": "frame",
+          "id": "s7spg",
+          "x": 120,
+          "y": 888,
+          "name": "Banner panel (panel_banner.9.png)",
+          "width": 1680,
+          "height": 120,
+          "fill": "$bannerPanelFill",
+          "cornerRadius": 27,
+          "stroke": {
+            "type": "gradient",
+            "gradientType": "linear",
+            "enabled": true,
+            "rotation": 180,
+            "size": {
+              "height": 1
+            },
+            "colors": [
+              {
+                "color": "#FFFFFF47",
+                "position": 0
+              },
+              {
+                "color": "#FFFFFF08",
+                "position": 0.5
+              },
+              {
+                "color": "#FFFFFF21",
+                "position": 1
+              }
+            ]
+          },
+          "strokeWidth": 3,
+          "strokeAlignment": "inner",
+          "layout": "vertical",
+          "gap": 24,
+          "padding": 33,
+          "children": [
+            {
+              "type": "frame",
+              "id": "eM5sH",
+              "name": "Timeshift bar",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 15,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "tQaPe",
+                  "name": "Track: the pause buffer, pauseBufferStart (left) to pauseBufferEnd = live (right)",
+                  "width": "fill_container",
+                  "height": 9,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "K29BS",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Track (bar.9.png, blendColor tileFill)",
+                      "width": 1614,
+                      "height": 9,
+                      "fill": "$tileFill",
+                      "cornerRadius": 4.5,
+                      "layout": "none"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ZHVY2",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Buffered (bar.9.png, blendColor focusHighlight)",
+                      "width": 1614,
+                      "height": 9,
+                      "fill": "$focusHighlight",
+                      "cornerRadius": 4.5,
+                      "layout": "none"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "zgtcp",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Playhead fill (bar.9.png, blendColor primaryText; at least liveBarHeight wide)",
+                      "width": 969,
+                      "height": 9,
+                      "fill": "$primaryText",
+                      "cornerRadius": 4.5,
+                      "layout": "none"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Q9FOR",
+                  "name": "Label row",
+                  "width": "fill_container",
+                  "gap": 15,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "zdVMO",
+                      "name": "Behind live (Label, liveBannerDetail): LIVE or −m:ss",
+                      "fill": "$primaryText",
+                      "content": "−0:40",
+                      "lineHeight": 1.25,
+                      "fontFamily": "Montserrat",
+                      "fontSize": 24,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "HP1is",
+                      "name": "Spacer",
+                      "width": "fill_container",
+                      "height": 3
+                    },
+                    {
+                      "type": "text",
+                      "id": "U8fND",
+                      "name": "Hint (Label, liveBannerDetail, secondaryText)",
+                      "fill": "$secondaryText",
+                      "content": "Rewind/Fast Forward: 10 s · Play/Pause",
+                      "lineHeight": 1.25,
+                      "fontFamily": "Montserrat",
+                      "fontSize": 24,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "SkUNg",
+          "x": 120,
+          "y": 60,
+          "name": "Badge row (right-aligned at sideMargin)",
+          "width": 1680,
+          "justifyContent": "end",
+          "children": [
+            {
+              "type": "frame",
+              "id": "o9jPq",
+              "name": "Behind-live badge (badge_banner.9.png, 48 high)",
+              "height": 48,
+              "fill": "$bannerPanelFill",
+              "cornerRadius": 24,
+              "stroke": {
+                "type": "gradient",
+                "gradientType": "linear",
+                "enabled": true,
+                "rotation": 180,
+                "size": {
+                  "height": 1
+                },
+                "colors": [
+                  {
+                    "color": "#FFFFFF47",
+                    "position": 0
+                  },
+                  {
+                    "color": "#FFFFFF08",
+                    "position": 0.5
+                  },
+                  {
+                    "color": "#FFFFFF21",
+                    "position": 1
+                  }
+                ]
+              },
+              "strokeWidth": 3,
+              "strokeAlignment": "inner",
+              "padding": [
+                0,
+                15
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "v29xR",
+                  "name": "Behind live (Label, liveBannerDetail)",
+                  "fill": "$primaryText",
+                  "content": "−0:40",
+                  "lineHeight": 1.25,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "qDm9F",
+      "x": 4240,
+      "y": -1280,
+      "name": "Timeshift: Banner A and the bar (OK while paused)",
+      "clip": true,
+      "width": 1920,
+      "height": 1080,
+      "fill": [
+        {
+          "type": "gradient",
+          "gradientType": "linear",
+          "enabled": true,
+          "rotation": 180,
+          "size": {
+            "height": 1
+          },
+          "colors": [
+            {
+              "color": "#1F3346",
+              "position": 0
+            },
+            {
+              "color": "#2B4A37",
+              "position": 0.5
+            },
+            {
+              "color": "#13241A",
+              "position": 1
+            }
+          ]
+        },
+        {
+          "type": "gradient",
+          "gradientType": "radial",
+          "enabled": true,
+          "rotation": 0,
+          "size": {
+            "width": 1.1,
+            "height": 1.1
+          },
+          "colors": [
+            {
+              "color": "#9CC07A70",
+              "position": 0
+            },
+            {
+              "color": "#9CC07A00",
+              "position": 1
+            }
+          ],
+          "center": {
+            "x": 0.62,
+            "y": 0.42
+          }
+        },
+        {
+          "type": "gradient",
+          "gradientType": "radial",
+          "enabled": true,
+          "rotation": 0,
+          "size": {
+            "width": 0.7,
+            "height": 0.7
+          },
+          "colors": [
+            {
+              "color": "#E8D2A050",
+              "position": 0
+            },
+            {
+              "color": "#E8D2A000",
+              "position": 1
+            }
+          ],
+          "center": {
+            "x": 0.2,
+            "y": 0.25
+          }
+        }
+      ],
+      "layout": "none",
+      "children": [
+        {
+          "type": "frame",
+          "id": "hwxSR",
+          "x": 0,
+          "y": 564,
+          "name": "Overlay gradient (overlay_bottom.png; from liveOverlayTopPadding above the panel)",
+          "width": 1920,
+          "height": 516,
+          "fill": {
+            "type": "gradient",
+            "gradientType": "linear",
+            "enabled": true,
+            "rotation": 180,
+            "size": {
+              "height": 1
+            },
+            "colors": [
+              {
+                "color": "#00000000",
+                "position": 0
+              },
+              {
+                "color": "$liveOverlayBottom",
+                "position": 1
+              }
+            ]
+          },
+          "layout": "none"
+        },
+        {
+          "type": "frame",
+          "id": "NY8NA",
+          "x": 120,
+          "y": 684,
+          "name": "Banner panel (panel_banner.9.png)",
+          "width": 1680,
+          "height": 324,
+          "fill": "$bannerPanelFill",
+          "cornerRadius": 27,
+          "stroke": {
+            "type": "gradient",
+            "gradientType": "linear",
+            "enabled": true,
+            "rotation": 180,
+            "size": {
+              "height": 1
+            },
+            "colors": [
+              {
+                "color": "#FFFFFF47",
+                "position": 0
+              },
+              {
+                "color": "#FFFFFF08",
+                "position": 0.5
+              },
+              {
+                "color": "#FFFFFF21",
+                "position": 1
+              }
+            ]
+          },
+          "strokeWidth": 3,
+          "strokeAlignment": "inner",
+          "layout": "vertical",
+          "gap": 24,
+          "padding": 33,
+          "children": [
+            {
+              "type": "frame",
+              "id": "iMYVc",
+              "name": "Banner A (PlayerBanner)",
+              "width": "fill_container",
+              "gap": 33,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "q801w",
+                  "name": "Channel logo (Poster 96)",
+                  "width": 96,
+                  "height": 96,
+                  "fill": "#FFFFFF1F",
+                  "cornerRadius": 12,
+                  "layout": "vertical",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "ZoDOt",
+                      "name": "logo placeholder",
+                      "fill": "$primaryText",
+                      "content": "M24",
+                      "fontFamily": "Montserrat",
+                      "fontSize": 30,
+                      "fontWeight": "700"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Otp5W",
+                  "name": "Text",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "sge8t",
+                      "name": "Channel (liveBannerTitle)",
+                      "fill": "$primaryText",
+                      "content": "204  Metro News 24",
+                      "lineHeight": 1.23077,
+                      "fontFamily": "Montserrat",
+                      "fontSize": 39,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "h1ZW4",
+                      "name": "Now title (liveBannerProgramme)",
+                      "fill": "$primaryText",
+                      "content": "Evening Report",
+                      "lineHeight": 1.2,
+                      "fontFamily": "Montserrat",
+                      "fontSize": 30,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Ub8Vz",
+                      "name": "Time and progress",
+                      "gap": 21,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "MyQxM",
+                          "name": "Now time (liveBannerDetail)",
+                          "fill": "$secondaryText",
+                          "content": "6:00 – 7:00 PM",
+                          "lineHeight": 1.25,
+                          "fontFamily": "Montserrat",
+                          "fontSize": 24,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "to0gJ",
+                          "name": "Progress track (bar.9.png, shelfProgressTrack)",
+                          "width": 321,
+                          "height": 9,
+                          "fill": "$shelfProgressTrack",
+                          "cornerRadius": 4.5,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "H673h",
+                              "x": 0,
+                              "y": 0,
+                              "name": "Progress fill (bar.9.png)",
+                              "width": 129,
+                              "height": 9,
+                              "fill": "$shelfProgressFill",
+                              "cornerRadius": 4.5,
+                              "layout": "none"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "UsRm6",
+                      "name": "Next (liveBannerDetail)",
+                      "fill": "$secondaryText",
+                      "content": "Next: Weather Now · 7:00 PM",
+                      "lineHeight": 1.25,
+                      "fontFamily": "Montserrat",
+                      "fontSize": 24,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "LYUoJ",
+              "name": "Timeshift bar",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 15,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "ujLfX",
+                  "name": "Track: the pause buffer, pauseBufferStart (left) to pauseBufferEnd = live (right)",
+                  "width": "fill_container",
+                  "height": 9,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "EBTp2",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Track (bar.9.png, blendColor tileFill)",
+                      "width": 1614,
+                      "height": 9,
+                      "fill": "$tileFill",
+                      "cornerRadius": 4.5,
+                      "layout": "none"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ZMaEC",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Buffered (bar.9.png, blendColor focusHighlight)",
+                      "width": 1614,
+                      "height": 9,
+                      "fill": "$focusHighlight",
+                      "cornerRadius": 4.5,
+                      "layout": "none"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "B7LVEY",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Playhead fill (bar.9.png, blendColor primaryText; at least liveBarHeight wide)",
+                      "width": 888,
+                      "height": 9,
+                      "fill": "$primaryText",
+                      "cornerRadius": 4.5,
+                      "layout": "none"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "q01iKr",
+                  "name": "Label row",
+                  "width": "fill_container",
+                  "gap": 15,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "keLaW",
+                      "name": "Paused symbol (Poster icon_pause.png, 24, blendColor primaryText)",
+                      "width": 24,
+                      "height": 24,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "x0ezwB",
+                          "x": 6,
+                          "y": 4,
+                          "name": "pause bar",
+                          "width": 4,
+                          "height": 16,
+                          "fill": "$primaryText",
+                          "cornerRadius": 1,
+                          "layout": "none"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "WjGsf",
+                          "x": 14,
+                          "y": 4,
+                          "name": "pause bar",
+                          "width": 4,
+                          "height": 16,
+                          "fill": "$primaryText",
+                          "cornerRadius": 1,
+                          "layout": "none"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "AnDL6",
+                      "name": "Behind live (Label, liveBannerDetail): LIVE or −m:ss",
+                      "fill": "$primaryText",
+                      "content": "−0:45",
+                      "lineHeight": 1.25,
+                      "fontFamily": "Montserrat",
+                      "fontSize": 24,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "VnxbE",
+                      "name": "Spacer",
+                      "width": "fill_container",
+                      "height": 3
+                    },
+                    {
+                      "type": "text",
+                      "id": "SPLV7",
+                      "name": "Hint (Label, liveBannerDetail, secondaryText)",
+                      "fill": "$secondaryText",
+                      "content": "Rewind/Fast Forward: 10 s · Play/Pause",
+                      "lineHeight": 1.25,
+                      "fontFamily": "Montserrat",
+                      "fontSize": 24,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "zSKtd",
+          "x": 120,
+          "y": 60,
+          "name": "Badge row (right-aligned at sideMargin)",
+          "width": 1680,
+          "justifyContent": "end",
+          "children": [
+            {
+              "type": "frame",
+              "id": "v7BxPv",
+              "name": "Behind-live badge (badge_banner.9.png, 48 high)",
+              "height": 48,
+              "fill": "$bannerPanelFill",
+              "cornerRadius": 24,
+              "stroke": {
+                "type": "gradient",
+                "gradientType": "linear",
+                "enabled": true,
+                "rotation": 180,
+                "size": {
+                  "height": 1
+                },
+                "colors": [
+                  {
+                    "color": "#FFFFFF47",
+                    "position": 0
+                  },
+                  {
+                    "color": "#FFFFFF08",
+                    "position": 0.5
+                  },
+                  {
+                    "color": "#FFFFFF21",
+                    "position": 1
+                  }
+                ]
+              },
+              "strokeWidth": 3,
+              "strokeAlignment": "inner",
+              "padding": [
+                0,
+                15
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "Tu7X0",
+                  "name": "Behind live (Label, liveBannerDetail)",
+                  "fill": "$primaryText",
+                  "content": "−0:45",
+                  "lineHeight": 1.25,
+                  "fontFamily": "Montserrat",
+                  "fontSize": 24,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "WD5Ol",
+      "x": 6360,
+      "y": -1280,
+      "name": "720p check: Timeshift paused (2/3 scale)",
+      "clip": true,
+      "width": 1280,
+      "height": 720,
+      "fill": [
+        {
+          "type": "gradient",
+          "gradientType": "linear",
+          "enabled": true,
+          "rotation": 180,
+          "size": {
+            "height": 1
+          },
+          "colors": [
+            {
+              "color": "#1F3346",
+              "position": 0
+            },
+            {
+              "color": "#2B4A37",
+              "position": 0.5
+            },
+            {
+              "color": "#13241A",
+              "position": 1
+            }
+          ]
+        },
+        {
+          "type": "gradient",
+          "gradientType": "radial",
+          "enabled": true,
+          "rotation": 0,
+          "size": {
+            "width": 1.1,
+            "height": 1.1
+          },
+          "colors": [
+            {
+              "color": "#9CC07A70",
+              "position": 0
+            },
+            {
+              "color": "#9CC07A00",
+              "position": 1
+            }
+          ],
+          "center": {
+            "x": 0.62,
+            "y": 0.42
+          }
+        },
+        {
+          "type": "gradient",
+          "gradientType": "radial",
+          "enabled": true,
+          "rotation": 0,
+          "size": {
+            "width": 0.7,
+            "height": 0.7
+          },
+          "colors": [
+            {
+              "color": "#E8D2A050",
+              "position": 0
+            },
+            {
+              "color": "#E8D2A000",
+              "position": 1
+            }
+          ],
+          "center": {
+            "x": 0.2,
+            "y": 0.25
+          }
+        }
+      ],
+      "layout": "none",
+      "children": [
+        {
+          "type": "frame",
+          "id": "ZmKFj",
+          "x": 0,
+          "y": 512,
+          "name": "Overlay gradient (overlay_bottom.png; from liveOverlayTopPadding above the panel)",
+          "width": 1280,
+          "height": 208,
+          "fill": {
+            "type": "gradient",
+            "gradientType": "linear",
+            "enabled": true,
+            "rotation": 180,
+            "size": {
+              "height": 1
+            },
+            "colors": [
+              {
+                "color": "#00000000",
+                "position": 0
+              },
+              {
+                "color": "$liveOverlayBottom",
+                "position": 1
+              }
+            ]
+          },
+          "layout": "none"
+        },
+        {
+          "type": "frame",
+          "id": "O2ljDE",
+          "x": 80,
+          "y": 592,
+          "name": "Banner panel (panel_banner.9.png)",
+          "width": 1120,
+          "height": 80,
+          "fill": "$bannerPanelFill",
+          "cornerRadius": 18,
+          "stroke": {
+            "type": "gradient",
+            "gradientType": "linear",
+            "enabled": true,
+            "rotation": 180,
+            "size": {
+              "height": 1
+            },
+            "colors": [
+              {
+                "color": "#FFFFFF47",
+                "position": 0
+              },
+              {
+                "color": "#FFFFFF08",
+                "position": 0.5
+              },
+              {
+                "color": "#FFFFFF21",
+                "position": 1
+              }
+            ]
+          },
+          "strokeWidth": 2,
+          "strokeAlignment": "inner",
+          "layout": "vertical",
+          "gap": 16,
+          "padding": 22,
+          "children": [
+            {
+              "type": "frame",
+              "id": "zrtKn",
+              "name": "Timeshift bar",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 10,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "kaFCa",
+                  "name": "Track: the pause buffer, pauseBufferStart (left) to pauseBufferEnd = live (right)",
+                  "width": "fill_container",
+                  "height": 6,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "he7kR",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Track (bar.9.png, blendColor tileFill)",
+                      "width": 1076,
+                      "height": 6,
+                      "fill": "$tileFill",
+                      "cornerRadius": 3,
+                      "layout": "none"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Row12",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Buffered (bar.9.png, blendColor focusHighlight)",
+                      "width": 1076,
+                      "height": 6,
+                      "fill": "$focusHighlight",
+                      "cornerRadius": 3,
+                      "layout": "none"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fOZQa",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Playhead fill (bar.9.png, blendColor primaryText; at least liveBarHeight wide)",
+                      "width": 592,
+                      "height": 6,
+                      "fill": "$primaryText",
+                      "cornerRadius": 3,
+                      "layout": "none"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "B3M74",
+                  "name": "Label row",
+                  "width": "fill_container",
+                  "gap": 10,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "UJ6IX",
+                      "name": "Paused symbol (Poster icon_pause.png, 24, blendColor primaryText)",
+                      "width": 16,
+                      "height": 16,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "AX6Ar",
+                          "x": 4,
+                          "y": 2.67,
+                          "name": "pause bar",
+                          "width": 2.67,
+                          "height": 10.67,
+                          "fill": "$primaryText",
+                          "cornerRadius": 0.67,
+                          "layout": "none"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "lG43b",
+                          "x": 9.33,
+                          "y": 2.67,
+                          "name": "pause bar",
+                          "width": 2.67,
+                          "height": 10.67,
+                          "fill": "$primaryText",
+                          "cornerRadius": 0.67,
+                          "layout": "none"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "T6uJWY",
+                      "name": "Behind live (Label, liveBannerDetail): LIVE or −m:ss",
+                      "fill": "$primaryText",
+                      "content": "−0:45",
+                      "lineHeight": 1.25,
+                      "fontFamily": "Montserrat",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "MuD8K",
+                      "name": "Spacer",
+                      "width": "fill_container",
+                      "height": 2
+                    },
+                    {
+                      "type": "text",
+                      "id": "Y366Sf",
+                      "name": "Hint (Label, liveBannerDetail, secondaryText)",
+                      "fill": "$secondaryText",
+                      "content": "Rewind/Fast Forward: 10 s · Play/Pause",
+                      "lineHeight": 1.25,
+                      "fontFamily": "Montserrat",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "nZX0L",
+          "x": 80,
+          "y": 40,
+          "name": "Badge row (right-aligned at sideMargin)",
+          "width": 1120,
+          "justifyContent": "end",
+          "children": [
+            {
+              "type": "frame",
+              "id": "i53BeJ",
+              "name": "Behind-live badge (badge_banner.9.png, 48 high)",
+              "height": 32,
+              "fill": "$bannerPanelFill",
+              "cornerRadius": 16,
+              "stroke": {
+                "type": "gradient",
+                "gradientType": "linear",
+                "enabled": true,
+                "rotation": 180,
+                "size": {
+                  "height": 1
+                },
+                "colors": [
+                  {
+                    "color": "#FFFFFF47",
+                    "position": 0
+                  },
+                  {
+                    "color": "#FFFFFF08",
+                    "position": 0.5
+                  },
+                  {
+                    "color": "#FFFFFF21",
+                    "position": 1
+                  }
+                ]
+              },
+              "strokeWidth": 2,
+              "strokeAlignment": "inner",
+              "padding": [
+                0,
+                10
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "f3P2uX",
+                  "name": "Behind live (Label, liveBannerDetail)",
+                  "fill": "$primaryText",
+                  "content": "−0:45",
                   "lineHeight": 1.25,
                   "fontFamily": "Montserrat",
                   "fontSize": 16,

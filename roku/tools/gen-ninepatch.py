@@ -9,6 +9,8 @@ so the corners never scale; the rim's top-to-bottom gradient and the sheen sit i
 Colours and sizes come from roku/components/theme/Theme.bs (which maps them to MMTVL's DesignSystem/Theme.swift):
   panel             standard glass panel: fill, rim 3 px (top 0.70, middle 0.08, bottom 0.32), sheen 0.14 (Theme.swift glass*)
   panel_banner      banner role (D46): darker, more opaque fill, rim x0.4, no sheen (Theme.swift banner*)
+  badge_banner      the behind-live badge (MMTVL's banner-role glass capsule): panel_banner's fill and rim, radius 24,
+                    a capsule at timeshiftBadgeHeight 48
   panel_solid       menus over the busy guide (channel menu, group column): solidPanelFill (Theme.swift's Reduce
                     Transparency fill), the standard rim and sheen; at panel's 0.82 the guide's titles showed through
   settings_row      a one-line Settings row: settingsRowCapsuleFill plus the unfocused rim, radius 36 (a capsule at 72)
@@ -152,6 +154,8 @@ def main():
         make("panel", (72, 72), 27, (0x26, 0x26, 0x28, 0xD1), rim=(0.70, 0.08, 0.32), sheen=0.14),
         # Theme.bs bannerPanelFill 0x0E0E10E0, rim x0.4 (bannerRimScale), no sheen (bannerSheenScale 0).
         make("panel_banner", (72, 72), 27, (0x0E, 0x0E, 0x10, 0xE0), rim=(0.28, 0.032, 0.128)),
+        # The behind-live badge: panel_banner's fill and rim as a 48-px capsule (radius 24).
+        make("badge_banner", (54, 54), 24, (0x0E, 0x0E, 0x10, 0xE0), rim=(0.28, 0.032, 0.128)),
         # Theme.bs solidPanelFill 0x1C1C1EEB with the standard rim and sheen.
         make("panel_solid", (72, 72), 27, (0x1C, 0x1C, 0x1E, 0xEB), rim=(0.70, 0.08, 0.32), sheen=0.14),
         # settingsRowCapsuleFill (white 0.075) with the unfocused rim, radius 36.
