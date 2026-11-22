@@ -14,8 +14,8 @@
   - Every decision taken without the user is in **[M12-decisions-log.md](M12-decisions-log.md)**, with the reason and pros and cons.
   - Git: after QA, each step is committed, scanned with gitleaks and pushed. Each phase gets a PR when it's done, stacked on the one before. Once phase 6's automated steps are done, every gate runs again and the PRs are squash-merged in order (#1, #2, #4, #5, then phases 4–6), each rebased onto `master` first.
   - Device steps (1, 4, 15, 23) stay open for the user.
-- **Branches stack:** `m12-phase0` (PR #1) → `m12-phase1` (#2) → `m12-step13` (#4, phase 2) → `m12-step14` (#5, phase 3) → `m12-step16` → `m12-step17` → **`m12-step18`**. Worktree `.claude/worktrees/step9`. Done and QA-passed: steps 2, 3, 5–14 and 16–18. `test:local`: 566 passed; script tests 40; MMTVL full suite 2094.
-- **Next: step 19 (Search)**, `[implementer]`, then step 20 (Match Guide), which closes phase 4 with a PR (head `m12-step20`, base `m12-step14`). Pencil: read frames with `execute` on the file's `uri`, read-only, and never save from this session.
+- **Branches stack:** `m12-phase0` (PR #1) → `m12-phase1` (#2) → `m12-step13` (#4, phase 2) → `m12-step14` (#5, phase 3) → `m12-step16` → `m12-step17` → `m12-step18` → **`m12-step19`**. Worktree `.claude/worktrees/step9`. Done and QA-passed: steps 2, 3, 5–14 and 16–19. `test:local`: 594 passed; script tests 40; MMTVL full suite 2094.
+- **Next: step 20 (Match Guide)**, `[implementer]`, which closes phase 4 with a PR (head `m12-step20`, base `m12-step14`). Pencil: read frames with `execute` on the file's `uri`, read-only, and never save from this session.
 - Gates for every Roku step: `cd roku && npm run build && npm run lint && npm run test:local` (264 passed at the end of phase 1), plus `npm run build:release`. No simulator runs with network access. Use a separate git worktree for parallel steps (`git worktree add -b m12-stepN .claude/worktrees/stepN <commit>`); the built-in isolation started from the wrong commit.
 
 ## Goal
@@ -410,7 +410,7 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
   - The channel menu's Add/Remove … to My Teams for pro game entries and programmes, pro and college (the picked team first, at most 3 a side, as MMTVL's `menuTeamsPerSide`; not college game entries). Mirrors MyTeamsTests' `theChannelMenuOffersEachSidesTeamsPickedFirst` and `…AtMostThreeTeamsASide` (amended at step 17, see *Deviations*).
   - Settings → My Teams: the picked teams and both Matching switches.
   - Done when: `MyTeamsLineupTests` pass, and on a device, picking a team that's playing shows its game in My Teams and atop Favorites.
-- [ ] **19. Search** `[implementer]`, files: `roku/components/search/**`
+- [x] **19. Search** `[implementer]`, files: `roku/components/search/**`
   - A Search row above the groups (as MMTVL).
   - A `DynamicMiniKeyboard`, results from 2 characters: 8 channels (folded substring), 12 teams (MMTVL's ranking; OK adds or removes the team and keeps search open), 40 programmes in the next 24 h (every word in the title).
   - Debounced 300 ms in a Task.
@@ -769,3 +769,33 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
     - **Settings → My Teams:** both switches change My Teams after a rebuild.
     - **DEBUG lines:** "Teams: read the guide (N programmes) in X ms", "Teams: read … teams", "Teams: indexed …" (at launch with picks), and "Teams: matched … in X ms" (under 500 ms for 100 channels). The 5-minute tick doesn't redraw the guide when nothing changed. A Low Roku with teams picked shows no stall or memory warning.
     - `GetDayOfWeek()` after `ToLocalTime()`; the `›` and `–` glyphs.
+- **2026-11-22, step 19 (built; qa-deep PASS with minors, all fixed).** New:
+  - `LiveSearch.bs` (pure: folding, channels, team ranking, the title index, `searchProgrammes`, the model, keys and texts);
+  - `SearchTask` (the title index, once per guide load; newest query wins);
+  - `SearchView` (frame rucDX, with a `DynamicMiniKeyboard`);
+  - TeamsTask's `search` kind (queue: menu, search, catalog, match);
+  - `GuideScreen.programmeDetails` / `focusChannel`, and `GuideKeys.focusChannel`.
+
+  `test:local`: 594 passed; release: 110 files. LiveSearchTests (17): 11 in full and 6 as their pure parts (no phone text on the Roku).
+  - **Decisions:** D7–D12 in [M12-decisions-log.md](M12-decisions-log.md).
+    - The title index (kept until the next guide load; step 22's memory alerts drop it).
+    - Teams from TeamsTask.
+    - All results after the 0.3 s debounce.
+    - Search only from the guide's Search row.
+    - The frame's layout with MMTVL's wording and 6 rows.
+    - Programme titles also match without accents, a superset of MMTVL's ASCII `LIKE`.
+  - **QA fixes:**
+    - Serials keep increasing across Search sessions, so a late answer from a closed session is dropped.
+    - A failed part clears "Searching…".
+    - The 8- and 40-result caps are tested.
+    - The Search-row round trip is tested along the scene's path.
+    - The scene loads no search code (a plain counter), so the fold tables stay off the render thread.
+  - **Accepted:** the index build can't be cancelled, so a newer query waits for it. `programmeDetails` runs up to 40 linear scans on the render thread per answer (estimated at tens of ms on a stick; a binary search if a device shows lag).
+  - **Device checks (step 23):**
+    - **Typing:** results update while typing on the stick with no dropped key presses (the done-when).
+    - **Keyboard keys:** which keys `DynamicMiniKeyboard` passes through (Right at its edge, Back, Play), and its cursor after Play deletes.
+    - **Back:** from the keyboard it returns to the Search row; from the results, to the keyboard.
+    - **Idle return** closes Search.
+    - **OK:** on a channel or a programme on now, it plays; on a later programme, it shows that row and start in the guide (TimeGrid `jumpToTime`, if present); on a team, it toggles the team and its check mark, and the change survives a relaunch.
+    - **Look:** the palette (`RSGPalette`) and layout at 1080p and 720p.
+    - **First search after a guide load:** "Searching…" while the index builds, and the DEBUG "Indexed …" and "Found …" lines (time and memory on a Low Roku).
