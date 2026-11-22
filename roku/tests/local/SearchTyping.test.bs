@@ -1,0 +1,53 @@
+' Search's typing after the split (M12 step 22, D19): SearchView loads the model's half of LiveSearch only, so its
+' words come from typedWords and its "searching" from the state. Both must say exactly what queryWords and isSearching
+' (the Tasks' half, with the fold tables) say, for every text, or the view would narrow differently from what
+' SearchTask matches. Search.test.bs is unchanged.
+namespace SearchTypingTests
+
+    function texts() as object
+        return ["", " ", "a", " a ", "ab", "a b", "NBA tv", "  Celtics" + Chr(9) + "LAKERS ", "Telemundo Fútbol", "ÉCOLE Ångström", "é", "ée", "Ö", "x" + Chr(776), "São Paulo FC", "Texas A&M"]
+    end function
+
+    sub test_typedWordsAreQueryWordsWithTheTasksFolder(t as object)
+        n = LiveSearch.newFolder()
+        for each text in SearchTypingTests.texts()
+            t.assertEqual(LiveSearch.typedWords(text, n), LiveSearch.queryWords(text, n), text)
+        end for
+        t.assertEqual(LiveSearch.typedWords(invalid, n), [])
+    end sub
+
+    sub test_searchingIsIsSearchingForEveryText(t as object)
+        n = LiveSearch.newFolder()
+        state = LiveSearch.newState()
+        t.assertFalse(state.searching)
+        for each text in SearchTypingTests.texts()
+            state = LiveSearch.textChanged(state, text, n)
+            t.assertEqual(state.searching, LiveSearch.isSearching(text, n), text)
+            ' No results yet: "Searching…" while searching, else the prompt.
+            if state.searching then expected = LiveSearch.searchingText else expected = LiveSearch.notSearchingText
+            t.assertEqual(LiveSearch.message(state), expected, text)
+        end for
+    end sub
+
+    ' The view's folder: ASCII is lowercased without the fold tables; other text goes to its fold (a SearchFolder node
+    ' on the Roku; a stand-in here, since these tests run without SceneGraph).
+    sub test_theViewsFolderFoldsOnlyWhatIsntASCII(t as object)
+        viewFolder = LiveSearch.newTypingFolder()
+        t.assertEqual(viewFolder.nodeType, "SearchFolder")
+        asked = []
+        viewFolder.asked = asked
+        viewFolder.fold = SearchTypingTests.standInFold
+        t.assertEqual(LiveSearch.typedWords("  NBA" + Chr(9) + "TV ", viewFolder), ["nba", "tv"])
+        t.assertEqual(asked, [], "ASCII never reaches the fold")
+        t.assertEqual(LiveSearch.typedWords("Fútbol Club", viewFolder), LiveSearch.queryWords("Fútbol Club", LiveSearch.newFolder()))
+        t.assertEqual(asked, ["Fútbol Club"])
+        t.assertEqual(LiveSearch.typedWords("Fútbol", invalid), ["fútbol"], "no folder: lowercased only")
+    end sub
+
+    ' Runs with m = the view's folder: what SearchFolder's fold answers (LiveSearch.folded with the Tasks' folder).
+    function standInFold(text as dynamic) as string
+        m.asked.Push(text)
+        return LiveSearch.folded(text, LiveSearch.newFolder())
+    end function
+
+end namespace

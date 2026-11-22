@@ -2,7 +2,8 @@
 <!-- Banner A (M12 step 11; frame "Banner A", tpzUV, chosen 2026-11-21): the channel, its logo, now and next with the
      time range and progress. Step 11b: the content only, laid out from its own origin, contentWidth wide; the player
      screen puts it on the banner-role panel it shares with the timeshift bar (frame qDm9F) and reads contentHeight.
-     Sizes, colours and fonts come from Theme.bs. MMTVL's LiveBannerView (IPTV/LiveTVView.swift). -->
+     Sizes, colours and fonts come from Theme.bs. MMTVL's LiveBannerView (IPTV/LiveTVView.swift). Step 22: the logo is
+     loaded at liveBannerLogoSize (loadWidth, loadHeight), whatever the file's size. -->
 <component name="PlayerBanner" extends="Group">
     <interface>
         <!-- { title, logo, nowTitle, timeText, progress, nextText }: title "<number>  <name>"; logo a URL or "";
@@ -17,7 +18,9 @@
     <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/BannerText.bs" />
     <children>
-        <Poster id="logo" loadDisplayMode="scaleToFit" />
+        <!-- QA round 1 (D49): loadWidth/loadHeight in the markup, set before any uri (Roku's Poster doc); 96 is Theme
+             liveBannerLogoSize. -->
+        <Poster id="logo" loadWidth="96" loadHeight="96" loadDisplayMode="scaleToFit" />
         <Label id="title" />
         <Label id="now" />
         <Label id="time" />

@@ -54,7 +54,13 @@ namespace SettingsPages
     const guideSourceDescription = "Use the guide the playlist names, or the guides you added. The guides you added are kept either way."
     ' Step 21: Settings → Device's MPEG-2 row (the plan's wording) and Settings → Antenna's footer.
     const mpeg2HiddenText = "Some antenna channels need MPEG-2, which this Roku can't play"
-    const channelLogosDescription = "Shows channel logos in the guide and the banner. On at first. On Rokus with 512 MB or less, logos can slow the guide: turn them off if it feels slow."
+    ' Step 22 (D52; the master plan's D56): "a Low Roku" rather than "512 MB or less": a 720p UI or an unknown memory
+    ' limit makes one Low too.
+    const channelLogosDescription = "Shows channel logos in the guide and the banner. On at first. On a Low Roku (see Memory above), logos can slow the guide: turn them off if it feels slow."
+    ' Step 22 (D45, D46): what a memory alert turned off or shortened, until the app opens again.
+    const lowMemoryValue = "Low Memory"
+    const logosDroppedDescription = "This Roku ran low on memory, so logos are off until MMTVL Live TV opens again. This switch keeps your choice for next time."
+    const guideShrunkDetail = "Shorter until MMTVL Live TV opens again"
 
     function sections(page as string, model as object, messages = invalid as dynamic) as object
         if page = SettingsPages.rootPage then return SettingsPages.rootSections(model)
@@ -483,6 +489,17 @@ namespace SettingsPages
         thisRoku.warning = model.lowSpace
         logos = "Off"
         if model.channelLogos then logos = "On"
+        logosDescription = SettingsPages.channelLogosDescription
+        if model.channelLogos and SettingsStatus.isTrue(device.logosDropped)
+            logos = "Off: " + SettingsPages.lowMemoryValue
+            logosDescription = SettingsPages.logosDroppedDescription
+        end if
+        guideWindow = device.guideHours.ToStr() + " Hours"
+        guideDescription = ""
+        if SettingsStatus.isTrue(device.guideShrunk)
+            guideWindow += ": " + SettingsPages.lowMemoryValue
+            guideDescription = SettingsPages.guideShrunkDetail
+        end if
         mpeg2 = "Off: No MPEG-2"
         if device.mpeg2 then mpeg2 = "On"
         ' Step 21 (D26): AntennaConfig.playMPEG2 off plays H.264 only, whatever the Roku decodes.
@@ -492,8 +509,8 @@ namespace SettingsPages
         ac3 = "Off: No AC-3"
         if device.ac3 then ac3 = "On"
         features = SettingsPages.newSection("features", "Features", [
-            SettingsPages.newRow({ id: "device.guideWindow", title: "Guide Window", value: device.guideHours.ToStr() + " Hours" }),
-            SettingsPages.newRow({ id: "device.channelLogos", title: "Channel Logos", value: logos, action: SettingsPages.toggle("channelLogos"), description: SettingsPages.channelLogosDescription }),
+            SettingsPages.newRow({ id: "device.guideWindow", title: "Guide Window", value: guideWindow, detail: guideDescription }),
+            SettingsPages.newRow({ id: "device.channelLogos", title: "Channel Logos", value: logos, action: SettingsPages.toggle("channelLogos"), description: logosDescription }),
             SettingsPages.newRow({ id: "device.compressedGuides", title: "Compressed Guides", value: device.compressed }),
             SettingsPages.newRow({ id: "device.mpeg2", title: "Antenna MPEG-2 Channels", value: mpeg2, detail: mpeg2Detail }),
             SettingsPages.newRow({ id: "device.ac3", title: "Dolby Digital", value: ac3 })

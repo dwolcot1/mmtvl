@@ -18,6 +18,8 @@
 '     as not loaded, so they may be asked for again). Changes queue. (A path already cached or failed is LogoTask's
 '     check, before this.)
 '   popNewest(queue) -> the newest request, taken out, or invalid when none waits.
+'   clearQueue(queue) -> the paths of every waiting request, oldest first, all taken out (step 22: a memory alert
+'     turned the logos off; LogoTask answers them as not loaded). Changes queue.
 namespace LogoCache
 
     const directory = "cachefs:/logos"
@@ -126,6 +128,16 @@ namespace LogoCache
         newest = queue.items.Pop()
         queue.paths.Delete(newest.path)
         return newest
+    end function
+
+    function clearQueue(queue as object) as object
+        dropped = []
+        for each item in queue.items
+            dropped.Push(item.path)
+        end for
+        queue.items.Clear()
+        queue.paths.Clear()
+        return dropped
     end function
 
     function isText(value as dynamic) as boolean

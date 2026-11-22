@@ -3,6 +3,9 @@
 ' import, "mmtvl-import:<ip>:<port>:<32 hex>", is parsed strictly here (ImportBundle.parseContentID) and handed to the
 ' scene's importRequest field; any other contentId is ignored. The contentId is never logged, only why one was
 ' refused.
+' Step 22 (D45-D47, D54): memory alerts. roAppMemoryMonitor's (or, where it can't alert, roDeviceInfo's low general memory
+' event) come to this port and go to the scene's memoryAlert field (MemoryRelief.appAlert / generalAlert), which drops
+' what MemoryRelief.apply says. DEBUG builds print the memory line every 5 minutes (MemoryRelief.consoleLine).
 sub Main(args as dynamic)
     screen = CreateObject("roSGScreen")
     port = CreateObject("roMessagePort")
@@ -23,10 +26,39 @@ sub Main(args as dynamic)
     screen.Show()
     Log.info("App", "Started")
     deliverImport(scene, args)
+    memory = startMemoryAlerts(port)
+    #if DEBUG
+        memoryTimer = CreateObject("roTimespan")
+        memoryHighest = invalid
+        memoryAlerts = 0
+        memorySample = MemoryRelief.sample(memory.monitor)
+        memoryHighest = MemoryRelief.highestOf(memoryHighest, memorySample.percent)
+        Log.info("Memory", MemoryRelief.consoleLine(memorySample, memoryHighest, memoryAlerts))
+    #end if
 
     while true
-        msg = Wait(0, port)
+        #if DEBUG
+            waitMs = MemoryRelief.consoleEveryMs - memoryTimer.TotalMilliseconds()
+            if waitMs < 1 then waitMs = 1
+            msg = Wait(waitMs, port)
+            if memoryTimer.TotalMilliseconds() >= MemoryRelief.consoleEveryMs
+                memoryTimer.Mark()
+                memorySample = MemoryRelief.sample(memory.monitor)
+                memoryHighest = MemoryRelief.highestOf(memoryHighest, memorySample.percent)
+                Log.info("Memory", MemoryRelief.consoleLine(memorySample, memoryHighest, memoryAlerts))
+            end if
+        #else
+            msg = Wait(0, port)
+        #end if
         if type(msg) = "roSGScreenEvent" and msg.IsScreenClosed() then return
+        alert = memoryAlertFrom(msg, memory)
+        if alert <> invalid
+            #if DEBUG
+                memoryAlerts = memoryAlerts + 1
+                memoryHighest = MemoryRelief.highestOf(memoryHighest, alert.percent)
+            #end if
+            scene.memoryAlert = alert
+        end if
         if type(msg) = "roInputEvent"
             if msg.IsInput()
                 info = msg.GetInfo()
@@ -40,6 +72,49 @@ sub Main(args as dynamic)
         end if
     end while
 end sub
+
+' Step 22: subscribes to memory alerts on port (MemoryRelief.subscribe; every call guarded, so a Roku OS without
+' roAppMemoryMonitor or its alerts just has none). { monitor, deviceInfo, source, multiLevel }: Main keeps it, and so
+' both objects, alive for the whole loop.
+function startMemoryAlerts(port as object) as object
+    monitor = invalid
+    try
+        monitor = CreateObject("roAppMemoryMonitor")
+    catch e
+        monitor = invalid
+    end try
+    deviceInfo = CreateObject("roDeviceInfo")
+    source = MemoryRelief.subscribe(monitor, deviceInfo, port)
+    multiLevel = MemoryRelief.isMultiLevel(Capabilities.osVersion(deviceInfo))
+    if source = "app"
+        if multiLevel then Log.info("Memory", "Memory alerts on (80, 85, 90 and 95 %)") else Log.info("Memory", "Memory alerts on (one, at 80 %)")
+    else if source = "general"
+        Log.info("Memory", "No app memory alerts on this Roku OS; using the device's low-memory alerts")
+    else
+        Log.warn("Memory", "No memory alerts on this Roku OS")
+    end if
+    ' QA round 1 (fix 1): deviceInfo is kept with the monitor for the whole loop (Main holds this AA), as Roku's
+    ' example keeps its roDeviceInfo alive; a released one would send no low-memory event.
+    return { monitor: monitor, deviceInfo: deviceInfo, source: source, multiLevel: multiLevel }
+end function
+
+' A memory alert from a port message, or invalid for any other message (or a device-info event of another kind).
+function memoryAlertFrom(msg as dynamic, memory as object) as dynamic
+    kind = type(msg)
+    if kind = "roAppMemoryNotificationEvent"
+        current = invalid
+        if memory.monitor <> invalid
+            try
+                current = memory.monitor.GetMemoryLimitPercent()
+            catch e
+                current = invalid
+            end try
+        end if
+        return MemoryRelief.appAlert(msg.GetInfo(), current, memory.multiLevel)
+    end if
+    if kind = "roDeviceInfoEvent" and memory.source = "general" then return MemoryRelief.generalAlert(msg.GetInfo())
+    return invalid
+end function
 
 ' An import's contentId goes to the scene, parsed; anything else is left alone.
 sub deliverImport(scene as object, launchArgs as dynamic)

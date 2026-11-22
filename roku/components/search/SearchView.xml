@@ -34,8 +34,9 @@
         <function name="takeFocus" />
     </interface>
     <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
+    <!-- Step 22 (D19, D53): the model's half of LiveSearch only, never EPGMatcher.bs's fold tables or LiveSearchIndex.bs
+         (the Tasks' half); text that isn't ASCII is folded by a SearchFolder node, made when such text is typed. -->
     <script type="text/brighterscript" uri="pkg:/source/lib/Unicode.bs" />
-    <script type="text/brighterscript" uri="pkg:/source/lib/EPGMatcher.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/TeamCatalog.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/TeamPicker.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/BannerText.bs" />

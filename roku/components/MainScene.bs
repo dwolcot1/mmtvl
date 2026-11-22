@@ -33,6 +33,15 @@ sub init()
     m.store = SettingsStore.load(SettingsStore.deviceRegistry())
     ' L7: once per launch; the low-memory notice and Settings → Device read it.
     m.caps = Capabilities.detectDevice()
+    ' Step 22 (D45): what memory alerts have dropped (MemoryRelief; nothing at launch).
+    m.memoryRelief = MemoryRelief.newState()
+    ' QA round 1 (fix 3): a shrink waiting for its run (it skips the failure wait), the window the running guide run
+    ' was given, and the window of the guide held (Settings → Device says "Low Memory" only once that is shorter).
+    m.shrinkPending = false
+    m.guideRunWindowHours = 0
+    m.guideShownHours = 0
+    ' QA round 1 (fix 2): each alert's own value (the event's data), not the field's latest.
+    m.top.observeField("memoryAlert", "onMemoryAlert")
     m.player.channelUpMovesUpList = m.store.settings.channelUpMovesUpList
     ' Step 12: the guide, the channel menu, the logos and the idle return.
     m.menu = m.top.findNode("channelMenu")
@@ -47,7 +56,7 @@ sub init()
     m.logoTask.control = "run"
     m.guide = m.top.findNode("guide")
     m.guide.version = versionText
-    m.guide.settings = SettingsStore.guideSettings(m.store.settings)
+    m.guide.settings = SettingsStore.guideSettings(logoSettings())
     m.guide.logoTask = m.logoTask
     m.guide.observeField("action", "onGuideAction")
     m.guide.observeField("input", "noteInput")
@@ -385,7 +394,8 @@ sub refreshGuideIfDue()
     verdict = invalid
     if hasChannels and not m.guideRuns.force then verdict = GuideSources.isRunDue(sources, m.guideState, now)
     ' QA of step 20: a failed rematch is tried again once the failure wait is over.
-    chosen = GuideRuns.choose(m.guideRuns, hasChannels, verdict, GuideRuns.isWaitingAfterFailure(m.guideState.failedRunAt, now))
+    ' Step 22 (QA round 1): a memory alert's shorter window doesn't wait out a failure.
+    chosen = GuideRuns.choose(m.guideRuns, hasChannels, verdict, GuideRuns.rematchWaits(m.guideState.failedRunAt, now, m.shrinkPending))
     m.guideRuns = chosen.runs
     if not chosen.run then return
     ' Refresh Now: every guide is downloaded again (MMTVL's "Downloads the playlist and the guides again now"):
@@ -401,6 +411,10 @@ sub refreshGuideIfDue()
     task.expectedGuides = sources.Count()
     ' Step 20: Match Guide's rematch reads the files there are and downloads nothing.
     task.cachedOnly = chosen.cachedOnly
+    ' Step 22 (D46): the shorter window after a memory alert (0: the device class's).
+    task.windowHours = reliefWindowHours()
+    m.guideRunWindowHours = task.windowHours
+    m.shrinkPending = false
     m.guideRunCachedOnly = chosen.cachedOnly
     task.observeField("result", "onGuideResult")
     m.guideTask = task
@@ -487,6 +501,8 @@ sub onGuideResult()
         return
     end if
     m.guideState.failedRunAt = invalid
+    ' Step 22 (QA round 1): Settings → Device shows the window of the guide that is held.
+    m.guideShownHours = m.guideRunWindowHours
     m.top.guideHolder = task
     m.top.guideStatuses = result.statuses
     m.top.guideNote = result.note
@@ -635,7 +651,7 @@ end sub
 ' Channel Logos on (L7 as amended); LogoTask checks the URL (URLPolicy.allows with the playlist as the referrer).
 function playerLogo(channel as object) as string
     m.playerLogoPath = ""
-    url = LogoCache.wanted(channel, m.store.settings)
+    url = LogoCache.wanted(channel, logoSettings())
     if url = "" then return ""
     cached = LogoCache.path(url)
     m.playerLogoPath = cached
@@ -649,6 +665,51 @@ sub onLogoReady()
     if type(ready) <> "roAssociativeArray" then return
     if not PlayerSession.isTrue(ready.ok) or not PlayerSession.isText(ready.path) then return
     if ready.path <> "" and ready.path = m.playerLogoPath then m.player.logo = ready.path
+end sub
+
+' --- step 22: memory alerts (D45-D48) ----------------------------------------------------------------------------
+
+' The settings as the logos read them: Channel Logos off once a memory alert dropped them (the saved setting stays).
+function logoSettings() as object
+    return MemoryRelief.settingsWith(m.store.settings, m.memoryRelief)
+end function
+
+' GuideTask's windowHours: 0 (the device class's window) until a memory alert shrank it.
+function reliefWindowHours() as integer
+    hours = m.memoryRelief.guideHours
+    if Refresh.isNumber(hours) then return Int(hours)
+    return 0
+end function
+
+' main.bs hands each alert over (MemoryRelief.appAlert or generalAlert); each event carries its own alert, so a 90 %
+' alert followed at once by an 89 % one is still applied (QA round 1). MemoryRelief.apply decides what goes: the
+' logos (the guide's rows and the banner drop theirs, LogoTask's queue empties), SearchTask's title index (the next
+' search builds it again), the guide window (a run that downloads nothing reads the files there are for the shorter
+' window: GuideRuns' rematch) and, at a critical level, My Teams' copy of the guide (the next match on). What goes
+' stays gone until the app is opened again; the warning line has the percent and what went only.
+sub onMemoryAlert(event as object)
+    alert = event.getData()
+    if type(alert) <> "roAssociativeArray" then return
+    outcome = MemoryRelief.apply(m.memoryRelief, alert)
+    m.memoryRelief = outcome.state
+    if outcome.level = 0
+        Log.info("Memory", MemoryRelief.logLine(alert, outcome))
+        return
+    end if
+    Log.warn("Memory", MemoryRelief.logLine(alert, outcome))
+    if outcome.dropLogos
+        m.guide.settings = SettingsStore.guideSettings(logoSettings())
+        if m.currentChannel <> invalid then m.player.logo = playerLogo(m.currentChannel)
+        m.logoTask.request = { clear: true }
+    end if
+    if outcome.dropSearchIndex and m.searchTask <> invalid then m.searchTask.request = { kind: "dropIndex" }
+    if outcome.shrinkGuide
+        m.shrinkPending = true
+        m.guideRuns = GuideRuns.overridesChanged(m.guideRuns)
+        refreshGuideIfDue()
+    end if
+    if outcome.skipTeamsGuide then requestTeams()
+    refreshSettings()
 end sub
 
 function isPlaying() as boolean
@@ -1008,6 +1069,7 @@ sub updateSettingsModel()
         guideUpdated: updated,
         guideLoading: m.guideTask <> invalid,
         caps: m.caps,
+        memoryRelief: { logos: m.memoryRelief.logos, guideHours: m.guideShownHours },
         inflateEnabled: GuideSources.inflateEnabled,
         playlistChannelCount: m.playlistCount,
         antenna: antennaSettingsInput(),
@@ -1086,7 +1148,7 @@ sub toggleSetting(name as dynamic)
     Log.info("Settings", "Changed " + name)
     if name = "channelUpMovesUpList" then m.player.channelUpMovesUpList = m.store.settings.channelUpMovesUpList
     if name = "channelLogos"
-        m.guide.settings = SettingsStore.guideSettings(m.store.settings)
+        m.guide.settings = SettingsStore.guideSettings(logoSettings())
         if m.currentChannel <> invalid then m.player.logo = playerLogo(m.currentChannel)
     end if
     if name = "usePlaylistGuide" then guidesChanged()
@@ -1449,7 +1511,7 @@ sub applyImportedSettings()
         m.player.visible = false
     end if
     m.player.channelUpMovesUpList = m.store.settings.channelUpMovesUpList
-    m.guide.settings = SettingsStore.guideSettings(m.store.settings)
+    m.guide.settings = SettingsStore.guideSettings(logoSettings())
     m.logoTask.playlistURL = m.store.source
     m.prefsRevision = m.prefsRevision + 1
     m.deferredLaunchID = ""
@@ -1506,7 +1568,8 @@ end function
 ' A match for the current picks and options; it supersedes any older one (TeamsTask: the newest wins).
 sub requestTeams()
     serial = MyTeams.nextSerial(m.teamRequests, "match")
-    m.teamsTask.request = { kind: "match", serial: serial, picked: m.store.prefs.teams, options: teamOptions() }
+    ' Step 22 (D48): after a critical memory alert the match reads game entries only (no copy of the guide).
+    m.teamsTask.request = { kind: "match", serial: serial, picked: m.store.prefs.teams, options: teamOptions(), skipGuide: not MemoryRelief.teamsReadGuide(m.memoryRelief) }
 end sub
 
 ' The channel menu's teams for one channel: its game entry's, else those of the programme on now (only what
@@ -1996,7 +2059,7 @@ sub loadAntenna(manual as boolean)
     m.antennaSerial = m.antennaSerial + 1
     task = CreateObject("roSGNode", "AntennaTask")
     m.antennaTaskSerial = m.antennaSerial
-    task.request = { kind: "refresh", serial: m.antennaSerial, typed: settings.antennaAddress, mpeg2: m.caps.mpeg2 and AntennaConfig.playMPEG2, guide: wantsGuide, manual: manual, guideHours: m.caps.guideHours, previous: m.antenna.channels }
+    task.request = { kind: "refresh", serial: m.antennaSerial, typed: settings.antennaAddress, mpeg2: m.caps.mpeg2 and AntennaConfig.playMPEG2, guide: wantsGuide, manual: manual, guideHours: MemoryRelief.windowHours(m.caps.guideHours, m.memoryRelief), previous: m.antenna.channels }
     task.observeField("lineupResult", "onAntennaLineup")
     task.observeField("result", "onAntennaResult")
     m.antennaTask = task

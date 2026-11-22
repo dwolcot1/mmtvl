@@ -1,0 +1,284 @@
+' Memory alerts (M12 step 22, D45–D48): what the app lets go of when the Roku says it is running short. Pure
+' functions, except subscribe and sample, which take the Roku's objects as arguments (tests pass fakes).
+'
+' The alerts (Roku's docs, rokudev/dev-doc, read 2026-11-22): roAppMemoryMonitor.EnableMemoryWarningEvent(true) sends
+' roAppMemoryNotificationEvent to the monitor's port, GetInfo() { memoryUsagePercent }. Before Roku OS 15.2 it is one
+' alert, at 80 % of the app's limit; from 15.2 one each time the use crosses 80, 85, 90 or 95 % (up or down; "these
+' thresholds may change", "throttled"). Where the monitor can't alert (EnableMemoryWarningEvent false; no monitor on
+' Liberty, Austin, Mustang and Littlefield), Roku's own example falls back to
+' roDeviceInfo.EnableLowGeneralMemoryEvent(true): roDeviceInfoEvent's GetInfo().generalMemoryLevel, "normal", "low"
+' or "critical" (the device's memory, sent from "low" on, before the OS ends the app). main.bs subscribes and hands
+' each alert to the scene (its memoryAlert field); the scene applies what apply() decides.
+'
+'   subscribe(monitor, deviceInfo, port) -> "app" (the monitor alerts), "general" (the device-memory fallback) or
+'     "none" (neither: nothing is dropped early, as before step 22). Every call is guarded.
+'   isMultiLevel(osVersion) -> whether this Roku OS sends more than one alert (15.2 and later).
+'   appAlert(info, currentPercent, multiLevel) -> { source: "app", percent, multiLevel }: the event's
+'     memoryUsagePercent and GetMemoryLimitPercent read when it came, whichever is higher (either may be missing:
+'     invalid). generalAlert(info) -> { source: "general", general } for an event with a generalMemoryLevel, else
+'     invalid (roDeviceInfoEvent has other kinds).
+'   levelOf(alert) -> 0 (nothing to do), 1 (80 %), 2 (85 %), 3 (90 % or more). An alert from a Roku OS that alerts
+'     once is at least 2: no 85 % alert will follow. An app alert without a number counts as its first threshold
+'     (1, or 2 when it alerts once). The device's "low" is 2, "critical" 3, "normal" 0.
+'   newState() -> { level, logos, guideHours, teamsGuide, alerts, highestPercent }: nothing dropped yet.
+'   apply(state, alert) -> { state, level, dropLogos, dropSearchIndex, shrinkGuide, skipTeamsGuide }: what this
+'     alert asks for that hasn't been done. What goes stays gone until the app is opened again (D45), except the
+'     search index, which the next search builds again, so every alert from level 1 drops it again:
+'       level 1: channel logos off (the guide's rows and the banner drop theirs, LogoTask's queue empties) and
+'                SearchTask's title index dropped;
+'       level 2: and the guide window shrinks to shrunkGuideHours (a guide run that downloads nothing reads the
+'                files there are for the shorter window);
+'       level 3: and My Teams' match no longer copies the guide (D2's fallback, D48): game entries still match,
+'                programmes and upcoming games don't.
+'   windowHours(classHours, state) -> the guide window: Capabilities' guideHours, or shrunkGuideHours once shrunk.
+'   settingsWith(settings, state) -> the settings as the logos read them: channelLogos false once dropped (the saved
+'     setting is unchanged; Settings → Device says why they are off).
+'   teamsReadGuide(state) -> whether My Teams' match may copy the guide.
+'   logLine(alert, outcome) -> the warning logged for an alert (percent, level and what went; no ids).
+'   sample(monitor) -> { limitMB, percent, availableKB }: GetChannelMemoryLimit (as Capabilities.memoryLimitMB reads
+'     it), GetMemoryLimitPercent and GetChannelAvailableMemory; invalid for what this Roku OS lacks.
+'   DEBUG builds only (main.bs, every consoleEveryMs, the done-when of step 22): consoleLine(sampled, highestPercent, alerts)
+'     -> the console line. highestOf(previous, percent) -> the higher of the two percents (invalid ones ignored).
+namespace MemoryRelief
+
+    const firstPercent = 80
+    const shrinkPercent = 85
+    const criticalPercent = 90
+    ' The guide window once memory ran short (Capabilities' Low class is 24 h, High 36 h).
+    const shrunkGuideHours = 12
+    ' Roku OS 15.2 sends an alert at each threshold; earlier ones one alert at 80 %.
+    const multiLevelMajor = 15
+    const multiLevelMinor = 2
+    #if DEBUG
+        ' DEBUG builds print the memory line this often (5 minutes).
+        const consoleEveryMs = 300000
+    #end if
+
+    function subscribe(monitor as dynamic, deviceInfo as dynamic, port as object) as string
+        if monitor <> invalid
+            try
+                monitor.SetMessagePort(port)
+                if monitor.EnableMemoryWarningEvent(true) = true then return "app"
+            catch e
+                ' An older Roku OS: the device-memory fallback below.
+            end try
+        end if
+        if deviceInfo <> invalid
+            try
+                deviceInfo.SetMessagePort(port)
+                deviceInfo.EnableLowGeneralMemoryEvent(true)
+                return "general"
+            catch e
+                return "none"
+            end try
+        end if
+        return "none"
+    end function
+
+    function isMultiLevel(osVersion as dynamic) as boolean
+        if not MemoryRelief.isText(osVersion) then return false
+        parts = osVersion.Split(".")
+        if parts.Count() < 2 then return false
+        major = Val(parts[0])
+        minor = Val(parts[1])
+        if major <> MemoryRelief.multiLevelMajor then return major > MemoryRelief.multiLevelMajor
+        return minor >= MemoryRelief.multiLevelMinor
+    end function
+
+    function appAlert(info as dynamic, currentPercent as dynamic, multiLevel as boolean) as object
+        percent = invalid
+        if LCase(type(info)) = "roassociativearray" then percent = MemoryRelief.percentOf(info.memoryUsagePercent)
+        current = MemoryRelief.percentOf(currentPercent)
+        if current <> invalid
+            if percent = invalid or current > percent then percent = current
+        end if
+        return { source: "app", percent: percent, multiLevel: multiLevel }
+    end function
+
+    function generalAlert(info as dynamic) as dynamic
+        if LCase(type(info)) <> "roassociativearray" then return invalid
+        level = info.generalMemoryLevel
+        if not MemoryRelief.isText(level) then return invalid
+        return { source: "general", general: LCase(level) }
+    end function
+
+    function levelOf(alert as dynamic) as integer
+        if LCase(type(alert)) <> "roassociativearray" then return 0
+        source = MemoryRelief.textOf(alert.source)
+        if source = "general"
+            general = MemoryRelief.textOf(alert.general)
+            if general = "critical" then return 3
+            if general = "low" then return 2
+            return 0
+        end if
+        if source <> "app" then return 0
+        once = not MemoryRelief.isTrue(alert.multiLevel)
+        percent = MemoryRelief.percentOf(alert.percent)
+        level = 0
+        if percent = invalid
+            level = 1
+        else if percent >= MemoryRelief.criticalPercent
+            level = 3
+        else if percent >= MemoryRelief.shrinkPercent
+            level = 2
+        else if percent >= MemoryRelief.firstPercent
+            level = 1
+        end if
+        if once and level = 1 then level = 2
+        return level
+    end function
+
+    function newState() as object
+        return { level: 0, logos: false, guideHours: invalid, teamsGuide: false, alerts: 0, highestPercent: invalid }
+    end function
+
+    function apply(state as object, alert as dynamic) as object
+        updated = {}
+        updated.Append(state)
+        level = MemoryRelief.levelOf(alert)
+        outcome = { state: updated, level: level, dropLogos: false, dropSearchIndex: false, shrinkGuide: false, skipTeamsGuide: false }
+        updated.alerts = state.alerts + 1
+        if LCase(type(alert)) = "roassociativearray"
+            updated.highestPercent = MemoryRelief.highestOf(state.highestPercent, alert.percent)
+        end if
+        if level > state.level then updated.level = level
+        if level >= 1
+            outcome.dropSearchIndex = true
+            if not state.logos
+                updated.logos = true
+                outcome.dropLogos = true
+            end if
+        end if
+        if level >= 2 and state.guideHours = invalid
+            updated.guideHours = MemoryRelief.shrunkGuideHours
+            outcome.shrinkGuide = true
+        end if
+        if level >= 3 and not state.teamsGuide
+            updated.teamsGuide = true
+            outcome.skipTeamsGuide = true
+        end if
+        return outcome
+    end function
+
+    function windowHours(classHours as dynamic, state as dynamic) as integer
+        hours = 24
+        if MemoryRelief.isNumber(classHours) then hours = Int(classHours)
+        if LCase(type(state)) = "roassociativearray"
+            shrunk = state.guideHours
+            if MemoryRelief.isNumber(shrunk)
+                if shrunk > 0 and shrunk < hours then hours = Int(shrunk)
+            end if
+        end if
+        return hours
+    end function
+
+    function settingsWith(settings as dynamic, state as dynamic) as object
+        result = {}
+        if LCase(type(settings)) = "roassociativearray" then result.Append(settings)
+        if LCase(type(state)) = "roassociativearray"
+            if MemoryRelief.isTrue(state.logos) then result.channelLogos = false
+        end if
+        return result
+    end function
+
+    function teamsReadGuide(state as dynamic) as boolean
+        if LCase(type(state)) <> "roassociativearray" then return true
+        return not MemoryRelief.isTrue(state.teamsGuide)
+    end function
+
+    function logLine(alert as dynamic, outcome as object) as string
+        text = "Memory alert"
+        if LCase(type(alert)) = "roassociativearray"
+            if MemoryRelief.textOf(alert.source) = "general"
+                text += " (the Roku's memory is " + MemoryRelief.textOf(alert.general) + ")"
+            else
+                percent = MemoryRelief.percentOf(alert.percent)
+                if percent <> invalid then text += ": " + percent.ToStr() + " % of the app's limit"
+            end if
+        end if
+        text += ", level " + outcome.level.ToStr()
+        done = []
+        if outcome.dropLogos then done.Push("channel logos off until the next launch")
+        if outcome.dropSearchIndex then done.Push("search index dropped")
+        if outcome.shrinkGuide then done.Push("guide window " + Str(MemoryRelief.shrunkGuideHours).Trim() + " hours")
+        if outcome.skipTeamsGuide then done.Push("My Teams reads game entries only")
+        if done.Count() = 0 then return text + "; nothing more to drop"
+        return text + "; " + done.Join(", ")
+    end function
+
+    function sample(monitor as dynamic) as object
+        result = { limitMB: Capabilities.memoryLimitMB(monitor), percent: invalid, availableKB: invalid }
+        if monitor = invalid then return result
+        try
+            result.percent = MemoryRelief.percentOf(monitor.GetMemoryLimitPercent())
+        catch e
+            result.percent = invalid
+        end try
+        try
+            available = monitor.GetChannelAvailableMemory()
+            if MemoryRelief.isNumber(available) then result.availableKB = Int(available)
+        catch e
+            result.availableKB = invalid
+        end try
+        return result
+    end function
+
+    #if DEBUG
+        function consoleLine(sampled as object, highestPercent as dynamic, alerts as integer) as string
+            if MemoryRelief.isNumber(sampled.percent) then used = Int(sampled.percent).ToStr() + " %" else used = "unknown"
+            if MemoryRelief.isNumber(sampled.limitMB) then limit = Int(sampled.limitMB).ToStr() + " MB" else limit = "unknown"
+            if MemoryRelief.isNumber(sampled.availableKB) then available = (Int(sampled.availableKB) \ 1024).ToStr() + " MB" else available = "unknown"
+            if MemoryRelief.isNumber(highestPercent) then peak = Int(highestPercent).ToStr() + " %" else peak = "unknown"
+            mark = "unknown"
+            if MemoryRelief.isNumber(highestPercent)
+                if highestPercent < MemoryRelief.firstPercent then mark = "under 80 %" else mark = "reached 80 %"
+            end if
+            return "Using " + used + " of the limit (GetChannelMemoryLimit " + limit + ", available " + available + "); highest since launch " + peak + " (" + mark + "); alerts " + alerts.ToStr()
+        end function
+    #end if
+
+    function highestOf(previous as dynamic, percent as dynamic) as dynamic
+        value = MemoryRelief.percentOf(percent)
+        if value = invalid then return previous
+        if not MemoryRelief.isNumber(previous) then return value
+        if value > previous then return value
+        return previous
+    end function
+
+    ' A percentage from a number or a numeric string (the event's type is undocumented); invalid otherwise.
+    function percentOf(value as dynamic) as dynamic
+        if MemoryRelief.isNumber(value) then return Int(value)
+        if MemoryRelief.isText(value)
+            trimmed = value.Trim()
+            if trimmed = "" then return invalid
+            for i = 1 to Len(trimmed)
+                code = Asc(Mid(trimmed, i, 1))
+                if (code < 48 or code > 57) and code <> 46 then return invalid
+            end for
+            return Int(Val(trimmed))
+        end if
+        return invalid
+    end function
+
+    function isText(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "string" or kind = "rostring"
+    end function
+
+    function isTrue(value as dynamic) as boolean
+        kind = LCase(type(value))
+        if kind <> "boolean" and kind <> "roboolean" then return false
+        return value
+    end function
+
+    function textOf(value as dynamic) as string
+        if MemoryRelief.isText(value) then return value
+        return ""
+    end function
+
+    function isNumber(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "integer" or kind = "roint" or kind = "rointeger" or kind = "longinteger" or kind = "rolonginteger" or kind = "float" or kind = "rofloat" or kind = "double" or kind = "rodouble"
+    end function
+
+end namespace

@@ -11,7 +11,7 @@ sub runSearch()
     m.top.observeField("request", m.port)
     m.top.observeField("channels", m.port)
     m.top.observeField("guideRevision", m.port)
-    m.inbox = { query: invalid, prepare: false, channelsChanged: true, revision: m.top.guideRevision }
+    m.inbox = { query: invalid, prepare: false, channelsChanged: true, revision: m.top.guideRevision, dropIndex: false }
     m.folder = LiveSearch.newFolder()
     m.index = invalid
     m.indexRevision = -1
@@ -39,6 +39,7 @@ sub serveInbox()
         ' A new guide: the old index goes now; the next search builds the new one.
         m.index = invalid
     end if
+    dropIndexIfAsked()
     if m.inbox.channelsChanged
         m.inbox.channelsChanged = false
         m.channelEntries = invalid
@@ -55,6 +56,19 @@ sub serveInbox()
         m.serving = request
         answerQuery(request)
     end if
+    ' QA round 1 (fix 7): a drop that came while the index was being built (the build can't stop, D7) or used is
+    ' done now, so the index isn't kept after the alert; a query already waiting used it once.
+    drain(m.port, m.inbox)
+    dropIndexIfAsked()
+end sub
+
+' Step 22 (D45): a memory alert asked for the title index to go; the next search (or prepare) builds it again.
+sub dropIndexIfAsked()
+    if not m.inbox.dropIndex then return
+    m.inbox.dropIndex = false
+    if m.index <> invalid then Log.info("Search", "Memory alert: the title index is dropped")
+    m.index = invalid
+    m.indexRevision = -1
 end sub
 
 ' What a message asks, kept in inbox (no m: the cancel check calls it too).
@@ -68,6 +82,8 @@ sub takeMessage(inbox as object, msg as dynamic)
             inbox.prepare = true
         else if data.kind = "query"
             inbox.query = data
+        else if data.kind = "dropIndex"
+            inbox.dropIndex = true
         end if
     else if field = "channels"
         inbox.channelsChanged = true

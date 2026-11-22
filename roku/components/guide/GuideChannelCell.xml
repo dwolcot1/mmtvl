@@ -6,7 +6,8 @@
      the grid, channelInfoFocusable): the guide_focus cell with focusedRowText (unverified: whether TimeGrid sets
      hasFocus on this component, step 15).
      The content is the row's channel ContentNode (GuideScreen.makeRow): title (the name), shortDescriptionLine1 (the
-     number) and hdSmallIconUrl (a cachefs: logo, set when LogoTask has it; observed, as it can arrive later). -->
+     number) and hdSmallIconUrl (a cachefs: logo, set when LogoTask has it; observed, as it can arrive later).
+     Step 22: the logo is loaded at guideLogoSize (loadWidth, loadHeight), whatever the file's size. -->
 <component name="GuideChannelCell" extends="Group">
     <interface>
         <field id="content" type="node" onChange="onContent" />
@@ -18,7 +19,9 @@
     <children>
         <Poster id="focus" visible="false" />
         <Label id="number" />
-        <Poster id="logo" loadDisplayMode="scaleToFit" visible="false" />
+        <!-- QA round 1 (D49): loadWidth/loadHeight in the markup, set before any uri (Roku's Poster doc); 48 is Theme
+             guideLogoSize. -->
+        <Poster id="logo" loadWidth="48" loadHeight="48" loadDisplayMode="scaleToFit" visible="false" />
         <Label id="name" />
     </children>
 </component>
