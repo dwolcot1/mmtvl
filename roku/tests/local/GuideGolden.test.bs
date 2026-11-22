@@ -1,0 +1,431 @@
+' The parity contract (M12 steps 5 and 9): tests/fixtures/matches.golden.json and programmes.golden.json, written
+' by MMTVL's own code (MMTVLTests/RokuParityTests), reproduced from playlist.m3u, guide-a.xml, guide-b.xml and
+' overrides.json (read as SettingsStore keeps it: lowercased keys). A failure names the first difference.
+'
+' programmes.golden.json is per guide alone, as MMTVL's importer matches (wantedIDs); its programmes are in file
+' order across channels, compared here per channel (the order within each channel is file order; the Roku keeps
+' { id: [programme] }). GuidePipeline keeps programmes only for each channel's winning guide (the plan's data
+' flow), a subset of those: the pipeline tests check that subset against the same golden.
+namespace GuideGoldenTests
+
+    sub test_matchesReproduceTheGolden(t as object)
+        golden = GuideGoldenTests.readJSON("matches.golden.json")
+        channels = GuideGoldenTests.fixtureChannels()
+        sources = []
+        for each file in golden.guides
+            sources.Push({ sourceID: file, channels: GuideGoldenTests.fixtureChannelList(file) })
+        end for
+        matches = EPGMatcher.match(channels, sources, GuideGoldenTests.fixtureOverrides())
+        actual = {}
+        for each channel in channels
+            ref = matches[channel.id]
+            if ref = invalid
+                actual[channel.id] = invalid
+            else
+                actual[channel.id] = { guide: ref.guide, file: ref.sourceID, epgID: ref.epgID }
+            end if
+        end for
+        t.assertEqual(GuideGoldenTests.firstDifference(actual, golden.matches, "matches"), "")
+        t.assertEqual(channels.Count(), 36, "channels")
+    end sub
+
+    sub test_programmesReproduceTheGolden(t as object)
+        golden = GuideGoldenTests.readJSON("programmes.golden.json")
+        t.assertEqual(golden.window, { start: 1791158400, end: 1791331200 }, "window")
+        channels = GuideGoldenTests.fixtureChannels()
+        overrides = GuideGoldenTests.fixtureOverrides()
+        t.assertEqual(golden.guides.Count(), 2, "guides")
+        for each guide in golden.guides
+            path = "pkg:/fixtures/" + guide.file
+            channelPass = XMLTVScan.newChannelPass()
+            t.assertTrue(XMLTVScan.scanFile(path, channelPass, 512).ok, guide.file + " channels ok")
+            list = XMLTVScan.channelList(channelPass)
+            t.assertEqual(GuideGoldenTests.firstDifference(list, guide.channels, guide.file + " channels"), "")
+
+            ' As MMTVL's importer: that guide alone, matched once at the first <programme>.
+            wanted = []
+            seen = {}
+            matches = EPGMatcher.matchOne(channels, list, overrides)
+            for each id in matches
+                if not seen.DoesExist(matches[id])
+                    seen[matches[id]] = true
+                    wanted.Push(matches[id])
+                end if
+            end for
+            wanted.Sort()
+            t.assertEqual(GuideGoldenTests.firstDifference(wanted, guide.wantedIDs, guide.file + " wantedIDs"), "")
+
+            pass = XMLTVScan.newProgrammePass(wanted, golden.window.start, golden.window.end)
+            t.assertTrue(XMLTVScan.scanFile(path, pass, 512).ok, guide.file + " programmes ok")
+            expected = GuideGoldenTests.byChannel(guide.programmes)
+            t.assertEqual(GuideGoldenTests.firstDifference(GuideGoldenTests.canonical(pass.programmes), expected, guide.file + " programmes"), "")
+        end for
+    end sub
+
+    ' Every chunk size gives the golden (elements and UTF-8 characters cut anywhere).
+    sub test_programmesAreTheSameForAnyChunkSize(t as object)
+        golden = GuideGoldenTests.readJSON("programmes.golden.json")
+        guide = golden.guides[0]
+        expected = GuideGoldenTests.byChannel(guide.programmes)
+        for each size in [7, 64, 1000]
+            pass = XMLTVScan.newProgrammePass(guide.wantedIDs, golden.window.start, golden.window.end)
+            t.assertTrue(XMLTVScan.scanFile("pkg:/fixtures/" + guide.file, pass, size).ok, "ok")
+            t.assertEqual(GuideGoldenTests.firstDifference(GuideGoldenTests.canonical(pass.programmes), expected, "chunks of " + size.ToStr()), "")
+        end for
+    end sub
+
+    ' --- GuidePipeline over the fixtures ---
+
+    sub test_pipelineMatchesTheGoldenAndKeepsTheWinnersProgrammes(t as object)
+        result = GuidePipeline.process(GuideGoldenTests.newRequest([GuideGoldenTests.fixtureGuide("guide-a.xml"), GuideGoldenTests.fixtureGuide("guide-b.xml")]))
+        matchesGolden = GuideGoldenTests.readJSON("matches.golden.json")
+        actual = {}
+        for each channel in GuideGoldenTests.fixtureChannels()
+            ref = result.matches[channel.id]
+            if ref = invalid
+                actual[channel.id] = invalid
+            else
+                actual[channel.id] = { guide: ref.guide, file: matchesGolden.guides[ref.guide], epgID: ref.epgID }
+            end if
+        end for
+        t.assertEqual(GuideGoldenTests.firstDifference(actual, matchesGolden.matches, "pipeline matches"), "")
+        t.assertEqual(result.guides[0].status, "OK, 17 channels matched")
+        t.assertEqual(result.guides[1].status, "OK, 7 channels matched")
+        t.assertFalse(result.stopped, "stopped")
+
+        golden = GuideGoldenTests.readJSON("programmes.golden.json")
+        for i = 0 to 1
+            entry = result.guides[i]
+            t.assertEqual(GuideGoldenTests.firstDifference(entry.channels, golden.guides[i].channels, "pipeline channels " + i.ToStr()), "")
+            expected = GuideGoldenTests.byChannel(golden.guides[i].programmes)
+            kept = GuideGoldenTests.canonical(entry.programmes)
+            for each id in kept
+                t.assertEqual(GuideGoldenTests.firstDifference(kept[id], expected[id], "pipeline guide " + i.ToStr() + " " + id), "")
+            end for
+            ' Only the winners' ids: guide A alone also wants decoy.a, which guide B's tvg-id match beats.
+            for each id in expected
+                ownsOne = false
+                for each channelID in result.matches
+                    ref = result.matches[channelID]
+                    if ref.guide = i and ref.epgID = id then ownsOne = true
+                end for
+                t.assertEqual(kept.DoesExist(id), ownsOne, "guide " + i.ToStr() + " keeps " + id)
+            end for
+        end for
+        t.assertFalse(result.guides[0].programmes.DoesExist("decoy.a"), "decoy.a isn't kept")
+        t.assertEqual(GuidePipeline.programmesFor(result, "id:sports.one.us#2")[0].title, "Morning Kickoff")
+        t.assertInvalid(GuidePipeline.programmesFor(result, "name:channel 7"), "no guide")
+    end sub
+
+    sub test_pipelineReportsAGzipGuideItCantRead(t as object)
+        GuideGoldenTests.writeGzip("pkg:/fixtures/guide-a.xml", "tmp:/guide-a.xml.gz")
+        guides = [{ url: "https://iptv.example/guide-a.xml.gz", path: "tmp:/guide-a.xml.gz" }, GuideGoldenTests.fixtureGuide("guide-b.xml")]
+        request = GuideGoldenTests.newRequest(guides)
+        request.canInflate = false
+        result = GuidePipeline.process(request)
+        t.assertEqual(result.guides[0].status, "Can't read .gz on this Roku")
+        t.assertEqual(result.guides[0].problem, "gzip")
+        t.assertEqual(result.guides[0].channels, [])
+        ' Guide B now gives its guide to channels A used to win.
+        t.assertEqual(result.matches["id:both.guides.us#2"], { guide: 1, sourceID: "1", epgID: "both.guides.us" })
+        t.assertInvalid(result.matches["id:sports.one.us"], "only in guide A")
+        t.assertEqual(result.guides[1].status, GuideGoldenTests.guideBAloneStatus())
+    end sub
+
+    sub test_pipelineInflatesAGzipGuideWithinTheLimit(t as object)
+        size = GuideGoldenTests.writeGzip("pkg:/fixtures/guide-a.xml", "tmp:/guide-a.xml.gz")
+        guides = [{ url: "https://iptv.example/guide-a.xml.gz", path: "tmp:/guide-a.xml.gz", xmlPath: "tmp:/guide-a-inflated.xml" }, GuideGoldenTests.fixtureGuide("guide-b.xml")]
+        request = GuideGoldenTests.newRequest(guides)
+        request.canInflate = true
+        request.inflateMaxCompressedBytes = size
+        result = GuidePipeline.process(request)
+        t.assertEqual(result.guides[0].status, "OK, 17 channels matched")
+        t.assertEqual(result.guides[0].xmlPath, "tmp:/guide-a-inflated.xml")
+        plain = GuidePipeline.process(GuideGoldenTests.newRequest([GuideGoldenTests.fixtureGuide("guide-a.xml"), GuideGoldenTests.fixtureGuide("guide-b.xml")]))
+        t.assertEqual(GuideGoldenTests.firstDifference(result.matches, plain.matches, "matches"), "")
+        t.assertEqual(GuideGoldenTests.firstDifference(GuideGoldenTests.canonical(result.guides[0].programmes), GuideGoldenTests.canonical(plain.guides[0].programmes), "programmes"), "")
+
+        request.inflateMaxCompressedBytes = size - 1
+        overLimit = GuidePipeline.process(request)
+        t.assertEqual(overLimit.guides[0].status, "Can't read .gz on this Roku", "over the inflate limit")
+        t.assertEqual(overLimit.guides[0].problem, "gzip")
+    end sub
+
+    ' Only the host: no scheme, user, password, port, path or query.
+    sub test_pipelineReportsAFailedGuideByItsHostOnly(t as object)
+        url = "https://user:secret@IPTV.example:8080/get.php?token=abc#x"
+        guides = [{ url: url, path: "" }, { url: url, path: "tmp:/missing-guide.xml" }, { url: "not a url", path: invalid }, GuideGoldenTests.fixtureGuide("guide-b.xml")]
+        result = GuidePipeline.process(GuideGoldenTests.newRequest(guides))
+        t.assertEqual(result.guides[0].status, "Failed: iptv.example")
+        t.assertEqual(result.guides[1].status, "Failed: iptv.example")
+        t.assertEqual(result.guides[0].problem, "failed")
+        t.assertEqual(result.guides[3].status, GuideGoldenTests.guideBAloneStatus())
+        for each entry in result.guides
+            text = FormatJson(entry)
+            t.assertEqual(Instr(1, text, "secret") + Instr(1, text, "token") + Instr(1, text, "8080") + Instr(1, text, "get.php"), 0, "no URL parts in " + entry.status)
+        end for
+    end sub
+
+    ' A guide cut off in its programmes reads its channels and matches, then fails in the programme pass.
+    sub test_pipelineReportsATruncatedGuide(t as object)
+        text = ReadAsciiFile("pkg:/fixtures/guide-b.xml")
+        cut = Instr(1, text, "<title>Market Ticker")
+        GuideGoldenTests.writeText(Left(text, cut + 10), "tmp:/guide-b-cut.xml")
+        result = GuidePipeline.process(GuideGoldenTests.newRequest([GuideGoldenTests.fixtureGuide("guide-a.xml"), { url: "http://192.0.2.5:8080/b.xml", path: "tmp:/guide-b-cut.xml" }]))
+        t.assertEqual(result.guides[1].status, "Failed: 192.0.2.5")
+        t.assertEqual(result.guides[1].programmes.Count(), 0, "no programmes")
+        t.assertEqual(result.guides[1].matched, 7, "its matches stay")
+        t.assertEqual(result.guides[0].status, "OK, 17 channels matched")
+    end sub
+
+    ' The memory guard: an observer that says stop marks the guide "Too large for this Roku".
+    sub test_pipelineStopsAGuideWhenTheObserverSaysSo(t as object)
+        observer = {
+            calls: 0,
+            limit: 1,
+            tick: function(_bytes as dynamic) as boolean
+                m.calls += 1
+                return m.calls <= m.limit
+            end function
+        }
+        request = GuideGoldenTests.newRequest([GuideGoldenTests.fixtureGuide("guide-a.xml"), GuideGoldenTests.fixtureGuide("guide-b.xml")])
+        request.observer = observer
+        request.chunkBytes = 1024
+        result = GuidePipeline.process(request)
+        t.assertTrue(result.stopped, "stopped")
+        t.assertEqual(result.guides[0].status, "Too large for this Roku")
+        t.assertTrue(result.guides[0].stopped, "guide A stopped")
+        t.assertEqual(result.guides[1].status, "Too large for this Roku")
+    end sub
+
+    sub test_pipelineSaysOneChannel(t as object)
+        t.assertEqual(GuidePipeline.okStatus(1), "OK, 1 channel matched")
+        t.assertEqual(GuidePipeline.okStatus(0), "OK, 0 channels matched")
+    end sub
+
+    ' A generated guide the size of a big provider guide's channel list (769 channels, 20 programmes each), with
+    ' 60 of them matched. Prints the time of each part; no threshold (brs-node isn't a Roku).
+    sub test_timesAGeneratedGuide(t as object)
+        dq = Chr(34)
+        parts = ["<?xml version=" + dq + "1.0" + dq + " encoding=" + dq + "UTF-8" + dq + "?>" + Chr(10) + "<tv>" + Chr(10)]
+        for c = 1 to 769
+            parts.Push("  <channel id=" + dq + "Gen" + c.ToStr() + ".us" + dq + "><display-name>Generated Channel " + c.ToStr() + "</display-name><display-name>" + c.ToStr() + "</display-name></channel>" + Chr(10))
+        end for
+        base = GuideGoldenTests.timeOf("20261005000000")
+        for c = 1 to 769
+            for p = 0 to 19
+                start = GuideGoldenTests.stamp(base + p * 3600)
+                stopTime = GuideGoldenTests.stamp(base + (p + 1) * 3600)
+                parts.Push("  <programme start=" + dq + start + " +0000" + dq + " stop=" + dq + stopTime + " +0000" + dq + " channel=" + dq + "Gen" + c.ToStr() + ".us" + dq + "><title lang=" + dq + "en" + dq + ">Programme " + p.ToStr() + "</title><desc>A description of programme " + p.ToStr() + " on channel " + c.ToStr() + ", long enough to be like a real one.</desc><category>Sports</category><episode-num system=" + dq + "xmltv_ns" + dq + ">1." + p.ToStr() + ".</episode-num></programme>" + Chr(10))
+            end for
+        end for
+        parts.Push("</tv>" + Chr(10))
+        bytes = GuideGoldenTests.writeText(parts.Join(""), "tmp:/generated-guide.xml")
+        channels = []
+        for c = 1 to 120
+            if c <= 60
+                channels.Push({ id: "id:gen" + (c * 7).ToStr() + ".us", number: c, name: "Channel " + c.ToStr(), group: "G", tvgID: "gen" + (c * 7).ToStr() + ".us", tvgName: invalid })
+            else
+                channels.Push({ id: "name:unmatched " + c.ToStr(), number: c, name: "Unmatched " + c.ToStr(), group: "G", tvgID: invalid, tvgName: invalid })
+            end if
+        end for
+        request = {
+            guides: [{ url: "https://iptv.example/generated.xml", path: "tmp:/generated-guide.xml" }],
+            channels: channels,
+            overrides: {},
+            windowStart: base,
+            windowEnd: base + 24 * 3600,
+            canInflate: false,
+            inflateMaxCompressedBytes: invalid
+        }
+        timer = CreateObject("roTimespan")
+        channelPass = XMLTVScan.newChannelPass()
+        XMLTVScan.scanFile("tmp:/generated-guide.xml", channelPass)
+        channelMs = timer.TotalMilliseconds()
+        timer.Mark()
+        matches = EPGMatcher.match(channels, [{ sourceID: "0", channels: XMLTVScan.channelList(channelPass) }], {})
+        matchMs = timer.TotalMilliseconds()
+        timer.Mark()
+        result = GuidePipeline.process(request)
+        totalMs = timer.TotalMilliseconds()
+        kept = 0
+        for each id in result.guides[0].programmes
+            kept += result.guides[0].programmes[id].Count()
+        end for
+        print "TIMING generated guide: " + (bytes / 1024).ToStr() + " KB, 769 channels, 15380 programmes; channel pass " + channelMs.ToStr() + " ms, match " + matchMs.ToStr() + " ms, whole pipeline " + totalMs.ToStr() + " ms, " + kept.ToStr() + " programmes kept"
+        t.assertEqual(matches.Count(), 60, "matched")
+        t.assertEqual(result.guides[0].status, "OK, 60 channels matched")
+        t.assertEqual(kept, 60 * 20, "kept")
+    end sub
+
+    ' --- Helpers ---
+
+    function readJSON(file as string) as object
+        return ParseJson(ReadAsciiFile("pkg:/fixtures/" + file))
+    end function
+
+    function fixtureChannels() as object
+        return M3U.makeChannels(M3U.parse(M3U.readFile("pkg:/fixtures/playlist.m3u")).entries)
+    end function
+
+    ' overrides.json as the Roku keeps it (SettingsStore.overrideMap: lowercased keys).
+    function fixtureOverrides() as object
+        return SettingsStore.overrideMap(GuideGoldenTests.readJSON("overrides.json"))
+    end function
+
+    function fixtureChannelList(file as string) as object
+        pass = XMLTVScan.newChannelPass()
+        XMLTVScan.scanFile("pkg:/fixtures/" + file, pass)
+        return XMLTVScan.channelList(pass)
+    end function
+
+    ' Guide B's status when it's the only guide read: every channel it matches alone.
+    function guideBAloneStatus() as string
+        alone = EPGMatcher.matchOne(GuideGoldenTests.fixtureChannels(), GuideGoldenTests.fixtureChannelList("guide-b.xml"), GuideGoldenTests.fixtureOverrides())
+        return GuidePipeline.okStatus(alone.Count())
+    end function
+
+    function fixtureGuide(file as string) as object
+        return { url: "https://iptv.example/" + file, path: "pkg:/fixtures/" + file }
+    end function
+
+    function newRequest(guides as object) as object
+        golden = GuideGoldenTests.readJSON("programmes.golden.json")
+        return {
+            guides: guides,
+            channels: GuideGoldenTests.fixtureChannels(),
+            overrides: GuideGoldenTests.fixtureOverrides(),
+            windowStart: golden.window.start,
+            windowEnd: golden.window.end,
+            canInflate: false,
+            inflateMaxCompressedBytes: invalid
+        }
+    end function
+
+    ' Golden programmes (file order across channels) as { channelID: [programme] }, every field present.
+    function byChannel(programmes as object) as object
+        result = {}
+        result.SetModeCaseSensitive()
+        for each programme in programmes
+            if not result.DoesExist(programme.channelID) then result[programme.channelID] = []
+            result[programme.channelID].Push(GuideGoldenTests.programmeFields(programme))
+        end for
+        return result
+    end function
+
+    ' A pass's { id: [programme] } with every field present (missing ones invalid), as byChannel gives.
+    function canonical(programmes as object) as object
+        result = {}
+        result.SetModeCaseSensitive()
+        for each id in programmes
+            list = []
+            for each programme in programmes[id]
+                list.Push(GuideGoldenTests.programmeFields(programme))
+            end for
+            result[id] = list
+        end for
+        return result
+    end function
+
+    function programmeFields(programme as object) as object
+        fields = {}
+        for each key in ["start", "stop", "title", "subtitle", "summary", "category", "episode"]
+            fields[key] = programme[key]
+        end for
+        return fields
+    end function
+
+    ' "" when equal, else "<path>: expected …, got …" for the first difference (arrays by index, AAs by sorted key;
+    ' a missing key and invalid are the same; numbers by value).
+    function firstDifference(actual as dynamic, expected as dynamic, path as string) as string
+        kindA = LocalTest.kind(actual)
+        kindE = LocalTest.kind(expected)
+        if kindA <> kindE then return path + ": expected " + LocalTest.describe(expected) + ", got " + LocalTest.describe(actual)
+        if kindA = "array"
+            count = actual.Count()
+            if expected.Count() < count then count = expected.Count()
+            for i = 0 to count - 1
+                difference = GuideGoldenTests.firstDifference(actual[i], expected[i], path + "[" + i.ToStr() + "]")
+                if difference <> "" then return difference
+            end for
+            if actual.Count() <> expected.Count() then return path + ": expected " + expected.Count().ToStr() + " items, got " + actual.Count().ToStr()
+            return ""
+        end if
+        if kindA = "assoc"
+            keys = []
+            for each key in expected
+                keys.Push(key)
+            end for
+            for each key in actual
+                if not expected.DoesExist(key) then keys.Push(key)
+            end for
+            keys.Sort()
+            for each key in keys
+                difference = GuideGoldenTests.firstDifference(actual[key], expected[key], path + "." + key)
+                if difference <> "" then return difference
+            end for
+            return ""
+        end if
+        if LocalTest.same(actual, expected) then return ""
+        return path + ": expected " + LocalTest.describe(expected) + ", got " + LocalTest.describe(actual)
+    end function
+
+    ' Writes path's bytes as a gzip of stored blocks (with its CRC-32); returns the gzip's size.
+    function writeGzip(source as string, path as string) as integer
+        data = CreateObject("roByteArray")
+        data.ReadFile(source)
+        out = CreateObject("roByteArray")
+        out.FromHexString("1F8B08000000000000FF")
+        offset = 0
+        total = data.Count()
+        while true
+            count = total - offset
+            if count > 65535 then count = 65535
+            final = offset + count >= total
+            if final then out.Push(1) else out.Push(0)
+            GuideGoldenTests.pushLE(out, count, 2)
+            GuideGoldenTests.pushLE(out, 65535 - count, 2)
+            for i = 0 to count - 1
+                out.Push(data[offset + i])
+            end for
+            offset += count
+            if final then exit while
+        end while
+        GuideGoldenTests.pushLE(out, data.GetCRC32(), 4)
+        GuideGoldenTests.pushLE(out, total, 4)
+        out.WriteFile(path)
+        return out.Count()
+    end function
+
+    sub pushLE(bytes as object, value as dynamic, count as integer)
+        v = value
+        for i = 1 to count
+            bytes.Push(v and 255)
+            v = v >> 8
+        end for
+    end sub
+
+    function writeText(text as string, path as string) as integer
+        bytes = CreateObject("roByteArray")
+        bytes.FromAsciiString(text)
+        bytes.WriteFile(path)
+        return bytes.Count()
+    end function
+
+    function timeOf(text as string) as dynamic
+        return XMLTVDate.parse(text)
+    end function
+
+    ' Seconds since 1970 as an XMLTV time, YYYYMMDDhhmmss (UTC).
+    function stamp(seconds as dynamic) as string
+        date = CreateObject("roDateTime")
+        date.FromSeconds(seconds)
+        return date.GetYear().ToStr() + GuideGoldenTests.two(date.GetMonth()) + GuideGoldenTests.two(date.GetDayOfMonth()) + GuideGoldenTests.two(date.GetHours()) + GuideGoldenTests.two(date.GetMinutes()) + GuideGoldenTests.two(date.GetSeconds())
+    end function
+
+    function two(value as integer) as string
+        if value < 10 then return "0" + value.ToStr()
+        return value.ToStr()
+    end function
+
+end namespace

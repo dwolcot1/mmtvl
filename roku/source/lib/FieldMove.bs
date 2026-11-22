@@ -1,0 +1,21 @@
+' A large value into a node field (M12 step 9: the guide task's programmes). Roku OS 15 has MoveIntoField
+' (data-transfer-apis), which hands an array or AA over without the deep copy a field set makes. Older Roku OS:
+' the call doesn't exist, and the catch falls back to a plain set (a copy). Readers get the field with a plain get
+' (one copy); MoveFromField isn't used, since it would empty the holder for other readers.
+' Unverified on a device: the exact name and result of the OS 15 call, whether a value that is still
+' referenced elsewhere is refused (callers drop their other references first), and that try/catch catches a
+' missing member function in a Task thread. Not used in local tests (needs nodes).
+namespace FieldMove
+
+    ' Puts value in node[field]. True when it was moved, false when it was copied.
+    function put(node as object, field as string, value as object) as boolean
+        try
+            node.MoveIntoField(field, value)
+            return true
+        catch e
+            node.setField(field, value)
+        end try
+        return false
+    end function
+
+end namespace

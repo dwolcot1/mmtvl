@@ -1,0 +1,264 @@
+' URLPolicy (M12, security L-2 of step 3): MMTVL's RelayURLPolicy cases from HLSRelayTests (urlPolicy,
+' aLANStreamMayReachAnotherLANDevice, routerNamesAreInternal and the policy lines of
+' aChainThatLeftTheLANReachesNoOtherLANDevice), the Roku's own rule (a playlist naming its guides and streams),
+' and the address readers against inet_aton / inet_pton. The Roku's own addresses are always passed in; the
+' tests never read roDeviceInfo. Off-device: npm run test:local.
+namespace URLPolicyTests
+
+    ' MARK: HLSRelayTests
+
+    sub test_urlPolicy(t as object)
+        cdn = "https://cdn.example/master.m3u8"
+        lan = "http://192.168.1.5:8080/master.m3u8"
+        t.assertTrue(URLPolicyTests.chain("https://cdn2.example/seg.ts", cdn), "public")
+        t.assertTrue(URLPolicyTests.chain("HTTP://cdn.example/seg.ts", cdn), "upper-case scheme")
+        for each refused in ["file:///etc/hosts", "data:text/plain,hi", "ftp://cdn.example/x"]
+            t.assertFalse(URLPolicyTests.chain(refused, cdn), refused)
+        end for
+        for each internal in ["http://127.0.0.1:1/x", "http://127.1/x", "http://2130706433/x", "http://0x7f.0.0.1/x",
+                "http://localhost/x", "http://LocalHost./x", "http://[::1]/x", "http://[::ffff:127.0.0.1]/x",
+                "http://0.0.0.0/x", "http://10.0.0.1/x", "http://172.16.0.1/x", "http://192.168.1.5/x",
+                "http://169.254.169.254/x", "http://[fe80::1%25en0]/x", "http://[fd00::1]/x",
+                "http://nas.local/x", "http://router/x"]
+            t.assertFalse(URLPolicyTests.chain(internal, cdn), internal)
+        end for
+        t.assertTrue(URLPolicyTests.chain("http://192.168.1.5/seg.ts", lan), "a LAN stream's own host")
+        t.assertTrue(URLPolicyTests.chain("https://192.168.1.5:9000/seg.ts", lan), "its own host, another port")
+        t.assertFalse(URLPolicyTests.chain("http://127.0.0.1/seg.ts", lan), "loopback from a LAN stream")
+        t.assertTrue(URLPolicyTests.chain("https://cdn.example/seg.ts", lan), "public from a LAN stream")
+        t.assertFalse(URLPolicy.isInternal("8.8.8.8"))
+        t.assertFalse(URLPolicy.isInternal("cdn.example"))
+        t.assertFalse(URLPolicy.isInternal("2001:4860:4860::8888"))
+        t.assertFalse(URLPolicy.isInternal("172.32.0.1"))
+    end sub
+
+    ' A stream on a LAN host (address or LAN name) may reach another LAN device by its private address (a
+    ' Threadfin/xTeVe proxy to a tuner); never the Roku (loopback, its own addresses), link-local, 0/8, shared
+    ' addresses or LAN names; a public stream still reaches no internal host.
+    sub test_aLANStreamMayReachAnotherLANDevice(t as object)
+        own = ["192.168.1.5", "fd00::5", "127.0.0.1", "::1"]
+        for each entry in ["http://192.168.1.9:34400/auto/v5.1", "http://10.0.0.2/live.m3u8", "http://172.20.1.1/x",
+                "http://[fd12::9]:34400/x", "http://threadfin.local:34400/x", "http://xteve/x",
+                "http://nas.lan/x", "http://tuner.home.arpa/x"]
+            for each allowed in ["http://192.168.1.20:5004/auto/v5.1", "http://10.1.2.3/seg.ts", "http://[fd00::20]:5004/x", "http://[::ffff:192.168.1.20]/x"]
+                t.assertTrue(URLPolicyTests.chain(allowed, entry, own), entry + " -> " + allowed)
+            end for
+            for each refused in ["http://127.0.0.1:1/x", "http://127.1/x", "http://localhost/x", "http://[::1]/x",
+                    "http://0.0.0.0/x", "http://0.1.2.3/x", "http://169.254.169.254/x",
+                    "http://[fe80::1%25en0]/x", "http://100.64.0.1/x", "http://192.168.1.5/x",
+                    "http://[fd00::5]/x", "http://[::ffff:127.0.0.1]/x", "http://other.local/x",
+                    "http://router/x", "http://255.255.255.255/x",
+                    "http://[::ffff:192.168.1.5]/x", "http://[::ffff:c0a8:105]/x",
+                    "http://[0:0:0:0:0:ffff:192.168.1.5]/x"]
+                t.assertFalse(URLPolicyTests.chain(refused, entry, own), entry + " -> " + refused)
+            end for
+        end for
+        ' Public, loopback, link-local and shared entries reach no other internal host.
+        for each entry in ["https://cdn.example/x", "http://127.0.0.1:8080/x", "http://localhost:8080/x",
+                "http://169.254.1.1/x", "http://100.64.0.9/x", "http://[fe80::9%25en0]/x"]
+            t.assertFalse(URLPolicyTests.chain("http://192.168.1.20/x", entry, own), entry + " -> 192.168.1.20")
+            t.assertFalse(URLPolicyTests.chain("http://[fd00::20]/x", entry, own), entry + " -> fd00::20")
+        end for
+    end sub
+
+    ' Router and private-use names (".lan", ".home.arpa", ".internal") are internal, so a public stream can't
+    ' reach them; a LAN stream on such a name still uses its own host.
+    sub test_routerNamesAreInternal(t as object)
+        cdn = "https://cdn.example/x"
+        for each name in ["router.lan", "ROUTER.LAN.", "nas.home.arpa", "gateway.internal", "a.b.internal"]
+            t.assertTrue(URLPolicy.isInternal(name), name)
+            t.assertFalse(URLPolicyTests.chain("http://" + name + "/x", cdn), name)
+        end for
+        t.assertFalse(URLPolicy.isInternal("lan.example"))
+        t.assertFalse(URLPolicy.isInternal("internal.example.com"))
+        t.assertTrue(URLPolicyTests.chain("http://nas.lan/seg.ts", "http://nas.lan/x"))
+    end sub
+
+    ' LAN to LAN only along a chain that never left the LAN (the policy lines of
+    ' aChainThatLeftTheLANReachesNoOtherLANDevice). The entry's own host stays reachable.
+    sub test_aChainThatLeftTheLANReachesNoOtherLANDevice(t as object)
+        entry = "http://192.168.77.2:34400/stream/l1"
+        cdn = "https://cdn-l1.example/x"
+        lanTarget = "http://192.168.77.30/x"
+        own = []
+        t.assertFalse(URLPolicy.allowsInChain(lanTarget, entry, cdn, true, own).ok, "referrer left the LAN")
+        t.assertFalse(URLPolicy.allowsInChain(lanTarget, entry, entry, false, own).ok, "an earlier hop left the LAN")
+        t.assertTrue(URLPolicy.allowsInChain(lanTarget, entry, entry, true, own).ok, "LAN all the way")
+        t.assertTrue(URLPolicy.allowsInChain("http://192.168.77.2:34400/other", entry, cdn, false, own).ok, "the entry's own host")
+        t.assertTrue(URLPolicy.allowsInChain("https://cdn-l1b.example/x", entry, cdn, false, own).ok, "a public host")
+    end sub
+
+    ' MARK: the Roku's rule (URLPolicy.allows)
+
+    sub test_aTypedURLNeedsOnlyBeWeb(t as object)
+        for each typed in ["https://provider.example/get.php", "http://192.168.1.9:34400/m3u/all.m3u", "http://xteve:34400/m3u"]
+            t.assertEqual(URLPolicy.allows(typed), { ok: true, reason: "" }, typed)
+        end for
+        for each refused in ["file:///etc/hosts", "pkg:/manifest", "tmp:/playlist.m3u", "cachefs:/x", "common:/certs/ca-bundle.crt", "ftp://provider.example/x", "http://", "http:///x", "provider.example/x", ""]
+            t.assertEqual(URLPolicy.allows(refused), { ok: false, reason: "notWeb" }, refused)
+        end for
+    end sub
+
+    ' A public playlist's guides and streams never reach the Roku (ECP on 8060) or the LAN.
+    sub test_aPublicPlaylistNamesNoInternalHost(t as object)
+        playlist = "https://provider.example/get.php?username=u&password=p"
+        own = ["192.168.1.30"]
+        for each allowed in ["https://cdn.example/live/1.m3u8", "http://cdn.example:8080/2.ts", "https://guide.example/epg.xml.gz", "http://93.184.216.34/x"]
+            t.assertEqual(URLPolicy.allows(allowed, playlist, own), { ok: true, reason: "" }, allowed)
+        end for
+        for each refused in ["http://127.0.0.1:8060/query/device-info", "http://localhost:8060/", "http://192.168.1.30:8060/query/apps",
+                "http://192.168.1.20/x", "http://roku.local:8060/", "http://router.lan/", "http://hdhomerun/lineup.json",
+                "http://[::1]:8060/", "http://169.254.169.254/latest", "http://0x7f000001/", "http://127.0.0.%31/x",
+                "http://cdn.example@127.0.0.1/x", "http://user:pw@[::ffff:7f00:1]:8060/"]
+            t.assertEqual(URLPolicy.allows(refused, playlist, own), { ok: false, reason: "internalHost" }, refused)
+        end for
+        t.assertEqual(URLPolicy.allows("rtmp://cdn.example/live", playlist, own), { ok: false, reason: "notWeb" })
+    end sub
+
+    ' A LAN playlist (Threadfin/xTeVe) may name a tuner, never the Roku itself, loopback, link-local or a name.
+    sub test_aLANPlaylistMayNameATuner(t as object)
+        playlist = "http://192.168.1.9:34400/m3u/threadfin.m3u"
+        own = ["192.168.1.30"]
+        t.assertEqual(URLPolicy.allows("http://192.168.1.20:5004/auto/v5.1", playlist, own), { ok: true, reason: "" })
+        t.assertEqual(URLPolicy.allows("http://192.168.1.9:34400/stream/1", playlist, own), { ok: true, reason: "" })
+        t.assertEqual(URLPolicy.allows("http://192.168.1.30:8060/query/apps", playlist, own), { ok: false, reason: "ownAddress" })
+        t.assertEqual(URLPolicy.allows("http://[::ffff:192.168.1.30]:8060/", playlist, own), { ok: false, reason: "ownAddress" })
+        for each refused in ["http://127.0.0.1:8060/", "http://169.254.1.1/x", "http://other.local/x", "http://hdhomerun/x"]
+            t.assertEqual(URLPolicy.allows(refused, playlist, own), { ok: false, reason: "internalHost" }, refused)
+        end for
+        t.assertEqual(URLPolicy.allows("https://cdn.example/x", "ftp://192.168.1.9/x", own), { ok: false, reason: "badReferrer" })
+    end sub
+
+    ' Decision 2026-11-18 (step 11's player, as MMTVL): a stream's own host is allowed whatever it is.
+    sub test_aStreamNeedsOnlyBeWeb(t as object)
+        for each stream in ["https://cdn.example/1.m3u8", "http://192.168.1.20:5004/auto/v5.1", "http://127.0.0.1:8080/x", "http://xteve:34400/1"]
+            t.assertEqual(URLPolicy.allowsStream(stream), { ok: true, reason: "" }, stream)
+        end for
+        for each refused in ["rtmp://cdn.example/live", "file:///x", "pkg:/x", "http://", ""]
+            t.assertEqual(URLPolicy.allowsStream(refused), { ok: false, reason: "notWeb" }, refused)
+        end for
+    end sub
+
+    ' Security M-1 of step 8: the address a transfer reached.
+    sub test_allowsPeer(t as object)
+        own = ["192.168.1.30"]
+        for each publicPeer in ["93.184.216.34", "2606:2800:220:1::1", " 93.184.216.34 "]
+            t.assertEqual(URLPolicy.allowsPeer(publicPeer, true, own), { ok: true, reason: "" }, publicPeer)
+            t.assertEqual(URLPolicy.allowsPeer(publicPeer, false, own), { ok: true, reason: "" }, publicPeer + " on a LAN chain")
+        end for
+        for each internalPeer in ["127.0.0.1", "0.0.0.0", "169.254.169.254", "10.0.0.1", "172.16.0.1", "192.168.1.20", "100.64.0.1",
+                "255.255.255.255", "::1", "::", "fe80::1", "fe80::1%en0", "fd00::1", "::ffff:127.0.0.1", "::ffff:192.168.1.20", "[fd00::1]"]
+            t.assertEqual(URLPolicy.allowsPeer(internalPeer, true, own), { ok: false, reason: "internalPeer" }, internalPeer)
+        end for
+        ' A LAN chain may reach another LAN device, never the Roku, loopback or link-local.
+        for each lanPeer in ["10.0.0.1", "172.16.0.1", "192.168.1.20", "fd00::1", "::ffff:192.168.1.20"]
+            t.assertEqual(URLPolicy.allowsPeer(lanPeer, false, own), { ok: true, reason: "" }, lanPeer)
+        end for
+        for each refused in ["127.0.0.1", "169.254.1.1", "fe80::1", "100.64.0.1", "0.1.2.3"]
+            t.assertEqual(URLPolicy.allowsPeer(refused, false, own), { ok: false, reason: "internalPeer" }, refused)
+        end for
+        t.assertEqual(URLPolicy.allowsPeer("192.168.1.30", false, own), { ok: false, reason: "ownAddress" })
+        t.assertEqual(URLPolicy.allowsPeer("::ffff:c0a8:11e", false, own), { ok: false, reason: "ownAddress" })
+        t.assertEqual(URLPolicy.allowsPeer("198.51.100.7", true, ["198.51.100.7"]), { ok: false, reason: "ownAddress" }, "a public own address")
+        for each unknown in ["", "cdn.example", "router", invalid, 3]
+            t.assertEqual(URLPolicy.allowsPeer(unknown, true, own), { ok: false, reason: "unknownPeer" })
+        end for
+    end sub
+
+    ' Security L-1 of step 8: where a referrer applies, a host with non-ASCII or control characters after
+    ' decoding, or a "%" outside an IPv6 zone, is refused; a typed URL is still allowed.
+    sub test_aHostThatIsntPlainASCIIIsRefusedWithAReferrer(t as object)
+        playlist = "https://provider.example/get.php"
+        fullwidth127 = Chr(65297) + Chr(65298) + Chr(65303)
+        hosts = [
+            fullwidth127 + ".0.0.1",
+            "%EF%BC%91%EF%BC%92%EF%BC%97.0.0.1",
+            "router." + Chr(65356) + Chr(65345) + Chr(65358),
+            "127.0.0.1%00.evil.example",
+            "cdn%2Eexample%25",
+            "cdn.example%7F"
+        ]
+        for each name in hosts
+            url = "http://" + name + "/x"
+            t.assertEqual(URLPolicy.allows(url, playlist, []), { ok: false, reason: "badHost" }, name)
+            t.assertTrue(URLPolicy.allows(url).ok, name + " typed")
+        end for
+        t.assertFalse(URLPolicy.isPlainHost("cdn" + Chr(1) + ".example"), "a control character")
+        t.assertTrue(URLPolicy.isPlainHost("[fe80::1%en0]"), "a zone in brackets")
+        t.assertFalse(URLPolicy.isPlainHost("[evil.example]"), "brackets around a name")
+        t.assertTrue(URLPolicy.allows("http://cdn.example:8080/x", playlist, []).ok)
+    end sub
+
+    ' Security L-2 of step 8: no empty label, and a host ending in a number must be an IPv4 address.
+    sub test_emptyLabelsAndBadNumbersAreRefusedWithAReferrer(t as object)
+        playlist = "https://provider.example/get.php"
+        for each name in ["127.0.0.1..", "127.0.0.1.%2e", "localhost..", ".cdn.example", "cdn..example", "1.2.3.99999999999", "1.2.3.4.5", "cdn.example.0x7f", "cdn.example.08"]
+            t.assertEqual(URLPolicy.allows("http://" + name + "/x", playlist, []), { ok: false, reason: "badHost" }, name)
+        end for
+        ' One trailing dot is a name's absolute form; numbers that read as IPv4 go on to the address rules.
+        t.assertEqual(URLPolicy.allows("http://cdn.example./x", playlist, []), { ok: true, reason: "" })
+        t.assertEqual(URLPolicy.allows("http://93.184.216.34./x", playlist, []), { ok: true, reason: "" })
+        t.assertEqual(URLPolicy.allows("http://0x7f.1/x", playlist, []), { ok: false, reason: "internalHost" })
+        ' Names made of hex letters are names (the TLD isn't a number).
+        t.assertEqual(URLPolicy.allows("http://cafe.be/x", playlist, []), { ok: true, reason: "" })
+        t.assertEqual(URLPolicy.allows("http://add.cafe/x", playlist, []), { ok: true, reason: "" })
+    end sub
+
+    ' MARK: reading hosts and addresses
+
+    sub test_hostOf(t as object)
+        t.assertEqual(URLPolicy.hostOf("http://user:pw@CDN.example:8080/a?b#c"), "CDN.example")
+        t.assertEqual(URLPolicy.hostOf("http://[::1]:8080/x"), "[::1]")
+        t.assertEqual(URLPolicy.hostOf("http://[fe80::1%25en0]/x"), "[fe80::1%en0]")
+        t.assertEqual(URLPolicy.hostOf("http://127.0.0.%31/x"), "127.0.0.1")
+        t.assertEqual(URLPolicy.hostOf("http://cdn.example@127.0.0.1/x"), "127.0.0.1")
+        t.assertEqual(URLPolicy.hostOf("http://cdn.example?@127.0.0.1/x"), "cdn.example")
+        for each unread in ["http://a\b/x", "http://a b/x", "http://[::1/x", "http://[::1]x/", "http://:80/x", "http://", "no scheme"]
+            t.assertEqual(URLPolicy.hostOf(unread), "", unread)
+        end for
+    end sub
+
+    sub test_ipv4AsInetAton(t as object)
+        cases = [
+            ["127.0.0.1", [127, 0, 0, 1]], ["127.1", [127, 0, 0, 1]], ["2130706433", [127, 0, 0, 1]],
+            ["0x7f.0.0.1", [127, 0, 0, 1]], ["0177.0.0.1", [127, 0, 0, 1]], ["0X7F000001", [127, 0, 0, 1]],
+            ["1.2.65535", [1, 2, 255, 255]], ["10.16777215", [10, 255, 255, 255]], ["0", [0, 0, 0, 0]],
+            ["4294967296", [0, 0, 0, 0]], ["0x.1", [0, 0, 0, 1]]
+        ]
+        for each item in cases
+            t.assertEqual(URLPolicy.parseIPv4(item[0]), item[1], item[0])
+        end for
+        for each notAnAddress in ["", "08.1.1.1", "1.2.3.4.5", "256.1.1.1", "1.2.65536", "1.16777216", "0x", "1..2", "1.2.3.", ".1", "cdn.example", "1e2", "::1"]
+            t.assertInvalid(URLPolicy.parseIPv4(notAnAddress), notAnAddress)
+        end for
+    end sub
+
+    sub test_ipv6AsInetPton(t as object)
+        mapped = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 192, 168, 1, 5]
+        cases = [
+            ["::", [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]],
+            ["::1", [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]],
+            ["fe80::1", [254, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]],
+            ["FD00::5", [253, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5]],
+            ["::ffff:192.168.1.5", mapped], ["::ffff:c0a8:105", mapped], ["0:0:0:0:0:ffff:192.168.1.5", mapped],
+            ["1:2:3:4:5:6:7:8", [0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 8]],
+            ["1:2:3:4:5:6:7::", [0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 0]],
+            ["1::8", [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8]]
+        ]
+        for each item in cases
+            t.assertEqual(URLPolicy.parseIPv6(item[0]), item[1], item[0])
+        end for
+        for each notAnAddress in ["", "1:2:3:4:5:6:7:8:9", "1:2:3:4:5:6:7:8::", "1::2::3", ":1", "1:", "12345::", ":::",
+                "::1.2.3.04", "::1.2.3", "::1.2.3.4.5", "::256.1.1.1", "fe80::1%en0", "g::1", "127.0.0.1"]
+            t.assertInvalid(URLPolicy.parseIPv6(notAnAddress), notAnAddress)
+        end for
+    end sub
+
+    ' MARK: helpers
+
+    ' RelayURLPolicy.allows(url, stream:) with no referrer, the chain on the LAN so far, and the Roku's addresses.
+    function chain(url as string, entry as string, own = [] as object) as boolean
+        return URLPolicy.allowsInChain(url, entry, "", true, own).ok
+    end function
+
+end namespace

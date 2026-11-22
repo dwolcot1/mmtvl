@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Downloads and reads the guides off the render thread (M12 step 9). The scene sets channels,
+     playlistGuideURLs and expectedGuides, then control = "run". The task reads the pasted guides, the playlist URL
+     and usePlaylistGuide from the registry. It sets guideData first, then result once:
+       result: { ok: true, sourcesKey, fetchedAt, failures, statuses, note, programmeCount }  or  { ok: false }
+         statuses   GuideFetch.statusRows: [{ index, host, status, problem, matched, fromPlaylist, stale }]
+         fetchedAt  { cache id: when the guide's fresh file was downloaded (wall-clock seconds) }
+         failures   { cache id: { at, kind } }, for the guides waiting after a failure
+         note       "" or why the memory guard was inactive
+       guideData: GuideFetch.guideData's shape (see GuideFetch.bs). The scene keeps the finished task as the
+         holder of guideData (its guideHolder field), so the programmes are never relayed or copied by the scene.
+     ({ ok: false }: the task failed or was given up; the scene keeps what it has). Logs show hosts only (L6). -->
+<component name="GuideTask" extends="Task">
+    <interface>
+        <!-- GuideSources.matchFields of the playlist's channels: id, name, tvgID, tvgName only. -->
+        <field id="channels" type="array" />
+        <!-- QA-M1 of step 9: the playlist's url-tvg guides (as URLPolicy allowed them), set by the scene right before
+             control = "run" and set to [] when the result arrives or the task is given up. A URL-bearing field
+             on a node outside the scene tree: no more exposed than the scene's playlistGuideURLs (security L-3
+             is open). -->
+        <field id="playlistGuideURLs" type="array" />
+        <!-- How many guides the scene's own GuideSources.chooseSources found; a different count is logged. -->
+        <field id="expectedGuides" type="integer" value="0" />
+        <!-- Security M-3 of step 9: set by the scene's watchdog; downloads and the observer give up. -->
+        <field id="cancel" type="boolean" value="false" />
+        <field id="guideData" type="assocarray" />
+        <field id="result" type="assocarray" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Unicode.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/URLPolicy.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Refresh.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/SettingsStore.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Capabilities.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Inflate.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/XMLTVDate.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/XMLTVScan.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/EPGMatcher.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/GuidePipeline.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/GuideSources.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/GuideFetch.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/FieldMove.bs" />
+</component>

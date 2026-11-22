@@ -10,6 +10,10 @@
     {
       "src": "tests/local/**/*.bs",
       "dest": "source/localtests"
+    },
+    {
+      "src": "tests/fixtures/**/*",
+      "dest": "fixtures"
     }
   ],
   "stagingDir": "out/local-staging",

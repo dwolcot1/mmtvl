@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE tv SYSTEM "xmltv.dtd">
+<!-- MMTVL/Roku parity fixture (M12 step 5), guide A: the first guide in priority order. Hand-written. -->
+<tv generator-info-name="parity-fixture">
+  <!-- Ids are lowercased; display-names are kept as written. -->
+  <channel id="Sports.One.US"><display-name>Sports One</display-name><icon src="https://logo.example/s1.png"/></channel>
+  <channel id="A.and.E.us"><display-name>A &amp; E</display-name></channel>
+  <channel id="Sports.Plus.us"><display-name>Sports Plus</display-name></channel>
+  <channel id="Sports.HD.us"><display-name>Sports HD</display-name></channel>
+  <channel id="Cafe.Tele.fr"><display-name>Cafe Tele</display-name></channel>
+  <channel id="Cinema.Max.us"><display-name>Cinema Max</display-name></channel>
+  <channel id="Both.Guides.us"><display-name>Both Guides</display-name></channel>
+  <channel id="Fallback.a"><display-name>FALLBACK NAME 4K</display-name></channel>
+  <channel id="Kids.a"><display-name>Kids-Zone</display-name></channel>
+  <!-- A name match here loses to guide B's tvg-id match ("Only In B") and tvg-name match ("Plain Name A"). -->
+  <channel id="Decoy.a"><display-name>Only In B</display-name></channel>
+  <channel id="Plain.Name.a"><display-name>Plain Name A</display-name></channel>
+  <!-- Same normalized name twice: the first channel wins. -->
+  <channel id="Name.First.a"><display-name>Shared Name</display-name></channel>
+  <channel id="Name.Second.a"><display-name>Shared Name HD</display-name></channel>
+  <channel id="Override.Target.a"><display-name>Unrelated Words</display-name></channel>
+  <!-- A repeated id merges into the first element: its names, then the later element's new ones. Within one element
+       repeats are kept; across elements an exact repeat is dropped, a different case is kept. -->
+  <channel id="Merge.us"><display-name>Merge One</display-name><display-name>Merge One</display-name></channel>
+  <!-- No id, or an empty display-name: ignored. -->
+  <channel><display-name>No Id</display-name></channel>
+  <channel id=""><display-name>Empty Id</display-name></channel>
+  <channel id="Many.Names.us">
+    <display-name>Many 01</display-name><display-name>Many 02</display-name><display-name>Many 03</display-name>
+    <display-name>Many 04</display-name><display-name>Many 05</display-name><display-name>Many 06</display-name>
+    <display-name>Many 07</display-name><display-name>Many 08</display-name><display-name>Many 09</display-name>
+    <display-name>Many 10</display-name><display-name>  </display-name>
+  </channel>
+  <channel id="merge.US"><display-name>Merge Two</display-name><display-name>Merge One</display-name><display-name>MERGE ONE</display-name></channel>
+  <channel id="MANY.NAMES.US">
+    <display-name>Many 11</display-name><display-name>Many 12</display-name><display-name>Many 13</display-name>
+    <display-name>Many 14</display-name><display-name>Many 15</display-name><display-name>Many 16</display-name>
+    <display-name>Many 17</display-name><display-name>Many 18</display-name>
+  </channel>
+  <channel id="Unmatched.a"><display-name>Nobody Watches This</display-name></channel>
+
+  <!-- Programmes. The test's window is 2026-10-05T00:00Z to 2026-10-07T00:00Z. -->
+  <!-- Every field: the first title, sub-title, desc and category; xmltv_ns "1.0.0/1" is "S2 E1". -->
+  <programme start="20261005120000 +0000" stop="20261005130000 +0000" channel="Sports.One.US">
+    <title lang="en">Morning Kickoff</title><title lang="es">Saque Inicial</title>
+    <sub-title>Week 5</sub-title><sub-title>Ignored</sub-title>
+    <desc>Scores &amp; highlights</desc>
+    <category>Sports</category><category>Football</category>
+    <episode-num system="xmltv_ns">1.0.0/1</episode-num>
+  </programme>
+  <!-- No stop: the next later start on this channel, 14:00 ("Zero Length", though that one is dropped
+       afterwards). onscreen beats xmltv_ns whatever the order. -->
+  <programme start="20261005130000 +0000" channel="Sports.One.US">
+    <title>Total Access</title>
+    <episode-num system="xmltv_ns">2.3.</episode-num>
+    <episode-num system="onscreen">Ep 104</episode-num>
+  </programme>
+  <!-- An offset: 10:00 -0500 is 15:00 UTC. -->
+  <programme start="20261005100000 -0500" stop="20261005110000 -0500" channel="sports.one.us">
+    <title>Afternoon Show</title>
+    <episode-num system="xmltv_ns">.4.</episode-num>
+  </programme>
+  <!-- The last programme without a stop: start + 30 min. Minutes-only time, no offset (UTC). -->
+  <programme start="202610052300" channel="Sports.One.US">
+    <title>Late Wrap</title>
+    <episode-num system="onscreen"></episode-num>
+    <episode-num system="xmltv_ns">x.y.</episode-num>
+  </programme>
+  <!-- Outside the window: dropped. -->
+  <programme start="20261001120000 +0000" stop="20261001130000 +0000" channel="Sports.One.US">
+    <title>Too Old</title>
+  </programme>
+  <!-- Stop not after start: dropped. -->
+  <programme start="20261005140000 +0000" stop="20261005140000 +0000" channel="Sports.One.US">
+    <title>Zero Length</title>
+  </programme>
+  <!-- A bad start: dropped. -->
+  <programme start="bad" stop="20261005130000 +0000" channel="A.and.E.us">
+    <title>Bad Start</title>
+  </programme>
+  <!-- The channel attribute's case doesn't matter. -->
+  <programme start="20261005200000 +0000" stop="20261005210000 +0000" channel="A.AND.E.US">
+    <title>Night Movie</title>
+    <desc>  Trimmed &lt;edges&gt;  </desc>
+  </programme>
+  <!-- No playlist channel matches this guide channel: dropped. -->
+  <programme start="20261005120000 +0000" stop="20261005130000 +0000" channel="Unmatched.a">
+    <title>Unwanted</title>
+  </programme>
+  <programme start="20261006080000 +0000" stop="20261006090000 +0000" channel="Merge.us">
+    <title>Merged Channel Show</title>
+  </programme>
+</tv>

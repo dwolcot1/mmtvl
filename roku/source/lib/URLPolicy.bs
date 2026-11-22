@@ -1,0 +1,584 @@
+' Which URLs the app may fetch or play (M12, security L-2 of step 3, carried to steps 6, 8, 9 and 21): a port of
+' the rules in MMTVL's IPTV/Relay/RelayURLPolicy.swift that apply on a Roku. Pure functions, no nodes.
+'
+' API:
+'   URLPolicy.allows(url, referrerURL = "", ownAddresses = invalid) -> { ok: boolean, reason: string }
+'     url           what the app is about to fetch or play.
+'     referrerURL   the entry that named url: the playlist's URL for its url-tvg guides and its streams. "" for a
+'                   URL the user typed (the playlist, a pasted guide): any http(s) URL is then allowed.
+'     ownAddresses  the Roku's own addresses (strings); invalid reads them from roDeviceInfo, only when needed.
+'     reason        "" when ok, else:
+'                   "notWeb"       url isn't http or https with a host;
+'                   "badReferrer"  referrerURL isn't one either;
+'                   "badHost"      a referrer applies and url's host isn't plainly written (isPlainHost);
+'                   "internalHost" url is on the Roku or the LAN and the referrer may not name it;
+'                   "ownAddress"   a LAN referrer named one of the Roku's own addresses.
+'   URLPolicy.allowsStream(url) -> { ok, reason }: a channel's stream URL, for the player (step 11). As MMTVL,
+'     where the M3U entry is the stream and its own host is always allowed: http or https with a host, whatever
+'     the host is (a public playlist may name a LAN stream). Reason "notWeb" otherwise.
+'   URLPolicy.allowsPeer(ipAddress, publicChain, ownAddresses = invalid) -> { ok, reason }: the address a transfer
+'     actually reached (roUrlEvent.GetTargetIpAddress; security M-1 of step 8, for the guide task). publicChain:
+'     the URL came from a public referrer, so the peer must be public too; else (a LAN chain) a private LAN
+'     address is also allowed. Never loopback, link-local, 0/8, shared or broadcast, or the Roku's own address.
+'     Reasons: "unknownPeer" (empty or not an address literal), "internalPeer", "ownAddress".
+'   URLPolicy.allowsInChain(url, entryURL, referrerURL, lanOnlySoFar, ownAddresses): MMTVL's rule in full
+'     (RelayURLPolicy.allows with stream = entryURL), for a caller that can follow redirect hops itself.
+'
+' The rules (RelayURLPolicy.allows, with the referrer as the stream):
+'   - Only http and https URLs with a host.
+'   - A public host is always allowed.
+'   - An internal host is allowed only when it is the referrer's own host, or when the referrer is itself on the
+'     LAN (an RFC 1918 or unique local address, or a LAN name: ".local", ".lan", ".home.arpa", dotless) and url
+'     is another LAN device's private address (RFC 1918 or unique local, in any literal form), never loopback,
+'     link-local, 0/8, shared, a name, or one of the Roku's own addresses. That is the Threadfin/xTeVe case: a
+'     LAN proxy's playlist naming a tuner. So a public playlist never makes the Roku reach itself or the LAN.
+'   - Internal hosts: loopback, link-local, 0/8, private and shared IPv4, broadcast; IPv6 ::, ::1, fe80::/10,
+'     fec0::/10, fc00::/7 and IPv4-mapped or -compatible forms of internal IPv4 addresses; and the names
+'     "localhost", ".localhost", ".local", ".lan", ".home.arpa", ".internal" and dotless names.
+'   - Addresses are read as the resolver reads them: IPv4 as inet_aton ("127.1", "0x7f.0.0.1", "2130706433"),
+'     IPv6 as inet_pton. Hosts are compared without brackets, case, a trailing dot or percent-escapes.
+'   - Names are judged as written: a public name that resolves to a LAN address isn't caught (allowsPeer, on
+'     the address a transfer reached, is the check for that).
+'   - Where a referrer applies, the host must also be plainly written (security L-1, L-2 of step 8;
+'     isPlainHost): printable ASCII only after percent-decoding, "%" only in a bracketed IPv6 zone, no empty
+'     label, and a host whose last label is a number (decimal, or 0x hex) must be an IPv4 address. So a host
+'     another reader (curl's IDN or percent handling) might turn into an internal address is refused.
+'
+' What a Roku lets the app enforce: only the URL it hands to roUrlTransfer or a Video node. roUrlTransfer follows
+' redirects itself (unverified: no documented way to stop it or to see the hops), and the Video node fetches an
+' HLS stream's playlists and segments itself, so neither the redirect hops nor a stream's own URIs can be judged
+' here. MMTVL's relay judges both; on a Roku that part of RelayURLPolicy has no place to run.
+namespace URLPolicy
+
+    function allows(url as string, referrerURL = "" as string, ownAddresses = invalid as dynamic) as object
+        if not URLPolicy.isWebURL(url) then return URLPolicy.verdict("notWeb")
+        if referrerURL = "" then return URLPolicy.verdict("")
+        return URLPolicy.allowsInChain(url, referrerURL, "", true, ownAddresses)
+    end function
+
+    ' A channel's stream URL (decision 2026-11-18, as MMTVL): http or https with a host, any host.
+    function allowsStream(url as string) as object
+        if not URLPolicy.isWebURL(url) then return URLPolicy.verdict("notWeb")
+        return URLPolicy.verdict("")
+    end function
+
+    ' The address a transfer reached (see the top of the file).
+    function allowsPeer(ipAddress as dynamic, publicChain as boolean, ownAddresses = invalid as dynamic) as object
+        address = URLPolicy.normalizedHost(ipAddress)
+        if address = "" then return URLPolicy.verdict("unknownPeer")
+        if URLPolicy.canonicalAddress(address) = invalid then return URLPolicy.verdict("unknownPeer")
+        if URLPolicy.isInternal(address)
+            if publicChain or not URLPolicy.isPrivateLANAddress(address) then return URLPolicy.verdict("internalPeer")
+        end if
+        own = ownAddresses
+        if type(own) <> "roArray" then own = URLPolicy.deviceAddresses()
+        for each ownAddress in own
+            if URLPolicy.isText(ownAddress)
+                if URLPolicy.sameHost(ownAddress, address) then return URLPolicy.verdict("ownAddress")
+            end if
+        end for
+        return URLPolicy.verdict("")
+    end function
+
+    ' RelayURLPolicy.allows: url may be fetched for the entry entryURL. referrerURL ("" = none) named url, and
+    ' lanOnlySoFar says whether every URL from the entry to the referrer was a LAN host (isLANHop); LAN to LAN
+    ' needs both.
+    function allowsInChain(url as string, entryURL as string, referrerURL as string, lanOnlySoFar as boolean, ownAddresses = invalid as dynamic) as object
+        if not URLPolicy.isWebURL(url) then return URLPolicy.verdict("notWeb")
+        if not URLPolicy.isWebURL(entryURL) then return URLPolicy.verdict("badReferrer")
+        urlHost = URLPolicy.hostOf(url)
+        if not URLPolicy.isPlainHost(urlHost) then return URLPolicy.verdict("badHost")
+        if not URLPolicy.isInternal(urlHost) then return URLPolicy.verdict("")
+        entryHost = URLPolicy.hostOf(entryURL)
+        if URLPolicy.sameHost(urlHost, entryHost) then return URLPolicy.verdict("")
+        if not lanOnlySoFar or not URLPolicy.isLANStreamHost(entryHost) or not URLPolicy.isPrivateLANAddress(urlHost)
+            return URLPolicy.verdict("internalHost")
+        end if
+        if referrerURL <> "" and not URLPolicy.isLANHop(referrerURL) then return URLPolicy.verdict("internalHost")
+        own = ownAddresses
+        if type(own) <> "roArray" then own = URLPolicy.deviceAddresses()
+        for each address in own
+            if URLPolicy.isText(address)
+                if URLPolicy.sameHost(address, urlHost) then return URLPolicy.verdict("ownAddress")
+            end if
+        end for
+        return URLPolicy.verdict("")
+    end function
+
+    function verdict(reason as string) as object
+        return { ok: reason = "", reason: reason }
+    end function
+
+    ' The Roku's interface addresses (roDeviceInfo.GetIPAddrs: interface name -> address).
+    function deviceAddresses() as object
+        result = []
+        addresses = CreateObject("roDeviceInfo").GetIPAddrs()
+        if type(addresses) <> "roAssociativeArray" then return result
+        for each name in addresses
+            if URLPolicy.isText(addresses[name]) then result.Push(addresses[name])
+        end for
+        return result
+    end function
+
+    ' http or https with a non-empty host.
+    function isWebURL(url as string) as boolean
+        schemeEnd = Instr(1, url, "://")
+        if schemeEnd = 0 then return false
+        scheme = LCase(Left(url, schemeEnd - 1))
+        if scheme <> "http" and scheme <> "https" then return false
+        return URLPolicy.hostOf(url) <> ""
+    end function
+
+    ' url is on a LAN host (isLANStreamHost), so a chain through it stays LAN-only.
+    function isLANHop(url as string) as boolean
+        if not URLPolicy.isWebURL(url) then return false
+        return URLPolicy.isLANStreamHost(URLPolicy.hostOf(url))
+    end function
+
+    ' The host as written, percent-escapes undone, or "": none, empty, or an authority this port won't read
+    ' (a backslash, a space or a control character; a URL with those is refused).
+    function hostOf(url as string) as string
+        schemeEnd = Instr(1, url, "://")
+        if schemeEnd = 0 then return ""
+        authority = Mid(url, schemeEnd + 3)
+        for each stopper in ["/", "?", "#"]
+            cut = Instr(1, authority, stopper)
+            if cut > 0 then authority = Left(authority, cut - 1)
+        end for
+        for i = 1 to Len(authority)
+            code = Asc(Mid(authority, i, 1))
+            if code <= 32 or code = 127 or code = 92 then return ""
+        end for
+        at = authority.Split("@")
+        if at.Count() = 0 then return ""
+        name = at[at.Count() - 1]
+        if Left(name, 1) = "["
+            close = Instr(1, name, "]")
+            if close = 0 then return ""
+            rest = Mid(name, close + 1)
+            if rest <> "" and Left(rest, 1) <> ":" then return ""
+            name = Left(name, close)
+        else
+            colon = Instr(1, name, ":")
+            if colon > 0 then name = Left(name, colon - 1)
+        end if
+        name = URLPolicy.percentDecoded(name)
+        if name = "" or name = "[]" then return ""
+        return name
+    end function
+
+    ' Security L-1, L-2 of step 8: a host as hostOf gives it (percent-decoded, IPv6 in brackets) that every reader
+    ' reads alike. Printable ASCII only (0x21-0x7E); "%" only inside brackets (an IPv6 zone), and a bracketed host
+    ' must be an IPv6 address; no empty label ("a..b", ".a", "a.." once one trailing dot is dropped); and when the
+    ' last label is a number (decimal digits, or 0x and hex digits) the whole host must read as an IPv4 address.
+    function isPlainHost(name as string) as boolean
+        if name = "" then return false
+        bracketed = Left(name, 1) = "["
+        for i = 1 to Len(name)
+            code = Asc(Mid(name, i, 1))
+            if code < 33 or code > 126 then return false
+            if code = 37 and not bracketed then return false
+        end for
+        if bracketed
+            if Right(name, 1) <> "]" then return false
+            return URLPolicy.parseIPv6(URLPolicy.withoutZone(Mid(name, 2, Len(name) - 2))) <> invalid
+        end if
+        text = name
+        if Right(text, 1) = "." then text = Left(text, Len(text) - 1)
+        if text = "" or Left(text, 1) = "." or Right(text, 1) = "." or Instr(1, text, "..") > 0 then return false
+        lastLabel = text
+        lastDot = 0
+        for i = Len(text) to 1 step -1
+            if Mid(text, i, 1) = "."
+                lastDot = i
+                exit for
+            end if
+        end for
+        if lastDot > 0 then lastLabel = Mid(text, lastDot + 1)
+        if URLPolicy.isNumberLabel(lastLabel) then return URLPolicy.parseIPv4(text) <> invalid
+        return true
+    end function
+
+    ' All decimal digits, or "0x" / "0X" followed by hex digits (none counts too), as WHATWG's "ends in a number".
+    function isNumberLabel(label as string) as boolean
+        if label = "" then return false
+        start = 1
+        hex = LCase(Left(label, 2)) = "0x"
+        if hex then start = 3
+        for i = start to Len(label)
+            code = Asc(Mid(label, i, 1))
+            if hex
+                if URLPolicy.hexDigit(code) < 0 then return false
+            else if not URLPolicy.isDecimal(code)
+                return false
+            end if
+        end for
+        return true
+    end function
+
+    ' %XX escapes of printable ASCII characters (0x21-0x7E) decoded; others kept as written, so isPlainHost
+    ' refuses them for their "%". (Chr(0) is an empty string in BrightScript, so decoding %00 would join the
+    ' labels around it: "127.0.0.1%00.evil.example" must not become "127.0.0.1.evil.example".)
+    function percentDecoded(text as string) as string
+        if Instr(1, text, "%") = 0 then return text
+        result = ""
+        i = 1
+        count = Len(text)
+        while i <= count
+            c = Mid(text, i, 1)
+            if c = "%" and i + 2 <= count
+                high = URLPolicy.hexDigit(Asc(Mid(text, i + 1, 1)))
+                low = URLPolicy.hexDigit(Asc(Mid(text, i + 2, 1)))
+                if high >= 0 and low >= 0 and high * 16 + low >= 33 and high * 16 + low <= 126
+                    result = result + Chr(high * 16 + low)
+                    i = i + 3
+                else
+                    result = result + c
+                    i = i + 1
+                end if
+            else
+                result = result + c
+                i = i + 1
+            end if
+        end while
+        return result
+    end function
+
+    ' LANAddress.normalized: trimmed and lowercased, without IPv6 brackets or a trailing dot; "" when empty.
+    function normalizedHost(text as dynamic) as string
+        if not URLPolicy.isText(text) then return ""
+        result = LCase(text.Trim())
+        if Left(result, 1) = "[" and Right(result, 1) = "]" and Len(result) >= 2 then result = Mid(result, 2, Len(result) - 2)
+        if Right(result, 1) = "." then result = Left(result, Len(result) - 1)
+        return result
+    end function
+
+    ' A stream host on the LAN: an RFC 1918 or unique local address (not loopback, link-local or shared), or a
+    ' LAN name (".local", ".lan", ".home.arpa", dotless; not "localhost").
+    function isLANStreamHost(text as dynamic) as boolean
+        name = URLPolicy.normalizedHost(text)
+        if name = "" then return false
+        if URLPolicy.isPrivateLANAddress(name) then return true
+        address = URLPolicy.withoutZone(name)
+        if URLPolicy.parseIPv4(address) <> invalid or URLPolicy.parseIPv6(address) <> invalid then return false
+        if name = "localhost" or URLPolicy.hasSuffix(name, ".localhost") then return false
+        if URLPolicy.hasSuffix(name, ".local") or URLPolicy.hasSuffix(name, ".lan") or URLPolicy.hasSuffix(name, ".home.arpa") then return true
+        return Instr(1, name, ".") = 0
+    end function
+
+    ' An RFC 1918 IPv4 address (10/8, 172.16/12, 192.168/16), an IPv6 unique local one (fc00::/7), or an
+    ' IPv4-mapped form of an RFC 1918 one, as a literal. Never a name, and never with an IPv6 zone.
+    function isPrivateLANAddress(text as dynamic) as boolean
+        name = URLPolicy.normalizedHost(text)
+        if name = "" then return false
+        v4 = URLPolicy.parseIPv4(name)
+        if v4 <> invalid then return URLPolicy.isRFC1918(v4)
+        if Instr(1, name, "%") > 0 then return false
+        v6 = URLPolicy.parseIPv6(name)
+        if v6 = invalid then return false
+        if (v6[0] and &hFE) = &hFC then return true
+        if not URLPolicy.allZero(v6, 0, 9) or v6[10] <> 255 or v6[11] <> 255 then return false
+        return URLPolicy.isRFC1918([v6[12], v6[13], v6[14], v6[15]])
+    end function
+
+    ' Loopback, link-local, private, shared or unspecified addresses, and names that only resolve on the Roku or
+    ' the LAN. An empty host counts as internal.
+    function isInternal(text as dynamic) as boolean
+        name = URLPolicy.normalizedHost(text)
+        if name = "" then return true
+        address = URLPolicy.withoutZone(name)
+        v4 = URLPolicy.parseIPv4(address)
+        if v4 <> invalid then return URLPolicy.isInternalIPv4(v4)
+        v6 = URLPolicy.parseIPv6(address)
+        if v6 <> invalid then return URLPolicy.isInternalIPv6(v6)
+        if name = "localhost" or Instr(1, name, ".") = 0 then return true
+        for each suffix in [".localhost", ".local", ".lan", ".home.arpa", ".internal"]
+            if URLPolicy.hasSuffix(name, suffix) then return true
+        end for
+        return false
+    end function
+
+    ' The same address in any literal form (an IPv4-mapped or -compatible IPv6 address is its IPv4 address), or
+    ' the same name.
+    function sameHost(a as dynamic, b as dynamic) as boolean
+        first = URLPolicy.normalizedHost(a)
+        second = URLPolicy.normalizedHost(b)
+        if first = "" or second = "" then return false
+        x = URLPolicy.canonicalAddress(first)
+        y = URLPolicy.canonicalAddress(second)
+        if x <> invalid and y <> invalid
+            if x.zone <> y.zone then return false
+            if x.bytes.Count() <> y.bytes.Count() then return false
+            for i = 0 to x.bytes.Count() - 1
+                if x.bytes[i] <> y.bytes[i] then return false
+            end for
+            return true
+        end if
+        return first = second
+    end function
+
+    ' An address literal as bytes: 4 for IPv4 and an IPv4-mapped or -compatible IPv6 address (not :: or ::1),
+    ' else 16 with its zone ("-" = none). invalid for a name.
+    function canonicalAddress(name as string) as dynamic
+        address = URLPolicy.withoutZone(name)
+        v4 = URLPolicy.parseIPv4(address)
+        if v4 <> invalid then return { bytes: v4, zone: "-" }
+        v6 = URLPolicy.parseIPv6(address)
+        if v6 = invalid then return invalid
+        mapped = v6[10] = 255 and v6[11] = 255
+        compatible = v6[10] = 0 and v6[11] = 0 and not (URLPolicy.allZero(v6, 12, 14) and v6[15] <= 1)
+        if URLPolicy.allZero(v6, 0, 9) and (mapped or compatible) then return { bytes: [v6[12], v6[13], v6[14], v6[15]], zone: "-" }
+        zone = "-"
+        percent = Instr(1, name, "%")
+        if percent > 0 then zone = Mid(name, percent + 1)
+        return { bytes: v6, zone: zone }
+    end function
+
+    function isRFC1918(bytes as object) as boolean
+        if bytes[0] = 10 then return true
+        if bytes[0] = 172 and bytes[1] >= 16 and bytes[1] <= 31 then return true
+        return bytes[0] = 192 and bytes[1] = 168
+    end function
+
+    ' 0/8, 10/8, 100.64/10 (shared), 127/8, 169.254/16, 172.16/12, 192.168/16, and 255.255/16 (broadcast).
+    function isInternalIPv4(bytes as object) as boolean
+        if bytes[0] = 0 or bytes[0] = 127 then return true
+        if bytes[0] = 100 and bytes[1] >= 64 and bytes[1] <= 127 then return true
+        if bytes[0] = 255 and bytes[1] = 255 then return true
+        if bytes[0] = 169 and bytes[1] = 254 then return true
+        return URLPolicy.isRFC1918(bytes)
+    end function
+
+    ' ::, ::1, fe80::/10, fec0::/10, fc00::/7, and IPv4-mapped or -compatible forms of an internal IPv4 address.
+    function isInternalIPv6(bytes as object) as boolean
+        if URLPolicy.allZero(bytes, 0, 14) and bytes[15] <= 1 then return true
+        if bytes[0] = &hFE and (bytes[1] and &hC0) = &hC0 then return true
+        if bytes[0] = &hFE and (bytes[1] and &hC0) = &h80 then return true
+        if (bytes[0] and &hFE) = &hFC then return true
+        if not URLPolicy.allZero(bytes, 0, 9) then return false
+        embedsIPv4 = (bytes[10] = 255 and bytes[11] = 255) or (bytes[10] = 0 and bytes[11] = 0)
+        return embedsIPv4 and URLPolicy.isInternalIPv4([bytes[12], bytes[13], bytes[14], bytes[15]])
+    end function
+
+    function allZero(bytes as object, first as integer, last as integer) as boolean
+        for i = first to last
+            if bytes[i] <> 0 then return false
+        end for
+        return true
+    end function
+
+    function withoutZone(name as string) as string
+        percent = Instr(1, name, "%")
+        if percent = 0 then return name
+        return Left(name, percent - 1)
+    end function
+
+    function hasSuffix(text as string, suffix as string) as boolean
+        return Len(text) >= Len(suffix) and Right(text, Len(suffix)) = suffix
+    end function
+
+    function isText(value as dynamic) as boolean
+        kind = type(value)
+        return kind = "String" or kind = "roString"
+    end function
+
+    ' --- Address literals -----------------------------------------------------------------------------------
+
+    ' inet_aton, as the resolver reads an IPv4 address (Apple's libc, from BIND): one to four parts separated by
+    ' dots, each decimal, octal (a leading 0) or hex (0x); a.b.c.d, a.b.c (c: 16 bits), a.b (b: 24 bits) or a
+    ' (32 bits). RelayURLPolicy only tries text made of hex digits, dots and x. 4 bytes, or invalid.
+    function parseIPv4(text as string) as dynamic
+        count = Len(text)
+        if count = 0 then return invalid
+        for i = 1 to count
+            code = Asc(Mid(text, i, 1))
+            if URLPolicy.hexDigit(code) < 0 and code <> 46 and code <> 120 and code <> 88 then return invalid
+        end for
+        parts = []
+        position = 1
+        c = URLPolicy.codeAt(text, position)
+        hasDigit = false
+        tooBig = false
+        value = 0&
+        while true
+            if not URLPolicy.isDecimal(c) then return invalid
+            value = 0&
+            base = 10
+            hasDigit = false
+            ' Past 32 bits: value keeps the low 32 bits (as the C code's u_long cast does for a single part),
+            ' and tooBig remembers that a part's bound check must fail.
+            tooBig = false
+            if c = 48
+                position = position + 1
+                c = URLPolicy.codeAt(text, position)
+                if c = 120 or c = 88
+                    base = 16
+                    position = position + 1
+                    c = URLPolicy.codeAt(text, position)
+                else
+                    base = 8
+                    hasDigit = true
+                end if
+            end if
+            while true
+                digitValue = -1
+                if URLPolicy.isDecimal(c)
+                    if base = 8 and (c = 56 or c = 57) then return invalid
+                    digitValue = c - 48
+                else if base = 16 and URLPolicy.hexDigit(c) >= 0
+                    digitValue = URLPolicy.hexDigit(c)
+                end if
+                if digitValue < 0 then exit while
+                value = value * base + digitValue
+                if value > 4294967295&
+                    tooBig = true
+                    value = value mod 4294967296&
+                end if
+                hasDigit = true
+                position = position + 1
+                c = URLPolicy.codeAt(text, position)
+            end while
+            if c = 46
+                if parts.Count() >= 3 or tooBig or value > 255 then return invalid
+                parts.Push(value)
+                position = position + 1
+                c = URLPolicy.codeAt(text, position)
+            else
+                exit while
+            end if
+        end while
+        if c <> 0 or not hasDigit then return invalid
+        partCount = parts.Count() + 1
+        if partCount = 2
+            if tooBig or value > 16777215 then return invalid
+            value = value + parts[0] * 16777216&
+        else if partCount = 3
+            if tooBig or value > 65535 then return invalid
+            value = value + parts[0] * 16777216& + parts[1] * 65536
+        else if partCount = 4
+            if tooBig or value > 255 then return invalid
+            value = value + parts[0] * 16777216& + parts[1] * 65536 + parts[2] * 256
+        end if
+        return [(value \ 16777216&) mod 256, (value \ 65536) mod 256, (value \ 256) mod 256, value mod 256]
+    end function
+
+    ' inet_pton(AF_INET6) (Apple's libc, from BIND): up to eight groups of one to four hex digits, one "::", and an
+    ' optional dotted IPv4 address (inet_pton4: four decimal parts, 0-255, no leading zeros) in the last 32 bits.
+    ' RelayURLPolicy only tries text with a colon. 16 bytes, or invalid.
+    function parseIPv6(text as string) as dynamic
+        if Instr(1, text, ":") = 0 then return invalid
+        bytes = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        count = Len(text)
+        filled = 0
+        doubleColonAt = -1
+        position = 1
+        if URLPolicy.codeAt(text, 1) = 58
+            if URLPolicy.codeAt(text, 2) <> 58 then return invalid
+            position = 2
+        end if
+        tokenStart = position
+        digits = 0
+        value = 0
+        while position <= count
+            c = URLPolicy.codeAt(text, position)
+            position = position + 1
+            digitValue = URLPolicy.hexDigit(c)
+            if digitValue >= 0
+                digits = digits + 1
+                if digits > 4 then return invalid
+                value = value * 16 + digitValue
+            else if c = 58
+                tokenStart = position
+                if digits = 0
+                    if doubleColonAt >= 0 then return invalid
+                    doubleColonAt = filled
+                else if position > count
+                    return invalid
+                else
+                    if filled + 2 > 16 then return invalid
+                    bytes[filled] = value \ 256
+                    bytes[filled + 1] = value mod 256
+                    filled = filled + 2
+                    digits = 0
+                    value = 0
+                end if
+            else
+                if c <> 46 or filled + 4 > 16 then return invalid
+                v4 = URLPolicy.parseDottedQuad(Mid(text, tokenStart))
+                if v4 = invalid then return invalid
+                for i = 0 to 3
+                    bytes[filled + i] = v4[i]
+                end for
+                filled = filled + 4
+                digits = 0
+                exit while
+            end if
+        end while
+        if digits > 0
+            if filled + 2 > 16 then return invalid
+            bytes[filled] = value \ 256
+            bytes[filled + 1] = value mod 256
+            filled = filled + 2
+        end if
+        if doubleColonAt >= 0
+            if filled = 16 then return invalid
+            moved = filled - doubleColonAt
+            for i = 1 to moved
+                bytes[16 - i] = bytes[doubleColonAt + moved - i]
+                bytes[doubleColonAt + moved - i] = 0
+            end for
+            filled = 16
+        end if
+        if filled <> 16 then return invalid
+        return bytes
+    end function
+
+    ' inet_pton4: exactly four decimal parts of 0-255, with no leading zeros. 4 bytes, or invalid.
+    function parseDottedQuad(text as string) as dynamic
+        result = [0]
+        sawDigit = false
+        octets = 0
+        for i = 1 to Len(text)
+            c = Asc(Mid(text, i, 1))
+            last = result.Count() - 1
+            if URLPolicy.isDecimal(c)
+                if sawDigit and result[last] = 0 then return invalid
+                nextValue = result[last] * 10 + (c - 48)
+                if nextValue > 255 then return invalid
+                result[last] = nextValue
+                if not sawDigit
+                    octets = octets + 1
+                    if octets > 4 then return invalid
+                    sawDigit = true
+                end if
+            else if c = 46 and sawDigit
+                if octets = 4 then return invalid
+                result.Push(0)
+                sawDigit = false
+            else
+                return invalid
+            end if
+        end for
+        if octets < 4 then return invalid
+        return result
+    end function
+
+    ' The character code at position (1-based), or 0 past the end (the C string's terminator).
+    function codeAt(text as string, position as integer) as integer
+        if position > Len(text) then return 0
+        return Asc(Mid(text, position, 1))
+    end function
+
+    function isDecimal(code as integer) as boolean
+        return code >= 48 and code <= 57
+    end function
+
+    ' 0-15 for a hex digit's code, else -1.
+    function hexDigit(code as integer) as integer
+        if code >= 48 and code <= 57 then return code - 48
+        if code >= 97 and code <= 102 then return code - 87
+        if code >= 65 and code <= 70 then return code - 55
+        return -1
+    end function
+
+end namespace

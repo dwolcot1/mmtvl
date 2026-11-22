@@ -1,0 +1,256 @@
+' Which guides to read and when (M12 step 9): pure, no nodes, and light enough for the scene (it uses only Refresh
+' and SettingsStore's constants), which decides when to start GuideTask. GuideFetch has the task's other parts.
+'
+'   chooseSources(pastedURLs, playlistGuideURLs, usePlaylistGuide, playlistURL) -> [source]
+'     MMTVL's updateGuideSources (IPTV/IPTVLibrary.swift:1003-1008): the pasted guides when there are any, else
+'     the playlist's url-tvg guides; with usePlaylistGuide on, the playlist's whenever it names one. At most
+'     SettingsStore.maximumGuides (6) either way (MMTVL doesn't limit the url-tvg list; a Roku does).
+'     source: { url, index (1-based, the priority), fromPlaylist, referrerURL }. referrerURL is the playlist's URL
+'     for a url-tvg guide (URLPolicy.allows checks it with that referrer, the step 8 decision), "" for a pasted one
+'     (no referrer: the user typed it).
+'   cacheID(url) -> SHA-1 of the URL (roEVPDigest), lowercase hex. File names carry this, never the URL or host.
+'   cachePaths(url, token) -> { id, file, time, fail, part, inflated }: cachefs:/guides/<id>.xml, or <id>.xml.gz
+'     when the URL's path ends in .gz; the download time beside it (<id>.time); the last failure (<id>.fail); the
+'     download in progress (<id>.<token>.part) and the inflated copy of a .gz (<id>.<token>.inflated.xml, deleted
+'     after each run). token: the run's own (security M-3 of step 9), so a run that outlived its watchdog never
+'     writes over another run's files; "" gives <id>.part and <id>.inflated.xml.
+'   Times (QA minor of step 9) are wall-clock seconds since 1970 (roDateTime.AsSeconds), not UpTime: cachefs: may
+'   survive a Roku restart, and UpTime starting again would make an old file look fresh. A time in the future
+'   counts as due (Refresh.isDue).
+'   readTime(text), timeText(seconds) -> a .time file's contents and back (invalid: not 1 to 10 digits up to
+'     2147483647).
+'   readFailure(text), failureText(seconds, kind) -> a .fail file's contents ("<seconds> <kind>") and back: { at,
+'     kind }, kind "failed", "refused" or "tooLarge"; invalid unless exactly that.
+'   isGuideDue(fetchedAt, now) -> Refresh.isDue with 12 h (MMTVL's guideStaleness, IPTVLibrary.swift:18).
+'   retryAfter(kind) -> how long a failed guide waits before it's downloaded again: 1 h after a failed download
+'     (like MMTVL's antenna guide back-off, IPTVLibrary.swift:545, M7j L10), 12 h after a refused one (URLPolicy
+'     or the address check) or one too large for this Roku (QA minor of step 9), which an hour won't change.
+'   isRetryWaiting(failure, now) -> the guide is still waiting (failure: readFailure's, or invalid).
+'   needsFetch(fetchedAt, failure, now) -> a guide is due and not waiting after a failure.
+'   sourcesKey(sources) -> the source set as cache ids, to tell when it changed without keeping a URL.
+'   channelsKey(fields) -> SHA-1 of matchFields' ids, names and tvg fields: the channel set, without a URL.
+'   isRunDue(sources, state, now) -> { due, reason }: whether the scene starts the task, and why (below).
+'   matchFields(channels) -> the channels with only what EPGMatcher reads (so the task's field holds no stream URL).
+namespace GuideSources
+
+    ' MMTVL's guideStaleness: a guide is downloaded again when its file is more than 12 hours old.
+    const guideMaxAgeSeconds = 43200
+    const cacheDirectory = "cachefs:/guides"
+    ' A guide whose download failed is tried again after this long (not at every 15-minute tick).
+    const retryAfterSeconds = 3600
+    ' ... and one refused or too large after this long.
+    const refusedRetryAfterSeconds = 43200
+    ' A changed channel set starts a run (a rematch from the cached files) at most this often: game channels come
+    ' and go with every playlist refresh. The first change after launch runs at once.
+    const channelRunIntervalSeconds = 3600
+    ' The scene gives up on a GuideTask after this long: every download's timeout (6 × 180 s), the processing
+    ' limit (600 s) and two minutes (GuideFetch's constants).
+    const watchdogSeconds = 1800
+
+    function chooseSources(pastedURLs as dynamic, playlistGuideURLs as dynamic, usePlaylistGuide as dynamic, playlistURL as dynamic) as object
+        pasted = GuideSources.textList(pastedURLs)
+        named = GuideSources.textList(playlistGuideURLs)
+        playlist = ""
+        if GuideSources.isText(playlistURL) then playlist = playlistURL
+        usesPlaylist = pasted.Count() = 0 or (GuideSources.isTrue(usePlaylistGuide) and named.Count() > 0)
+        chosen = []
+        urls = pasted
+        referrer = ""
+        if usesPlaylist
+            urls = named
+            referrer = playlist
+        end if
+        for each url in urls
+            if chosen.Count() >= SettingsStore.maximumGuides then exit for
+            chosen.Push({ url: url, index: chosen.Count() + 1, fromPlaylist: usesPlaylist, referrerURL: referrer })
+        end for
+        return chosen
+    end function
+
+    function cacheID(url as string) as string
+        bytes = CreateObject("roByteArray")
+        bytes.FromAsciiString(url)
+        digest = CreateObject("roEVPDigest")
+        digest.Setup("sha1")
+        return LCase(digest.Process(bytes))
+    end function
+
+    function cachePaths(url as string, token = "" as string) as object
+        id = GuideSources.cacheID(url)
+        base = GuideSources.cacheDirectory + "/" + id
+        extension = ".xml"
+        if GuideSources.namesGzip(url) then extension = ".xml.gz"
+        runBase = base
+        if token <> "" then runBase = base + "." + token
+        return { id: id, file: base + extension, time: base + ".time", fail: base + ".fail", part: runBase + ".part", inflated: runBase + ".inflated.xml" }
+    end function
+
+    ' The URL's path (before any query or fragment) ends in ".gz", ignoring case. Only the cached file's name
+    ' depends on it: GuidePipeline tells gzip by the file's first bytes.
+    function namesGzip(url as string) as boolean
+        path = url
+        for each stopper in ["?", "#"]
+            cut = Instr(1, path, stopper)
+            if cut > 0 then path = Left(path, cut - 1)
+        end for
+        return LCase(Right(path, 3)) = ".gz"
+    end function
+
+    function isGuideDue(fetchedAt as dynamic, now as dynamic) as boolean
+        return Refresh.isDue(fetchedAt, now, GuideSources.guideMaxAgeSeconds)
+    end function
+
+    function retryAfter(kind as dynamic) as integer
+        if kind = "refused" or kind = "tooLarge" then return GuideSources.refusedRetryAfterSeconds
+        return GuideSources.retryAfterSeconds
+    end function
+
+    function isRetryWaiting(failure as dynamic, now as dynamic) as boolean
+        if type(failure) <> "roAssociativeArray" then return false
+        if not Refresh.isNumber(failure.at) or not GuideSources.isText(failure.kind) then return false
+        return not Refresh.isDue(failure.at, now, GuideSources.retryAfter(failure.kind))
+    end function
+
+    function needsFetch(fetchedAt as dynamic, failure as dynamic, now as dynamic) as boolean
+        if not GuideSources.isGuideDue(fetchedAt, now) then return false
+        return not GuideSources.isRetryWaiting(failure, now)
+    end function
+
+    ' A <id>.time file's text: whole seconds (timeText writes it). invalid unless it's 1 to 10 digits, at most
+    ' 2147483647 (an empty or damaged file means the guide is due).
+    function readTime(text as dynamic) as dynamic
+        if not GuideSources.isText(text) then return invalid
+        return GuideSources.readSeconds(text.Trim())
+    end function
+
+    function readSeconds(digits as string) as dynamic
+        if digits = "" or Len(digits) > 10 then return invalid
+        for i = 1 to Len(digits)
+            code = Asc(Mid(digits, i, 1))
+            if code < 48 or code > 57 then return invalid
+        end for
+        if Len(digits) = 10 and digits > "2147483647" then return invalid
+        return Val(digits, 10)
+    end function
+
+    function timeText(seconds as dynamic) as string
+        return Int(seconds).ToStr()
+    end function
+
+    ' A <id>.fail file's text: "<seconds> <kind>" with one space, kind one of failed, refused, tooLarge (exact case);
+    ' a trailing newline or spaces are allowed. Anything else: invalid (the guide isn't waiting).
+    function readFailure(text as dynamic) as dynamic
+        if not GuideSources.isText(text) then return invalid
+        words = text.Trim().Split(" ")
+        if words.Count() <> 2 then return invalid
+        seconds = GuideSources.readSeconds(words[0])
+        if seconds = invalid then return invalid
+        kind = words[1]
+        if kind <> "failed" and kind <> "refused" and kind <> "tooLarge" then return invalid
+        return { at: seconds, kind: kind }
+    end function
+
+    function failureText(seconds as dynamic, kind as string) as string
+        return Int(seconds).ToStr() + " " + kind
+    end function
+
+    ' The guides' cache ids in priority order, each marked p (pasted) or t (url-tvg), joined with commas.
+    function sourcesKey(sources as object) as string
+        parts = []
+        for each source in sources
+            kind = "p"
+            if GuideSources.isTrue(source.fromPlaylist) then kind = "t"
+            parts.Push(kind + GuideSources.cacheID(source.url))
+        end for
+        return parts.Join(",")
+    end function
+
+    ' The channel set as EPGMatcher sees it (matchFields: id, name, tvgID, tvgName, in order), hashed: the scene
+    ' keeps this, never a URL.
+    function channelsKey(fields as object) as string
+        lines = []
+        for each channel in fields
+            parts = []
+            for each value in [channel.id, channel.name, channel.tvgID, channel.tvgName]
+                if GuideSources.isText(value) then parts.Push(value) else parts.Push("")
+            end for
+            lines.Push(parts.Join(Chr(9)))
+        end for
+        return GuideSources.cacheID(lines.Join(Chr(10)))
+    end function
+
+    ' Whether the scene starts a guide run now. now: wall-clock seconds. state (from the last run that answered,
+    ' all invalid before one):
+    '   lastKey          that run's sourcesKey
+    '   fetchedAt        { cache id: when the guide's fresh file was downloaded }
+    '   failures         { cache id: { at, kind } of the guide's last failure, while it waits }
+    '   channelsKey      the current channelsKey; lastChannelsKey: the one that run matched
+    '   channelRunAt     when a run last started because the channels changed (invalid: not since launch)
+    '   failedRunAt      when the last run ended without an answer ({ ok: false }: a crash, or given up by the
+    '                    watchdog); invalid after a run that answered. For an hour after it, "first" and
+    '                    "channels" wait (reason "waiting"), so a run that keeps failing doesn't start at every
+    '                    15-minute tick; "sources" and "guides" don't wait.
+    ' Returns { due, reason }, the first that applies: "first" (no run yet), "sources" (the source set changed),
+    ' "guides" (a guide is due and not waiting after a failure: needsFetch), "channels" (the channel set changed,
+    ' and no run started for that in the last hour; the scene then sets channelRunAt), else not due ("waiting" when
+    ' only the hourly limit holds back a channel change, else ""). Any run reads every guide, from cachefs: where
+    ' fresh, and rematches with the current channels. With no guides a changed channel set starts nothing.
+    function isRunDue(sources as object, state as object, now as dynamic) as object
+        failedRecently = false
+        if Refresh.isNumber(state.failedRunAt) then failedRecently = not Refresh.isDue(state.failedRunAt, now, GuideSources.retryAfterSeconds)
+        if not GuideSources.isText(state.lastKey)
+            if failedRecently then return { due: false, reason: "waiting" }
+            return { due: true, reason: "first" }
+        end if
+        if GuideSources.sourcesKey(sources) <> state.lastKey then return { due: true, reason: "sources" }
+        times = state.fetchedAt
+        if type(times) <> "roAssociativeArray" then times = {}
+        failures = state.failures
+        if type(failures) <> "roAssociativeArray" then failures = {}
+        for each source in sources
+            id = GuideSources.cacheID(source.url)
+            if GuideSources.needsFetch(times[id], failures[id], now) then return { due: true, reason: "guides" }
+        end for
+        if sources.Count() > 0 and GuideSources.isText(state.channelsKey) and GuideSources.isText(state.lastChannelsKey)
+            if state.channelsKey <> state.lastChannelsKey
+                if failedRecently then return { due: false, reason: "waiting" }
+                if Refresh.isDue(state.channelRunAt, now, GuideSources.channelRunIntervalSeconds) then return { due: true, reason: "channels" }
+                return { due: false, reason: "waiting" }
+            end if
+        end if
+        return { due: false, reason: "" }
+    end function
+
+    function matchFields(channels as dynamic) as object
+        result = []
+        if type(channels) <> "roArray" then return result
+        for each channel in channels
+            if type(channel) = "roAssociativeArray"
+                result.Push({ id: channel.id, name: channel.name, tvgID: channel.tvgID, tvgName: channel.tvgName })
+            end if
+        end for
+        return result
+    end function
+
+    function textList(value as dynamic) as object
+        result = []
+        if type(value) <> "roArray" then return result
+        for each item in value
+            if GuideSources.isText(item)
+                if item <> "" then result.Push(item)
+            end if
+        end for
+        return result
+    end function
+
+    function isTrue(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return (kind = "boolean" or kind = "roboolean") and value
+    end function
+
+    function isText(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "string" or kind = "rostring"
+    end function
+
+end namespace

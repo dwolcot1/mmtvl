@@ -1,16 +1,33 @@
-' A chunked XMLTV scanner (M12 step 3, first version, for probe 3e; step 9 brings full parity with MMTVL's
-' XMLTVParser). Pure: no nodes, no roXMLElement. Text is fed a chunk at a time and only the unfinished element
-' is carried over, so a 77 MB guide never has to be in memory.
+' A chunked XMLTV scanner (M12 steps 3 and 9): MMTVL's XMLTVParser (MMTVL/IPTV/EPG/XMLTVParser.swift) without
+' a whole-document parser. Pure: no nodes, no roXMLElement. Text is fed a chunk at a time and only the unfinished
+' element is carried over, so a 77 MB guide never has to be in memory. tests/fixtures/programmes.golden.json,
+' written by MMTVL's own code, is the contract (GuideGoldenTests).
 '
 ' Two passes, as the plan's data flow says:
-'   1. XMLTVScan.newChannelPass(): <channel> ids and display-names (both lowercased; at most 16 names; a repeated
-'      id merges into the first, new names only). It stops at the first <programme>, where MMTVL matches.
-'   2. XMLTVScan.newProgrammePass(wanted, windowStart, windowEnd): only <programme>s of the wanted (lowercased)
-'      ids. Kept, as MMTVL keeps them: start parses; a missing stop is the next programme's start on the channel,
-'      else start + 30 min; stop > start and the programme overlaps [windowStart, windowEnd) (seconds since 1970).
-'      Fields: title, sub-title, desc, category (the first non-empty of each), episode (onscreen, else xmltv_ns
-'      as "S2 E1"). Text is decoded like Foundation's XMLParser: the five entities, numeric references, CDATA
-'      kept as text, line ends as LF, then trimmed.
+'   1. XMLTVScan.newChannelPass(): <channel> ids (lowercased, as Swift's lowercased(): Unicode.lower) and their
+'      display-names as written (trimmed; empty ones skipped; at most 16). A repeated id merges into the first
+'      one's place: its names, then the later element's names it doesn't have yet (exact, case-sensitive
+'      comparison); repeats within one element stay. A <channel> with no id or an empty one is ignored. The pass
+'      stops at the first <programme>, where MMTVL matches (a <channel> after programmes isn't read; MMTVL
+'      doesn't match it either). XMLTVScan.channelList(pass) gives [{ id, names }] in file order.
+'   2. XMLTVScan.newProgrammePass(wanted, windowStart, windowEnd): only <programme>s of the wanted ids (an AA of
+'      ids, or an array; compared lowercased). Kept, as MMTVL keeps them: start parses (XMLTVDate.parse); a
+'      missing or unreadable stop is the next later start on the channel, else start + 30 min; stop > start and
+'      the programme overlaps the window: start < windowEnd and stop > windowStart (seconds since 1970).
+'      Fields: title (the first non-empty, else ""), sub-title, desc, category (the first non-empty of each, else
+'      absent), episode (onscreen, else xmltv_ns as "S2 E1"). pass.programmes is { id: [programme] }, each list
+'      in file order. Text is decoded like Foundation's XMLParser: the five entities, numeric references, CDATA
+'      kept as text, line ends as LF, then trimmed of whitespace and newlines (Unicode.trim).
+' Caps (QA-M2 / security M-2 of step 9; provisional until step 4's numbers): text is clipped after decoding to
+' textUnits (400 UTF-16 units, the length MMTVL reads guide titles, subtitles and categories to) for title,
+' sub-title and category, summaryUnits (1,000) for desc, and nameUnits (200) for display-names. At most
+' maximumPerChannel (300) programmes are kept per channel, and at most pass.maxProgrammes in the pass (invalid: no
+' limit; GuidePipeline gives the run's remaining total from Capabilities). Past either, later programmes are
+' skipped and pass.shortened is set. pass.retainedBytes is a rough estimate of the programmes held (estimateBytes
+' each), for the memory guard. A programme that starts at or after windowEnd is never kept, so it's skipped
+' before its text is read.
+' A pass that reads to the end checks the file is whole, as XMLParser would refuse it otherwise: no element left
+' unfinished and the document ending with </tv> (pass.error "Malformed XMLTV"). This is not a full XML check.
 ' Feed text with XMLTVScan.feed(pass, text), then XMLTVScan.finish(pass); or XMLTVScan.scanFile(path, pass, …).
 namespace XMLTVScan
 
@@ -18,23 +35,60 @@ namespace XMLTVScan
     ' An unfinished element longer than this stops the scan with an error.
     const maximumPending = 1048576
     const missingStopSeconds = 1800
+    const textUnits = 400
+    const summaryUnits = 1000
+    const nameUnits = 200
+    const maximumPerChannel = 300
+    ' A programme's AA, its keys and numbers, before its text (bytes; a rough figure for the memory guard).
+    const programmeOverheadBytes = 160
+
+    const malformedError = "Malformed XMLTV"
 
     function newChannelPass() as object
-        return { kind: "channels", buffer: "", error: "", done: false, channels: {}, order: [] }
+        channels = {}
+        channels.SetModeCaseSensitive()
+        return {
+            kind: "channels", buffer: "", ending: "", error: "", done: false, sawProgramme: false,
+            finder: Unicode.newNonASCIIFinder(), channels: channels, order: []
+        }
     end function
 
-    function newProgrammePass(wanted as object, windowStart as dynamic, windowEnd as dynamic) as object
+    function newProgrammePass(wanted as object, windowStart as dynamic, windowEnd as dynamic, maxProgrammes = invalid as dynamic) as object
+        ids = {}
+        ids.SetModeCaseSensitive()
+        finder = Unicode.newNonASCIIFinder()
+        ' for each gives an array's values and an AA's keys.
+        for each id in wanted
+            ids[Unicode.lower(id, finder)] = true
+        end for
+        pending = {}
+        pending.SetModeCaseSensitive()
+        starts = {}
+        starts.SetModeCaseSensitive()
+        programmes = {}
+        programmes.SetModeCaseSensitive()
         return {
-            kind: "programmes", buffer: "", error: "", done: false,
-            wanted: wanted, windowStart: windowStart, windowEnd: windowEnd,
-            pending: {}, starts: {}, programmes: {},
-            scanned: 0, matched: 0, kept: 0
+            kind: "programmes", buffer: "", ending: "", error: "", done: false,
+            finder: finder, wanted: ids, windowStart: windowStart, windowEnd: windowEnd,
+            pending: pending, starts: starts, programmes: programmes,
+            scanned: 0, matched: 0, kept: 0,
+            maxProgrammes: maxProgrammes, added: 0, shortened: false, retainedBytes: 0
         }
+    end function
+
+    ' The channel pass's channels in file order: [{ id, names }].
+    function channelList(pass as object) as object
+        list = []
+        for each id in pass.order
+            list.Push({ id: id, names: pass.channels[id] })
+        end for
+        return list
     end function
 
     sub feed(pass as object, text as string)
         if pass.error <> "" or pass.done then return
         if pass.buffer = "" then buffer = text else buffer = pass.buffer + text
+        XMLTVScan.trackEnding(pass, text)
         if pass.kind = "channels"
             rest = XMLTVScan.channelsIn(pass, buffer)
         else
@@ -47,7 +101,13 @@ namespace XMLTVScan
     ' The programme pass: fills missing stops and keeps what overlaps the window, per channel in file order.
     ' Each channel's starts are sorted once and searched, so this is O(n log n), not O(n²).
     sub finish(pass as object)
+        if pass.error <> "" then return
+        complete = not (pass.kind = "channels" and pass.sawProgramme)
         pass.done = true
+        if complete and not XMLTVScan.isWhole(pass)
+            pass.error = XMLTVScan.malformedError
+            return
+        end if
         if pass.kind <> "programmes" then return
         kept = 0
         for each id in pass.pending
@@ -106,7 +166,35 @@ namespace XMLTVScan
             end if
         end while
         XMLTVScan.finish(pass)
+        if pass.error <> "" then return { ok: false, stopped: false, error: pass.error, bytes: offset }
         return { ok: true, stopped: false, error: "", bytes: offset }
+    end function
+
+    ' Whether a pass that read everything ended cleanly: nothing unfinished, and </tv> last (XML whitespace may
+    ' follow it, and come before its ">").
+    function isWhole(pass as object) as boolean
+        if Instr(1, pass.buffer, "<channel") > 0 or Instr(1, pass.buffer, "<programme") > 0 then return false
+        ending = pass.ending
+        if Right(ending, 1) <> ">" then return false
+        return Right(XMLTVScan.trimEndSpace(Left(ending, Len(ending) - 1)), 4) = "</tv"
+    end function
+
+    ' The last 16 characters fed, not counting XML whitespace at the end (a chunk of only whitespace changes nothing).
+    sub trackEnding(pass as object, text as string)
+        ' Only the end of a big chunk is looked at, unless it ends in so much whitespace that fewer than 16 are left.
+        trimmed = XMLTVScan.trimEndSpace(Right(text, 64))
+        if Len(trimmed) < 16 and Len(text) > 64 then trimmed = XMLTVScan.trimEndSpace(text)
+        if trimmed = "" then return
+        if Len(trimmed) >= 16 then pass.ending = Right(trimmed, 16) else pass.ending = Right(pass.ending + trimmed, 16)
+    end sub
+
+    ' text without XML whitespace (space, tab, CR, LF) at its end.
+    function trimEndSpace(text as string) as string
+        last = Len(text)
+        while last > 0 and XMLTVScan.isSpace(Mid(text, last, 1))
+            last--
+        end while
+        return Left(text, last)
     end function
 
     ' How many leading bytes are whole UTF-8 characters (a character cut at the end is left for the next chunk).
@@ -130,51 +218,6 @@ namespace XMLTVScan
         end if
         if i + needed <= n then return n
         return i
-    end function
-
-    ' XMLTV time ("20261005143000 +0000", "202610051430 -0500", "20261005143000+0100") → seconds since 1970,
-    ' or invalid. Needs 12 or 14 digits; missing seconds = 0; no offset = UTC (MMTVL's XMLTVDate.parse).
-    function parseDate(text as string) as dynamic
-        value = text.Trim()
-        digits = 0
-        length = Len(value)
-        while digits < length
-            code = Asc(Mid(value, digits + 1, 1))
-            if code < 48 or code > 57 then exit while
-            digits++
-        end while
-        if digits <> 12 and digits <> 14 then return invalid
-        offset = 0
-        rest = Mid(value, digits + 1).Trim()
-        if rest <> ""
-            sign = Left(rest, 1)
-            zone = Mid(rest, 2)
-            if (sign <> "+" and sign <> "-") or Len(zone) <> 4 then return invalid
-            for i = 1 to 4
-                code = Asc(Mid(zone, i, 1))
-                if code < 48 or code > 57 then return invalid
-            end for
-            offset = Val(Left(zone, 2), 10) * 3600 + Val(Right(zone, 2), 10) * 60
-            if sign = "-" then offset = -offset
-        end if
-        year = Val(Mid(value, 1, 4), 10)
-        month = Val(Mid(value, 5, 2), 10)
-        day = Val(Mid(value, 7, 2), 10)
-        hour = Val(Mid(value, 9, 2), 10)
-        minute = Val(Mid(value, 11, 2), 10)
-        second = 0
-        if digits = 14 then second = Val(Mid(value, 13, 2), 10)
-        if month < 1 or month > 12 or day < 1 or day > 31 or hour > 23 or minute > 59 or second > 60 then return invalid
-        ' Days from the civil date (proleptic Gregorian); a day past the month's end rolls over, as Calendar does.
-        y = year
-        if month <= 2 then y = y - 1
-        if y >= 0 then era = y \ 400 else era = (y - 399) \ 400
-        yearOfEra = y - era * 400
-        if month > 2 then shifted = month - 3 else shifted = month + 9
-        dayOfYear = (153 * shifted + 2) \ 5 + day - 1
-        dayOfEra = yearOfEra * 365 + yearOfEra \ 4 - yearOfEra \ 100 + dayOfYear
-        days = era * 146097 + dayOfEra - 719468
-        return days * 86400& + hour * 3600 + minute * 60 + second - offset
     end function
 
     ' "1.0.0/1" → "S2 E1"; ".4." → "E5"; invalid when neither part is a number.
@@ -203,35 +246,37 @@ namespace XMLTVScan
     function decodeText(raw as string) as string
         text = raw
         if Instr(1, text, Chr(13)) > 0 then text = text.Replace(Chr(13) + Chr(10), Chr(10)).Replace(Chr(13), Chr(10))
-        if Instr(1, text, "<![CDATA[") = 0 then return XMLTVScan.decodeEntities(text).Trim()
-        result = ""
+        if Instr(1, text, "<![CDATA[") = 0 then return Unicode.trim(XMLTVScan.decodeEntities(text), true)
+        ' Security L-3 of step 9: pieces joined once, not a string grown in the loop.
+        parts = []
         cursor = 1
         while true
             start = Instr(cursor, text, "<![CDATA[")
             if start = 0
-                result += XMLTVScan.decodeEntities(Mid(text, cursor))
+                parts.Push(XMLTVScan.decodeEntities(Mid(text, cursor)))
                 exit while
             end if
-            result += XMLTVScan.decodeEntities(Mid(text, cursor, start - cursor))
+            parts.Push(XMLTVScan.decodeEntities(Mid(text, cursor, start - cursor)))
             close = Instr(start + 9, text, "]]>")
             if close = 0
-                result += Mid(text, start + 9)
+                parts.Push(Mid(text, start + 9))
                 exit while
             end if
-            result += Mid(text, start + 9, close - start - 9)
+            parts.Push(Mid(text, start + 9, close - start - 9))
             cursor = close + 3
         end while
-        return result.Trim()
+        return Unicode.trim(parts.Join(""), true)
     end function
 
     ' &amp; &lt; &gt; &quot; &apos; and &#N; / &#xH;. Anything else is left as it is.
     function decodeEntities(text as string) as string
         amp = Instr(1, text, "&")
         if amp = 0 then return text
-        result = ""
+        ' Security L-3 of step 9: pieces joined once, not a string grown in the loop.
+        parts = []
         cursor = 1
         while amp > 0
-            result += Mid(text, cursor, amp - cursor)
+            parts.Push(Mid(text, cursor, amp - cursor))
             semicolon = Instr(amp + 1, text, ";")
             replacement = invalid
             if semicolon > 0 and semicolon - amp <= 10
@@ -239,15 +284,16 @@ namespace XMLTVScan
                 replacement = XMLTVScan.entity(name)
             end if
             if replacement = invalid
-                result += "&"
+                parts.Push("&")
                 cursor = amp + 1
             else
-                result += replacement
+                parts.Push(replacement)
                 cursor = semicolon + 1
             end if
             amp = Instr(cursor, text, "&")
         end while
-        return result + Mid(text, cursor)
+        parts.Push(Mid(text, cursor))
+        return parts.Join("")
     end function
 
     function entity(name as string) as dynamic
@@ -314,6 +360,7 @@ namespace XMLTVScan
             p = Instr(cursor, buffer, "<channel")
             if programmeAt > 0 and (p = 0 or programmeAt < p)
                 pass.done = true
+                pass.sawProgramme = true
                 return ""
             end if
             if p = 0 then return XMLTVScan.tail(buffer, cursor)
@@ -335,10 +382,10 @@ namespace XMLTVScan
                 if id <> invalid and id <> ""
                     names = []
                     for each child in XMLTVScan.children(body, { "display-name": true })
-                        name = LCase(XMLTVScan.decodeText(child.text))
-                        if name <> "" then names.Push(name)
+                        name = XMLTVScan.clip(XMLTVScan.decodeText(child.text), XMLTVScan.nameUnits, pass.finder)
+                        if name <> "" and names.Count() < XMLTVScan.maximumNames then names.Push(name)
                     end for
-                    XMLTVScan.addChannel(pass, LCase(id), names)
+                    XMLTVScan.addChannel(pass, Unicode.lower(id, pass.finder), names)
                 end if
                 cursor = nextPos
             else
@@ -348,14 +395,11 @@ namespace XMLTVScan
         return ""
     end function
 
+    ' names: one element's display-names, at most 16 (repeats kept). A repeated id adds only names it lacks.
     sub addChannel(pass as object, id as string, names as object)
         existing = pass.channels[id]
         if existing = invalid
-            kept = []
-            for each name in names
-                if kept.Count() < maximumNames then kept.Push(name)
-            end for
-            pass.channels[id] = kept
+            pass.channels[id] = names
             pass.order.Push(id)
             return
         end if
@@ -395,10 +439,11 @@ namespace XMLTVScan
                 tag = Mid(buffer, p, tagEnd - p + 1)
                 channel = XMLTVScan.attribute(tag, "channel")
                 if channel <> invalid and channel <> ""
-                    if wanted.DoesExist(channel)
+                    id = Unicode.lower(channel, pass.finder)
+                    if wanted.DoesExist(id)
                         body = ""
                         if close > 0 then body = Mid(buffer, tagEnd + 1, close - tagEnd - 1)
-                        XMLTVScan.addProgramme(pass, LCase(channel), tag, body)
+                        XMLTVScan.addProgramme(pass, id, tag, body)
                     end if
                 end if
                 cursor = nextPos
@@ -412,11 +457,11 @@ namespace XMLTVScan
     sub addProgramme(pass as object, id as string, tag as string, body as string)
         startText = XMLTVScan.attribute(tag, "start")
         if startText = invalid then return
-        start = XMLTVScan.parseDate(startText)
+        start = XMLTVDate.parse(startText)
         if start = invalid then return
         stopValue = invalid
         stopText = XMLTVScan.attribute(tag, "stop")
-        if stopText <> invalid then stopValue = XMLTVScan.parseDate(stopText)
+        if stopText <> invalid then stopValue = XMLTVDate.parse(stopText)
         pass.matched++
         if pass.starts[id] = invalid
             pass.starts[id] = []
@@ -424,16 +469,23 @@ namespace XMLTVScan
         end if
         pass.starts[id].Push(start)
         hasStop = stopValue <> invalid
-        ' A programme with a stop outside the window is never kept, so its text isn't read.
+        ' A programme with a stop outside the window, or starting at or after its end, is never kept, so its text
+        ' isn't read.
         if hasStop and not XMLTVScan.inWindow(pass, start, stopValue) then return
+        if start >= pass.windowEnd then return
+        if pass.pending[id].Count() >= XMLTVScan.maximumPerChannel or XMLTVScan.isFull(pass)
+            pass.shortened = true
+            return
+        end if
 
         programme = { start: start, stop: stopValue, hasStop: hasStop, title: "" }
         onscreen = invalid
         numbered = invalid
         wanted = { "title": true, "sub-title": true, "desc": true, "category": true, "episode-num": true }
         for each child in XMLTVScan.children(body, wanted)
-            value = XMLTVScan.decodeText(child.text)
             name = child.name
+            if name = "desc" then units = XMLTVScan.summaryUnits else units = XMLTVScan.textUnits
+            value = XMLTVScan.clip(XMLTVScan.decodeText(child.text), units, pass.finder)
             if name = "title"
                 if programme.title = "" then programme.title = value
             else if name = "sub-title"
@@ -457,7 +509,59 @@ namespace XMLTVScan
             programme.episode = numbered
         end if
         pass.pending[id].Push(programme)
+        pass.added++
+        pass.retainedBytes += XMLTVScan.estimateBytes(programme)
     end sub
+
+    function isFull(pass as object) as boolean
+        limit = pass.maxProgrammes
+        kind = LCase(type(limit))
+        if kind <> "integer" and kind <> "roint" and kind <> "rointeger" and kind <> "longinteger" and kind <> "float" and kind <> "double" then return false
+        return pass.added >= limit
+    end function
+
+    ' A programme's rough size: the overhead plus its text's characters (UTF-8 bytes for ASCII).
+    function estimateBytes(programme as object) as integer
+        size = XMLTVScan.programmeOverheadBytes
+        for each key in ["title", "subtitle", "summary", "category", "episode"]
+            value = programme[key]
+            if value <> invalid then size += Len(value)
+        end for
+        return size
+    end function
+
+    ' text cut to at most units UTF-16 units (a character above U+FFFF counts 2, as in Swift's utf16 view), never
+    ' inside a character.
+    ' finder: Unicode.newNonASCIIFinder() (the pass's).
+    function clip(text as string, units as integer, finder as object) as string
+        count = Len(text)
+        if count * 2 <= units then return text
+        if count <= units
+            ' Only characters above U+FFFF could make it longer than units: check only when there are any.
+            if not finder.IsMatch(text) then return text
+        else if not finder.IsMatch(Left(text, units))
+            return Left(text, units)
+        end if
+        ' On a Roku a string is UTF-8 and Mid gives whole characters (above U+FFFF: 2 units). An interpreter with
+        ' UTF-16 strings (brs-node) gives surrogate halves instead: a high one starts a 2-unit pair.
+        used = 0
+        i = 1
+        while i <= count
+            width = XMLTVScan.charWidth(Asc(Mid(text, i, 1)))
+            if used + width.units > units then return Left(text, i - 1)
+            used += width.units
+            i += width.stride
+        end while
+        return text
+    end function
+
+    ' One character's UTF-16 units, and how many of Mid's characters it takes: a code point above U+FFFF (a Roku's
+    ' UTF-8 strings) is 2 units in 1; a high surrogate (an interpreter's UTF-16 strings) starts a pair, 2 in 2.
+    function charWidth(code as integer) as object
+        if code > 65535 then return { units: 2, stride: 1 }
+        if code >= 55296 and code <= 56319 then return { units: 2, stride: 2 }
+        return { units: 1, stride: 1 }
+    end function
 
     ' The smallest value in sorted greater than value, or invalid (binary search).
     function firstAfter(sorted as object, value as dynamic) as dynamic

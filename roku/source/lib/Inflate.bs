@@ -8,7 +8,9 @@
 '   result = Inflate.gunzip(source, sink, observer)
 '   source.next() returns the next roByteArray of input, or invalid at the end.
 '   sink.write(bytes) receives each piece of output, in order.
-'   observer (optional): observer.tick(outputBytes) after each piece; returning false stops ("stopped").
+'   observer (optional): observer.tick(outputBytes) after each output piece and after each input chunk read
+'   (security M-1 of step 9: a stream of empty blocks produces no output, but still can't run past the time
+'   limit or the memory guard); returning false stops ("stopped", with error "").
 '   result: { ok, stopped, error, inputBytes, outputBytes, members, slowCodes }.
 '   Inflate.fileSource(path, chunkBytes) and Inflate.fileSink(path) read and write files a piece at a time.
 namespace Inflate
@@ -44,6 +46,8 @@ namespace Inflate
             s.members++
         end while
         if s.error = "" and not s.stopped and s.out.Count() > 0 then Inflate.flush(s)
+        ' A stop can surface as a truncated stream or a bad code; the stop is the answer.
+        if s.stopped then s.error = ""
         return {
             ok: s.error = "" and not s.stopped,
             stopped: s.stopped,
@@ -134,6 +138,13 @@ namespace Inflate
                 s.inPos = 0
                 s.inLen = count
                 s.inTotal += count
+                if s.observer <> invalid
+                    if not s.observer.tick(s.outTotal)
+                        s.stopped = true
+                        s.eof = true
+                        return false
+                    end if
+                end if
                 return true
             end if
         end while

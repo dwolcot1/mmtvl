@@ -1,0 +1,203 @@
+' The Live TV lineup (M12 step 8): a port of MMTVL's ChannelLineup (IPTV/Sources/ChannelPreferences.swift:52-125)
+' and ChannelList.guideGroups / channels(in:of:) (IPTV/Sources/Channel.swift:99-123): what every Live TV list
+' shows after favorites and hiding (the guide's groups and rows, zapping). Pure functions, no nodes, so the scene
+' can build it again when the preferences change. Linear in the number of channels.
+'
+' Shapes:
+'   Lineup.build(channels, prefs, liveTeamGames = []) -> lineup
+'     channels       M3U.makeChannels' channels, playlist order; from step 21 also antenna channels, marked
+'                    source: "antenna" and with guideNumber ("5.1"). Others have no source.
+'     prefs          SettingsStore's prefs { favorites, hiddenChannels, hiddenGroups, teams }; a missing field or
+'                    one that isn't a list reads as [] (ChannelPreferences' tolerant decoding).
+'     liveTeamGames  channel ids of the picked teams' live games, in TeamMatcher's order (step 18; [] until then).
+'   lineup: plain data (safe in a node field):
+'     groups                  "Favorites" when its list isn't empty, "My Teams" whenever a channel is visible,
+'                             then guideGroups(visibleChannels): "Antenna", "All Channels", the playlist's groups.
+'     visibleChannels         playlist order, without hidden channels and hidden groups.
+'     favorites               prefs.favorites order, visible only: the saved favorites (never the team games).
+'     favoritesGroupChannels  the guide's Favorites group: teams first, then favorites not already listed.
+'     movableFavorites        favorites without the team games (Move Up/Down steps among these).
+'     teams                   liveTeamGames, visible only, first of each id: My Teams' live channels.
+'   My Teams' upcoming games (MMTVL's 4th argument) come with step 18.
+'
+' Ids and group names compare case-sensitively, as in Swift.
+namespace Lineup
+
+    const favoritesGroup = "Favorites"
+    const teamsGroup = "My Teams"
+    ' A remembered lastGroup of "Teams" (MMTVL before M7l 8c) reads as "My Teams".
+    const legacyTeamsGroup = "Teams"
+    const allChannelsGroup = "All Channels"
+    const antennaGroup = "Antenna"
+
+    function build(channels as object, prefs as dynamic, liveTeamGames = [] as object) as object
+        if type(prefs) <> "roAssociativeArray" then prefs = {}
+        hiddenChannels = Lineup.textSet(prefs.hiddenChannels)
+        hiddenGroups = Lineup.textSet(prefs.hiddenGroups)
+        visible = []
+        byID = {}
+        byID.SetModeCaseSensitive()
+        for each channel in channels
+            if not hiddenChannels.DoesExist(channel.id) and not hiddenGroups.DoesExist(channel.group)
+                visible.Push(channel)
+                if not byID.DoesExist(channel.id) then byID[channel.id] = channel
+            end if
+        end for
+        saved = Lineup.pick(prefs.favorites, byID)
+        liveGames = Lineup.pick(liveTeamGames, byID)
+        teamIDs = {}
+        teamIDs.SetModeCaseSensitive()
+        for each channel in liveGames
+            teamIDs[channel.id] = true
+        end for
+        movable = []
+        for each channel in saved
+            if not teamIDs.DoesExist(channel.id) then movable.Push(channel)
+        end for
+        favoritesList = []
+        favoritesList.Append(liveGames)
+        favoritesList.Append(movable)
+
+        names = []
+        if favoritesList.Count() > 0 then names.Push(Lineup.favoritesGroup)
+        if visible.Count() > 0 then names.Push(Lineup.teamsGroup)
+        names.Append(Lineup.guideGroups(visible))
+        return {
+            groups: names,
+            visibleChannels: visible,
+            favorites: saved,
+            favoritesGroupChannels: favoritesList,
+            movableFavorites: movable,
+            teams: liveGames
+        }
+    end function
+
+    ' Favorites (team games first), My Teams' live channels, All Channels, or a group's visible channels; [] for a
+    ' group the lineup doesn't have.
+    function channelsIn(current as object, group as dynamic) as object
+        if not Lineup.isText(group) then return []
+        if group = Lineup.favoritesGroup then return current.favoritesGroupChannels
+        if group = Lineup.teamsGroup then return current.teams
+        if not Lineup.contains(current.groups, group) then return []
+        return Lineup.channelsInGroup(group, current.visibleChannels)
+    end function
+
+    ' A remembered group name as the lineup knows it: "Teams" is "My Teams", unless the playlist has a "Teams" group.
+    function resolvedGroup(current as object, name as dynamic) as dynamic
+        if not Lineup.isText(name) then return name
+        if name <> Lineup.legacyTeamsGroup or Lineup.contains(current.groups, Lineup.legacyTeamsGroup) then return name
+        return Lineup.teamsGroup
+    end function
+
+    function isVisible(current as object, id as string) as boolean
+        for each channel in current.visibleChannels
+            if channel.id = id then return true
+        end for
+        return false
+    end function
+
+    ' ChannelList.guideGroups (M7j L3): "Antenna" (when a channel's group is "Antenna"), then "All Channels" when
+    ' that and the other groups make more than one group, then the other groups in first-appearance order.
+    function guideGroups(channels as object) as object
+        others = []
+        hasAntenna = false
+        for each name in Lineup.groupsOf(channels)
+            if name = Lineup.antennaGroup then hasAntenna = true else others.Push(name)
+        end for
+        total = others.Count()
+        if hasAntenna then total = total + 1
+        result = []
+        if hasAntenna then result.Push(Lineup.antennaGroup)
+        if total > 1 then result.Push(Lineup.allChannelsGroup)
+        result.Append(others)
+        return result
+    end function
+
+    ' ChannelList.channels(in:of:): every channel for "All Channels" (the playlist's, then the antenna's, as
+    ' given), else that group's channels in order; in "Antenna", the antenna channels first, then a playlist group
+    ' of that name.
+    function channelsInGroup(group as string, channels as object) as object
+        if group = Lineup.allChannelsGroup then return channels
+        inGroup = []
+        later = []
+        isAntennaGroup = group = Lineup.antennaGroup
+        for each channel in channels
+            if channel.group = group
+                if isAntennaGroup and not Lineup.isAntenna(channel) then later.Push(channel) else inGroup.Push(channel)
+            end if
+        end for
+        inGroup.Append(later)
+        return inGroup
+    end function
+
+    ' Distinct groups in first-appearance order (ChannelList.groups; the same as M3U.groups, kept here so the
+    ' lineup doesn't need the parser loaded).
+    function groupsOf(channels as object) as object
+        seen = {}
+        seen.SetModeCaseSensitive()
+        result = []
+        for each channel in channels
+            if not seen.DoesExist(channel.group)
+                seen[channel.group] = true
+                result.Push(channel.group)
+            end if
+        end for
+        return result
+    end function
+
+    ' The number shown: the tuner's GuideNumber for antenna channels ("5.1"), else the channel's number.
+    function displayNumber(channel as object) as string
+        if Lineup.isAntenna(channel)
+            if Lineup.isText(channel.guideNumber) then return channel.guideNumber
+        end if
+        return channel.number.ToStr()
+    end function
+
+    function isAntenna(channel as object) as boolean
+        source = channel.source
+        if not Lineup.isText(source) then return false
+        return source = "antenna"
+    end function
+
+    ' The channels for ids, in order, each id once, visible ones only (byID: visible channels by id).
+    function pick(ids as dynamic, byID as object) as object
+        result = []
+        if type(ids) <> "roArray" then return result
+        seen = {}
+        seen.SetModeCaseSensitive()
+        for each id in ids
+            if Lineup.isText(id)
+                if not seen.DoesExist(id)
+                    seen[id] = true
+                    channel = byID[id]
+                    if channel <> invalid then result.Push(channel)
+                end if
+            end if
+        end for
+        return result
+    end function
+
+    ' A case-sensitive set of the strings in value ({} when it isn't a list).
+    function textSet(value as dynamic) as object
+        result = {}
+        result.SetModeCaseSensitive()
+        if type(value) <> "roArray" then return result
+        for each item in value
+            if Lineup.isText(item) then result[item] = true
+        end for
+        return result
+    end function
+
+    function contains(list as object, value as string) as boolean
+        for each item in list
+            if item = value then return true
+        end for
+        return false
+    end function
+
+    function isText(value as dynamic) as boolean
+        kind = type(value)
+        return kind = "String" or kind = "roString"
+    end function
+
+end namespace

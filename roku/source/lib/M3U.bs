@@ -1,0 +1,519 @@
+' The playlist (M12 step 6): a port of MMTVL's M3UParser.parse and ChannelList.make / feedName
+' (MMTVL/IPTV/Sources/M3UParser.swift, Channel.swift), with the same rules in the same order, so channel
+' ids (favorites, hidden channels, overrides, recents) carry over. Pure functions, no nodes.
+' tests/fixtures/channels.golden.json, written by MMTVL's own code, is the contract (M3UTests).
+'
+' Shapes:
+'   M3U.parse(text) -> { guideURLs: [string], entries: [entry] }, or { error: "notAPlaylist" }.
+'   entry: { name, attributes: {lowercased key: value}, group: string or invalid, url }.
+'   M3U.makeChannels(entries) -> [channel]
+'   channel: { id, number, name, group, url, tvgID, tvgName, logo } (the last three string or invalid).
+'
+' Where Swift works on Characters (grapheme clusters), this works on characters and treats a quote, comma
+' or "=" followed by a combining character (Unicode.isExtend) as Swift does: not that character.
+' URLs are kept as written. Swift's URL(string:) percent-encodes spaces and the like and converts
+' non-ASCII host names (absoluteString), which this doesn't; which URLs it refuses is approximated in
+' M3U.isValidURL. This parser fetches nothing: whether a URL may be fetched is the fetch's and the
+' player's decision (security L-2).
+namespace M3U
+
+    ' Reads a playlist file the way the app reads a downloaded one: ReadAsciiFile, which Roku documents as
+    ' reading UTF-8 (a UTF-8 BOM becomes U+FEFF, which parse drops). "" if the file can't be read.
+    function readFile(path as string) as string
+        return ReadAsciiFile(path)
+    end function
+
+    ' The regexes for the ASCII fast paths, made once per parse or makeChannels. On a line or URL with only
+    ' ASCII characters, Swift's Characters are single characters, so its own regex gives its results; any
+    ' other line or URL takes the character-by-character path, which handles combining characters.
+    function newMatchers() as object
+        q = Chr(34)
+        return {
+            nonASCII: Unicode.newNonASCIIFinder(),
+            ' M3UParser's own pattern.
+            attribute: CreateObject("roRegex", "([A-Za-z0-9_-]+)=" + q + "([^" + q + "]*)" + q, ""),
+            ' Up to the first comma outside quotes: closed quoted runs, then text without quotes or commas.
+            nameComma: CreateObject("roRegex", "^(?:[^" + q + ",]*" + q + "[^" + q + "]*" + q + ")*[^" + q + ",]*,", ""),
+            ' A plain http(s) URL Swift's URL accepts as is: host, port, then a path without escapes.
+            plainWebURL: CreateObject("roRegex", "^https?://[A-Za-z0-9.-]+(?::[0-9]+)?(/[^?#%]*)?(?:[?#].*)?$", "i")
+        }
+    end function
+
+    function parse(text as string) as object
+        matchers = M3U.newMatchers()
+        if Len(text) > 0 and Asc(Left(text, 1)) = 65279 then text = Mid(text, 2)
+
+        sawHeader = false
+        sawEntry = false
+        guideURLs = []
+        entries = []
+        currentGroup = invalid
+        ' The #EXTINF waiting for its URL line (a field, so it carries across loop passes).
+        state = { pending: invalid }
+
+        ' Split on LF; each line is trimmed with newlines, so CRLF works.
+        for each rawLine in text.Split(Chr(10))
+            line = Unicode.trim(rawLine, true)
+            if line = ""
+                ' blank
+            else if M3U.hasPrefix(line, "#EXTM3U")
+                sawHeader = true
+                attributes = M3U.parseAttributes(line, matchers)
+                for each key in ["url-tvg", "x-tvg-url"]
+                    if attributes.DoesExist(key)
+                        for each part in M3U.splitOnCommas(attributes[key])
+                            trimmed = Unicode.trim(part)
+                            if M3U.isWebURL(trimmed) and not M3U.contains(guideURLs, trimmed)
+                                guideURLs.Push(trimmed)
+                            end if
+                        end for
+                    end if
+                end for
+            else if M3U.hasPrefix(line, "#EXTINF:")
+                sawEntry = true
+                state.pending = { name: M3U.displayName(line, matchers), attributes: M3U.parseAttributes(line, matchers) }
+            else if M3U.hasPrefix(line, "#EXTGRP:")
+                group = Unicode.trim(Mid(line, 9))
+                if group = "" then currentGroup = invalid else currentGroup = group
+            else if Left(line, 1) = "#"
+                ' another directive or a comment: ignored
+            else if state.pending <> invalid
+                pending = state.pending
+                group = currentGroup
+                groupTitle = pending.attributes["group-title"]
+                if groupTitle <> invalid and groupTitle <> "" then group = groupTitle
+                entries.Push({ name: pending.name, attributes: pending.attributes, group: group, url: line })
+                state.pending = invalid
+            end if
+        end for
+
+        if not sawHeader and not sawEntry then return { error: "notAPlaylist" }
+        return { guideURLs: guideURLs, entries: entries }
+    end function
+
+    ' Keeps http(s) entries that aren't VOD; ids, numbers, names and groups as ChannelList.make.
+    function makeChannels(entries as object) as object
+        channels = []
+        idCounts = {}
+        idCounts.SetModeCaseSensitive()
+        matchers = M3U.newMatchers()
+        for each entry in entries
+            if M3U.isLiveStream(entry.url, matchers) then M3U.addChannel(channels, idCounts, matchers, entry)
+        end for
+        return channels
+    end function
+
+    ' One kept entry as a channel (ChannelList.make's loop body).
+    sub addChannel(channels as object, idCounts as object, matchers as object, entry as object)
+        number = channels.Count() + 1
+        tvgID = M3U.attribute(entry, "tvg-id")
+        tvgName = M3U.attribute(entry, "tvg-name")
+        playlistName = entry.name
+        if playlistName = ""
+            if tvgName <> invalid then playlistName = tvgName else playlistName = "Channel " + number.ToStr()
+        end if
+        ' Ids come from the playlist's own name, so a renamed feed keeps its favorites.
+        if tvgID <> invalid
+            baseID = "id:" + Unicode.lower(tvgID, matchers.nonASCII)
+        else
+            baseID = "name:" + Unicode.lower(playlistName, matchers.nonASCII)
+        end if
+        count = 1
+        if idCounts.DoesExist(baseID) then count = idCounts[baseID] + 1
+        idCounts[baseID] = count
+        id = baseID
+        if count > 1 then id = baseID + "#" + count.ToStr()
+        group = entry.group
+        if group = invalid then group = "Other"
+        logo = M3U.attribute(entry, "tvg-logo")
+        if logo <> invalid and not matchers.plainWebURL.IsMatch(logo)
+            if not M3U.isValidURL(logo) then logo = invalid
+        end if
+        channels.Push({
+            id: id,
+            number: number,
+            name: M3U.feedName(playlistName),
+            group: group,
+            url: entry.url,
+            tvgID: tvgID,
+            tvgName: tvgName,
+            logo: logo
+        })
+    end sub
+
+    ' A game's broadcast, "Away @ Home-H" / "-A", reads "Away @ Home (Home Feed)" / "(Away Feed)".
+    function feedName(name as string) as string
+        if Instr(1, name, " @ ") = 0 or Len(name) <= 2 then return name
+        suffix = Right(name, 2)
+        if suffix <> "-H" and suffix <> "-A" then return name
+        base = Left(name, Len(name) - 2)
+        if Right(base, 2) = " @" then return name
+        start = 1
+        while true
+            at = Instr(start, base, " @ ")
+            if at = 0
+                if start > Len(base) then return name
+                exit while
+            end if
+            if at = start then return name
+            start = at + 3
+        end while
+        if suffix = "-H" then return base + " (Home Feed)"
+        return base + " (Away Feed)"
+    end function
+
+    ' Distinct groups in first-appearance order (ChannelList.groups).
+    function groups(channels as object) as object
+        seen = {}
+        seen.SetModeCaseSensitive()
+        result = []
+        for each channel in channels
+            if not seen.DoesExist(channel.group)
+                seen[channel.group] = true
+                result.Push(channel.group)
+            end if
+        end for
+        return result
+    end function
+
+    ' The entry's attribute, trimmed, or invalid when it's missing or blank (M3UEntry.tvgID and friends).
+    function attribute(entry as object, key as string) as dynamic
+        value = entry.attributes[key]
+        if value = invalid then return invalid
+        value = Unicode.trim(value)
+        if value = "" then return invalid
+        return value
+    end function
+
+    ' Every key="value" (key: letters, digits, "_" and "-"), keys lowercased; the first of a key wins. Like
+    ' the regex ([A-Za-z0-9_-]+)="([^"]*)", leftmost first and never overlapping.
+    function parseAttributes(line as string, matchers = invalid as dynamic) as object
+        attributes = {}
+        if matchers = invalid then matchers = M3U.newMatchers()
+        if not matchers.nonASCII.IsMatch(line)
+            for each match in matchers.attribute.MatchAll(line)
+                key = LCase(match[1])
+                if not attributes.DoesExist(key) then attributes[key] = match[2]
+            end for
+            return attributes
+        end if
+        count = Len(line)
+        from = 1
+        searchAt = 1
+        while true
+            eq = Instr(searchAt, line, "=" + Chr(34))
+            if eq = 0 then exit while
+            searchAt = eq + 1
+            keyStart = eq
+            if not M3U.extendsAt(line, eq + 2, count)
+                while keyStart > from and M3U.isKeyChar(Asc(Mid(line, keyStart - 1, 1)))
+                    keyStart--
+                end while
+            end if
+            if keyStart < eq
+                close = M3U.findQuote(line, eq + 2, count)
+                ' No closing quote: nothing later can match either.
+                if close = 0 then exit while
+                key = LCase(Mid(line, keyStart, eq - keyStart))
+                if not attributes.DoesExist(key) then attributes[key] = Mid(line, eq + 2, close - eq - 2)
+                from = close + 1
+                searchAt = from
+            end if
+        end while
+        return attributes
+    end function
+
+    ' The text after the first comma outside double quotes, trimmed; "" if there is none.
+    function displayName(line as string, matchers = invalid as dynamic) as string
+        if matchers = invalid then matchers = M3U.newMatchers()
+        if not matchers.nonASCII.IsMatch(line)
+            match = matchers.nameComma.Match(line)
+            if match.Count() = 0 then return ""
+            return Unicode.trim(Mid(line, Len(match[0]) + 1))
+        end if
+        count = Len(line)
+        inQuotes = false
+        position = 1
+        while position <= count
+            quote = Instr(position, line, Chr(34))
+            comma = Instr(position, line, ",")
+            if comma > 0 and (quote = 0 or comma < quote)
+                if not inQuotes and not M3U.extendsAt(line, comma + 1, count)
+                    return Unicode.trim(Mid(line, comma + 1))
+                end if
+                position = comma + 1
+            else if quote > 0
+                if not M3U.extendsAt(line, quote + 1, count) then inQuotes = not inQuotes
+                position = quote + 1
+            else
+                exit while
+            end if
+        end while
+        return ""
+    end function
+
+    ' The http(s) URL rule shared by the header's guides and the channels.
+    function isWebURL(url as string) as boolean
+        if not M3U.isValidURL(url) then return false
+        scheme = M3U.urlScheme(url)
+        return scheme = "http" or scheme = "https"
+    end function
+
+    ' ChannelList.isLiveStream: http(s), no "/movie/" or "/series/" in the decoded path (any case), and not
+    ' a .mp4, .mkv, .avi or .mov file.
+    function isLiveStream(url as string, matchers = invalid as dynamic) as boolean
+        if matchers = invalid then matchers = M3U.newMatchers()
+        plain = matchers.plainWebURL.Match(url)
+        if plain.Count() > 0
+            path = ""
+            if plain.Count() > 1 and plain[1] <> invalid then path = M3U.trimTrailingSlashes(LCase(plain[1]))
+        else
+            if not M3U.isWebURL(url) then return false
+            path = LCase(M3U.urlPath(url))
+        end if
+        if Instr(1, path, "/movie/") > 0 or Instr(1, path, "/series/") > 0 then return false
+        extension = M3U.pathExtension(path)
+        return extension <> "mp4" and extension <> "mkv" and extension <> "avi" and extension <> "mov"
+    end function
+
+    ' Approximates when Swift's URL(string:) returns nil: an empty string, a scheme that isn't one
+    ' (text before the first ":" that comes before any "/", "?" or "#"), or after "//" a host with a space,
+    ' a control character or one of "<>\^`{|}, unbalanced brackets, or a port that isn't digits.
+    function isValidURL(url as string) as boolean
+        if url = "" then return false
+        rest = url
+        colon = Instr(1, url, ":")
+        if colon > 0 and colon < M3U.firstOf(url, ["/", "?", "#"], 1)
+            if not M3U.isScheme(Left(url, colon - 1)) then return false
+            rest = Mid(url, colon + 1)
+        end if
+        if Left(rest, 2) <> "//" then return true
+        authority = Mid(rest, 3)
+        authorityEnd = M3U.firstOf(authority, ["/", "?", "#"], 1)
+        authority = Left(authority, authorityEnd - 1)
+        at = 0
+        position = Instr(1, authority, "@")
+        while position > 0
+            at = position
+            position = Instr(position + 1, authority, "@")
+        end while
+        hostPort = Mid(authority, at + 1)
+        for i = 1 to Len(hostPort)
+            code = Asc(Mid(hostPort, i, 1))
+            if code <= 32 or code = 127 then return false
+            if Instr(1, Chr(34) + "<>\^`{|}", Chr(code)) > 0 then return false
+        end for
+        port = ""
+        if Left(hostPort, 1) = "["
+            close = Instr(1, hostPort, "]")
+            if close = 0 then return false
+            after = Mid(hostPort, close + 1)
+            if after <> ""
+                if Left(after, 1) <> ":" then return false
+                port = Mid(after, 2)
+            end if
+        else
+            if Instr(1, hostPort, "[") > 0 or Instr(1, hostPort, "]") > 0 then return false
+            portColon = Instr(1, hostPort, ":")
+            if portColon > 0 then port = Mid(hostPort, portColon + 1)
+        end if
+        for i = 1 to Len(port)
+            code = Asc(Mid(port, i, 1))
+            if code < 48 or code > 57 then return false
+        end for
+        return true
+    end function
+
+    ' The scheme, lowercased, or "" when there is none.
+    function urlScheme(url as string) as string
+        colon = Instr(1, url, ":")
+        if colon = 0 or colon > M3U.firstOf(url, ["/", "?", "#"], 1) then return ""
+        candidate = Left(url, colon - 1)
+        if not M3U.isScheme(candidate) then return ""
+        return LCase(candidate)
+    end function
+
+    ' URL.path: after the scheme and authority, up to "?" or "#", percent-decoded (ASCII escapes; the rest
+    ' stay as written, which is all the VOD rule needs), trailing slashes dropped (but "/" stays "/").
+    function urlPath(url as string) as string
+        rest = url
+        colon = Instr(1, rest, ":")
+        if colon > 0 and colon < M3U.firstOf(rest, ["/", "?", "#"], 1) then rest = Mid(rest, colon + 1)
+        if Left(rest, 2) = "//"
+            rest = Mid(rest, 3)
+            slash = M3U.firstOf(rest, ["/", "?", "#"], 1)
+            rest = Mid(rest, slash)
+        end if
+        rest = Left(rest, M3U.firstOf(rest, ["?", "#"], 1) - 1)
+        return M3U.trimTrailingSlashes(M3U.percentDecodeASCII(rest))
+    end function
+
+    function trimTrailingSlashes(path as string) as string
+        while Len(path) > 1 and Right(path, 1) = "/"
+            path = Left(path, Len(path) - 1)
+        end while
+        return path
+    end function
+
+    ' URL.pathExtension of a path: the text after the last "." of the last component, or "" when there is
+    ' none, it ends the component, or only dots come before it. (Swift also returns "" for an extension
+    ' with whitespace; no such extension is on the VOD list, so that rule isn't needed here.)
+    function pathExtension(path as string) as string
+        component = path
+        slash = 0
+        position = Instr(1, component, "/")
+        while position > 0
+            slash = position
+            position = Instr(position + 1, component, "/")
+        end while
+        component = Mid(component, slash + 1)
+        dot = 0
+        position = Instr(1, component, ".")
+        while position > 0
+            dot = position
+            position = Instr(position + 1, component, ".")
+        end while
+        if dot <= 1 or dot = Len(component) then return ""
+        ' "..mp4" has none either: the part before the dot can't be dots only.
+        onlyDots = true
+        for i = 1 to dot - 1
+            if Mid(component, i, 1) <> "."
+                onlyDots = false
+                exit for
+            end if
+        end for
+        if onlyDots then return ""
+        return Mid(component, dot + 1)
+    end function
+
+    ' Private helpers.
+
+    ' hasPrefix as Swift's Character comparison: the prefix, not followed by a combining character.
+    function hasPrefix(line as string, prefix as string) as boolean
+        size = Len(prefix)
+        if Left(line, size) <> prefix then return false
+        return not M3U.extendsAt(line, size + 1, Len(line))
+    end function
+
+    ' Whether the character at position (1-based) joins the one before it.
+    function extendsAt(line as string, position as integer, count as integer) as boolean
+        if position > count then return false
+        code = Asc(Mid(line, position, 1))
+        if code < 768 then return false
+        return Unicode.isExtend(code)
+    end function
+
+    ' The position of the next plain double quote at or after start, or 0.
+    function findQuote(line as string, start as integer, count as integer) as integer
+        position = start
+        while true
+            found = Instr(position, line, Chr(34))
+            if found = 0 then return 0
+            if not M3U.extendsAt(line, found + 1, count) then return found
+            position = found + 1
+        end while
+        return 0
+    end function
+
+    function isKeyChar(code as integer) as boolean
+        if code >= 97 and code <= 122 then return true ' a-z
+        if code >= 65 and code <= 90 then return true ' A-Z
+        if code >= 48 and code <= 57 then return true ' 0-9
+        return code = 45 or code = 95 ' - _
+    end function
+
+    ' Swift's split(separator: ","): non-empty pieces between plain commas.
+    function splitOnCommas(value as string) as object
+        parts = []
+        count = Len(value)
+        start = 1
+        position = 1
+        while true
+            comma = Instr(position, value, ",")
+            if comma = 0 then exit while
+            position = comma + 1
+            if not M3U.extendsAt(value, comma + 1, count)
+                if comma > start then parts.Push(Mid(value, start, comma - start))
+                start = comma + 1
+            end if
+        end while
+        if start <= count then parts.Push(Mid(value, start))
+        return parts
+    end function
+
+    function contains(list as object, value as string) as boolean
+        for each item in list
+            if item = value then return true
+        end for
+        return false
+    end function
+
+    ' A URL scheme: a letter, then letters, digits, "+", "-" or ".".
+    function isScheme(text as string) as boolean
+        count = Len(text)
+        if count = 0 then return false
+        for i = 1 to count
+            code = Asc(Mid(text, i, 1))
+            isLetter = (code >= 65 and code <= 90) or (code >= 97 and code <= 122)
+            if i = 1
+                if not isLetter then return false
+            else if not (isLetter or (code >= 48 and code <= 57) or code = 43 or code = 45 or code = 46)
+                return false
+            end if
+        end for
+        return true
+    end function
+
+    ' The first position of any of the strings at or after start, or Len(text) + 1.
+    function firstOf(text as string, needles as object, start as integer) as integer
+        first = Len(text) + 1
+        for each needle in needles
+            position = Instr(start, text, needle)
+            if position > 0 and position < first then first = position
+        end for
+        return first
+    end function
+
+    ' %XX escapes of ASCII characters decoded; other escapes and malformed ones stay.
+    function percentDecodeASCII(text as string) as string
+        if Instr(1, text, "%") = 0 then return text
+        parts = []
+        count = Len(text)
+        start = 1
+        position = Instr(1, text, "%")
+        while position > 0
+            if position + 2 <= count
+                hex = Mid(text, position + 1, 2)
+                code = M3U.hexByte(hex)
+                if code >= 0 and code < 128
+                    parts.Push(Mid(text, start, position - start))
+                    parts.Push(Chr(code))
+                    start = position + 3
+                end if
+            end if
+            if start > position then position = Instr(start, text, "%") else position = Instr(position + 1, text, "%")
+        end while
+        parts.Push(Mid(text, start))
+        return parts.Join("")
+    end function
+
+    ' Two hex digits as a number, or -1.
+    function hexByte(hex as string) as integer
+        value = 0
+        for i = 1 to 2
+            code = Asc(Mid(hex, i, 1))
+            if code >= 48 and code <= 57
+                digit = code - 48
+            else if code >= 65 and code <= 70
+                digit = code - 55
+            else if code >= 97 and code <= 102
+                digit = code - 87
+            else
+                return -1
+            end if
+            value = value * 16 + digit
+        end for
+        return value
+    end function
+
+end namespace

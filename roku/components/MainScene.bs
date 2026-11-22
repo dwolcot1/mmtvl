@@ -2,6 +2,7 @@ sub init()
     versionText = appVersionText()
     m.top.findNode("version").text = versionText
     Log.info("App", "Showing " + versionText)
+    startPlaylist()
     #if DEBUG
         ' M12 step 3 (L8, until the About page of step 13): DEBUG builds open the Probes screen with OK or *.
         ' Release builds (bs_const DEBUG=false) have none of this, and no probe files (bsconfig.release.json).
@@ -16,6 +17,236 @@ sub init()
         m.top.appendChild(hint)
         m.top.setFocus(true)
     #end if
+end sub
+
+' M12 step 8: the settings, then the playlist at launch and on a 15-minute timer (D40). The channels stay in m, so
+' the lineup can be built again when the preferences change; a failed load keeps them.
+sub startPlaylist()
+    m.store = SettingsStore.load(SettingsStore.deviceRegistry())
+    m.channels = []
+    m.lastPlaylistLoad = invalid
+    m.playlistTask = invalid
+    m.refreshTimer = CreateObject("roSGNode", "Timer")
+    m.refreshTimer.duration = Refresh.intervalSeconds
+    m.refreshTimer.repeat = true
+    m.refreshTimer.observeField("fire", "onRefreshTick")
+    m.refreshTimer.control = "start"
+    ' QA-2, security L-5: a task that never sets its result is given up after twice its own timeout.
+    m.playlistWatchdog = CreateObject("roSGNode", "Timer")
+    m.playlistWatchdog.duration = Refresh.playlistWatchdogSeconds
+    m.playlistWatchdog.repeat = false
+    m.playlistWatchdog.observeField("fire", "onPlaylistWatchdog")
+    m.playlistHost = ""
+    startGuides()
+    loadPlaylist()
+end sub
+
+' The 15-minute tick: the playlist when stale; the guides now if no playlist load started, else after it.
+sub onRefreshTick()
+    refreshPlaylistIfStale()
+    if m.playlistTask = invalid then refreshGuideIfDue()
+end sub
+
+' The timer's check, and (step 12) the guide's when it opens: a load when there are no channels or the last load
+' is more than 10 minutes old (Refresh.isDue, on UpTime, which no clock change moves).
+sub refreshPlaylistIfStale()
+    if m.channels.Count() = 0 or Refresh.isDue(m.lastPlaylistLoad, UpTime(0), Refresh.playlistMaxAgeSeconds)
+        loadPlaylist()
+    end if
+end sub
+
+' One load at a time (MMTVL skips a refresh while one runs). Without a playlist URL there's nothing to load.
+sub loadPlaylist()
+    if m.playlistTask <> invalid then return
+    url = m.store.source
+    if url = ""
+        ' QA-1: the field too, for the screens that read it.
+        m.top.playlistStatus = "No Live TV source yet"
+        showPlaylistStatus(m.top.playlistStatus)
+        return
+    end if
+    m.playlistHost = Log.host(url)
+    if m.channels.Count() = 0 then showPlaylistStatus("Loading channels…")
+    m.playlistTask = CreateObject("roSGNode", "PlaylistTask")
+    m.playlistTask.playlistURL = url
+    m.playlistTask.prefs = m.store.prefs
+    m.playlistTask.observeField("result", "onPlaylistResult")
+    m.playlistTask.control = "run"
+    m.playlistWatchdog.control = "start"
+end sub
+
+' The task didn't answer in time: drop it (the next refresh may start another) and say so, with the host only.
+sub onPlaylistWatchdog()
+    task = m.playlistTask
+    if task = invalid then return
+    task.unobserveField("result")
+    task.control = "stop"
+    m.playlistTask = invalid
+    Log.error("IPTV", "Playlist from " + m.playlistHost + " failed: no answer from the loader")
+    m.top.playlistStatus = Log.withHost("Couldn't load the playlist", m.playlistHost)
+    showPlaylistStatus(m.top.playlistStatus)
+end sub
+
+sub onPlaylistResult()
+    task = m.playlistTask
+    if task = invalid then return
+    task.unobserveField("result")
+    m.playlistTask = invalid
+    m.playlistWatchdog.control = "stop"
+    result = task.result
+    if type(result) <> "roAssociativeArray" then return
+    if result.ok = true
+        m.channels = result.channels
+        ' Security L-5 of step 9: made by PlaylistTask, off the render thread.
+        m.guideChannelFields = result.matchFields
+        m.guideState.channelsKey = result.channelsKey
+        m.lastPlaylistLoad = UpTime(0)
+        m.top.lineup = result.lineup
+        m.top.playlistGuideURLs = result.guideURLs
+        m.top.playlistStatus = ""
+        loaded = m.channels.Count().ToStr() + " channels"
+        if result.host <> "" then loaded += " from " + result.host
+        showPlaylistStatus(loaded)
+    else
+        ' The last channel list stays (MMTVL keeps playlistChannels on a failed refresh).
+        m.top.playlistStatus = result.status
+        showPlaylistStatus(result.status)
+    end if
+    ' As MMTVL's refreshIfStale: the channels first, then the guides (with the last channels after a failure).
+    refreshGuideIfDue()
+end sub
+
+' M12 step 9: the guides. m.guideState is GuideSources.isRunDue's state: lastKey, fetchedAt, failures and
+' lastChannelsKey come from the last run that answered (all invalid until then, so the first playlist load starts a
+' run, which reuses fresh cachefs: files: a relaunch doesn't download them again); channelsKey is the current
+' channel set's hash and m.guideChannelFields the fields the task matches (both from PlaylistTask), channelRunAt
+' when a run last started for a channel change. Times are wall-clock seconds. No URL is kept in m.guideState.
+sub startGuides()
+    m.guideTask = invalid
+    ' Security M-3: a task the watchdog gave up on, until its state reads "stop" or "done".
+    m.abandonedGuideTask = invalid
+    m.abandonedSince = invalid
+    m.abandonedLogged = false
+    m.guideChannelFields = []
+    m.guideState = { lastKey: invalid, fetchedAt: invalid, failures: invalid, channelsKey: invalid, lastChannelsKey: invalid, channelRunAt: invalid, failedRunAt: invalid }
+    m.guideRunChannelsKey = invalid
+    m.guideWatchdog = CreateObject("roSGNode", "Timer")
+    m.guideWatchdog.duration = GuideSources.watchdogSeconds
+    m.guideWatchdog.repeat = false
+    m.guideWatchdog.observeField("fire", "onGuideWatchdog")
+end sub
+
+' One guide run at a time, only with channels to match (as MMTVL), when GuideSources.isRunDue says so: no run yet,
+' the sources changed, a guide is due (12 h) and not waiting after a failure, or the channel set changed (at most
+' once an hour; after a failed run, "first" and "channels" wait an hour). Never while a task the watchdog gave up
+' on is still alive, for at most twice the watchdog (then that task is let go, so a stuck one can't block guide runs
+' until a relaunch). Every run reads all guides (from cachefs: where fresh). The URLs stay in this function's
+' locals and the task's playlistGuideURLs field.
+sub refreshGuideIfDue()
+    if m.guideTask <> invalid then return
+    if m.abandonedGuideTask <> invalid
+        if isFinishedTask(m.abandonedGuideTask)
+            releaseAbandonedGuideTask()
+        else if UpTime(0) - m.abandonedSince > 2 * GuideSources.watchdogSeconds
+            Log.warn("Guide", "The old guide task still hasn't stopped; no longer waiting for it")
+            releaseAbandonedGuideTask()
+        else
+            if not m.abandonedLogged
+                m.abandonedLogged = true
+                Log.warn("Guide", "Waiting for the old guide task to stop")
+            end if
+            return
+        end if
+    end if
+    if m.channels.Count() = 0 then return
+    urls = m.top.playlistGuideURLs
+    if type(urls) <> "roArray" then urls = []
+    sources = GuideSources.chooseSources(m.store.guides, urls, m.store.settings.usePlaylistGuide, m.store.source)
+    now = CreateObject("roDateTime").AsSeconds()
+    verdict = GuideSources.isRunDue(sources, m.guideState, now)
+    if not verdict.due then return
+    if verdict.reason = "channels" then m.guideState.channelRunAt = now
+    Log.info("Guide", "Reading the guides (" + verdict.reason + ")")
+    m.guideRunChannelsKey = m.guideState.channelsKey
+    task = CreateObject("roSGNode", "GuideTask")
+    task.channels = m.guideChannelFields
+    ' QA-M1: the url-tvg list goes in the task's own field, set just before it runs (no getScene() in the task).
+    task.playlistGuideURLs = urls
+    task.expectedGuides = sources.Count()
+    task.observeField("result", "onGuideResult")
+    m.guideTask = task
+    task.control = "run"
+    m.guideWatchdog.control = "start"
+end sub
+
+function isFinishedTask(task as object) as boolean
+    state = LCase(task.state)
+    return state = "stop" or state = "done"
+end function
+
+' The task didn't answer in time (security M-3): ask it to give up, keep the guide there is, and start no other
+' run until its state reads "stop" or "done".
+sub onGuideWatchdog()
+    task = m.guideTask
+    if task = invalid then return
+    task.unobserveField("result")
+    task.cancel = true
+    task.control = "stop"
+    task.playlistGuideURLs = []
+    m.guideTask = invalid
+    m.guideState.failedRunAt = CreateObject("roDateTime").AsSeconds()
+    Log.error("Guide", "No answer from the guide task; keeping the last guide")
+    if isFinishedTask(task) then return
+    m.abandonedGuideTask = task
+    m.abandonedSince = UpTime(0)
+    m.abandonedLogged = false
+    task.observeField("state", "onAbandonedGuideTaskState")
+end sub
+
+sub onAbandonedGuideTaskState()
+    task = m.abandonedGuideTask
+    if task = invalid then return
+    if not isFinishedTask(task) then return
+    releaseAbandonedGuideTask()
+    refreshGuideIfDue()
+end sub
+
+sub releaseAbandonedGuideTask()
+    m.abandonedGuideTask.unobserveField("state")
+    m.abandonedGuideTask = invalid
+end sub
+
+' A run that answered replaces the statuses, and its task becomes the programmes' holder (guideHolder; the
+' previous holder is let go). A failed one ({ ok: false }: a crash or a cancel) keeps them, and records the failed
+' run's time (GuideSources.isRunDue's failedRunAt), so a run that keeps failing isn't started at every tick.
+sub onGuideResult()
+    task = m.guideTask
+    if task = invalid then return
+    task.unobserveField("result")
+    m.guideTask = invalid
+    m.guideWatchdog.control = "stop"
+    task.playlistGuideURLs = []
+    result = task.result
+    ok = false
+    if type(result) = "roAssociativeArray" then ok = result.ok = true
+    if not ok
+        m.guideState.failedRunAt = CreateObject("roDateTime").AsSeconds()
+        Log.warn("Guide", "The guide run failed; keeping the last guide")
+        return
+    end if
+    m.guideState.failedRunAt = invalid
+    m.top.guideHolder = task
+    m.top.guideStatuses = result.statuses
+    m.top.guideNote = result.note
+    m.guideState.fetchedAt = result.fetchedAt
+    m.guideState.failures = result.failures
+    m.guideState.lastKey = result.sourcesKey
+    m.guideState.lastChannelsKey = m.guideRunChannelsKey
+    m.top.guideRevision = m.top.guideRevision + 1
+end sub
+
+sub showPlaylistStatus(text as string)
+    m.top.findNode("status").text = text
 end sub
 
 ' "Version <major>.<minor> Build <build>", from the manifest.

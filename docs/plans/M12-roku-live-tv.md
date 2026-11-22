@@ -9,9 +9,9 @@
 
 ## Next session starts here
 
-- **Phase 0:** steps 2 and 3 are done, on branch `m12-phase0`, PR open. Steps 1 and 4 wait for the remote tester's Roku. The probe build is `cd roku && npm run build` → `roku/out/mmtvl-live-tv.zip`. **Ask the user before sending it.**
-- **Next: Phase 1** on branch `m12-phase1`, cut from `m12-phase0`, or from `master` once that PR is merged. Step 5 (parity fixtures, Swift), then steps 6–8, all testable here with `npm run test:local`. Step 9 depends on step 4's inflate decision: build it with inflate behind a capability flag until then.
-- Gates for every Roku step: `cd roku && npm run build && npm run lint && npm run test:local`. No simulator runs with network access.
+- **Phase 0 (PR #1)** and **phase 1 (PR #2, stacked on PR #1)** are done off-device. Steps 1, 4 and every device check wait for the remote tester's Roku. The probe build is `cd roku && npm run build` → `roku/out/mmtvl-live-tv.zip`. **Ask the user before sending it.**
+- **Next: Phase 2 (UI).** Step 10 is `[designer]` in the user's pen.dev, and the user picks a frame for each screen before steps 11–13. Phase 3's step 14 (migration) needs no device until step 15.
+- Gates for every Roku step: `cd roku && npm run build && npm run lint && npm run test:local` (264 passed at the end of phase 1), plus `npm run build:release`. No simulator runs with network access. Use a separate git worktree for parallel steps (`git worktree add -b m12-stepN .claude/worktrees/stepN <commit>`); the built-in isolation started from the wrong commit.
 
 ## Goal
 
@@ -295,26 +295,26 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
 
 ### Phase 1 — data and logic
 
-- [ ] **5. Parity fixtures** `[implementer]`, files: `roku/tests/fixtures/{playlist.m3u, channels.golden.json, guide-a.xml, guide-b.xml, matches.golden.json, overrides.json}`, `MMTVLTests/RokuParityTests.swift`
+- [x] **5. Parity fixtures** `[implementer]`, files: `roku/tests/fixtures/{playlist.m3u, channels.golden.json, guide-a.xml, guide-b.xml, matches.golden.json, overrides.json}`, `MMTVLTests/RokuParityTests.swift`
   - Hand-written fixtures, with no real URLs or provider names, covering:
     - the M3UParserTests and ChannelListTests cases: BOM, CRLF, `#EXTGRP`, VOD filtering, duplicate ids `#2`, `-H`/`-A` feeds, missing names;
     - EPGMatcherTests' rules: override, `""`, tvg-id, normalized names, guide priority.
   - `RokuParityTests` (Swift Testing) loads the fixtures through `#filePath`, runs `M3UParser`/`ChannelList.make`/`EPGMatcher`, and `#expect`s equality with the golden JSON. This keeps MMTVL and the Roku app in step.
   - Done when: `xcodebuild … test -only-testing:MMTVLTests/RokuParityTests` passes and the full MMTVL suite passes (quote the result line).
-- [ ] **6. M3U and channels** `[implementer]`, files: `roku/source/lib/M3U.bs`, `roku/tests/M3UTests.bs`
+- [x] **6. M3U and channels** `[implementer]`, files: `roku/source/lib/M3U.bs`, `roku/tests/M3UTests.bs`
   - A port of `M3UParser.parse` and `ChannelList.make`/`feedName` (rules in *Research*).
   - Done when: `M3UTests` reproduce `channels.golden.json` exactly, plus the M3UParserTests cases as Rooibos tests (12).
-- [ ] **7. Settings store and capabilities** `[implementer]`, files: `roku/source/lib/SettingsStore.bs`, `Capabilities.bs`, tests
+- [x] **7. Settings store and capabilities** `[implementer]`, files: `roku/source/lib/SettingsStore.bs`, `Capabilities.bs`, tests
   - L5 and L7. Defaults equal MMTVL's (`channelUpMovesUpList` true, and so on). The registry size check works as L5 says.
   - Done when: tests cover round-trips, defaults for missing keys, a corrupt value reading as the default, and the low-space refusal (with a fake space function).
-- [ ] **8. Playlist and lineup** `[implementer]`, files: `roku/components/tasks/PlaylistTask.*`, `roku/source/lib/Lineup.bs`, tests
+- [x] **8. Playlist and lineup** `[implementer]`, files: `roku/components/tasks/PlaylistTask.*`, `roku/source/lib/Lineup.bs`, tests
   - Fetch with the CA bundle (and http), at most 4 MB.
   - The host is logged as MMTVL does: "Loaded N channels from <host>".
   - On failure, keep the last channel list in memory and show "Couldn't load the playlist (<host>)".
   - Refresh at launch, every 15 minutes, and when the guide opens if older than 10 minutes.
   - `Lineup.build`: the groups in MMTVL's order (Favorites with live team games on top once step 18 lands; until then, saved favorites), hidden channels and groups removed, All Channels.
   - Done when: `LineupTests` mirror the ChannelLineupTests cases (16), and with a device, the console shows the load line with only the host.
-- [ ] **9. Guide pipeline** `[implementer]`, files: `roku/components/tasks/GuideTask.*`, `roku/source/lib/{XMLTVScan,XMLTVDate,EPGMatcher,Inflate}.bs`, tests
+- [x] **9. Guide pipeline** `[implementer]`, files: `roku/components/tasks/GuideTask.*`, `roku/source/lib/{XMLTVScan,XMLTVDate,EPGMatcher,Inflate}.bs`, tests
   - D55 as decided in step 4. Up to 6 guides plus the playlist's `url-tvg` rule (`usePlaylistGuide`).
   - Per guide, the status (OK, N channels matched / Can't read .gz on this Roku / Too large for this Roku / Failed: <host>) is kept for Settings → Guides.
   - Memory guard: stop a guide when `GetChannelAvailableMemory` drops under 15 % of the limit, and mark it "Too large for this Roku".
@@ -485,6 +485,7 @@ Steps 4, 15 and 23 on the devices (three device sessions: probes, build A, build
 | ECP launch blocked under Limited | Probe i | The script tells the user to set Control by mobile apps to Enabled for the import, then back. |
 | Roku disables dev mode | The installer page is gone | The app has no store path; out of our hands. |
 | MMTVL's matching changes later | `RokuParityTests` fails | Update the golden file and the Roku port together. |
+| A public host the playlist names (a `url-tvg` guide, a stream, an HLS sub-resource) redirects the Roku to loopback, ECP or a LAN device. `roUrlTransfer` follows redirects itself and the `Video` node fetches HLS sub-resources itself, so `URLPolicy` judges only the first URL, and MMTVL's relay-level hop checks (D39) can't be matched | Security review of step 8 (M-1, 2026-11-18) | **Accepted residual: a blind GET only** (ECP's state-changing commands are POST). After each fetch, `roUrlEvent.GetTargetIpAddress()` is checked with `URLPolicy.allowsPeer`, and the body is discarded when a public chain ended on an internal address (whether it reports the last hop is a device check). Use the Roku on a trusted network. |
 | Developer mode exposes the app to the LAN: the BrightScript console on port 8085 has no authentication (Ctrl-C breaks into the debugger, where the registry can be read), and dev-mode ECP queries may show node fields | Security review of step 3 (M-1, 2026-11-18); check `curl http://<roku>:8060/query/app-ui` and port 8085 on the first device session | Inherent to sideloading. Use the Roku on a trusted network only (README and tester instructions say so). The probe build erases typed URLs when Probes closes. The app never puts a URL in a node field it doesn't need, and the risk is re-assessed in step 24. |
 
 ## Deviations & questions
@@ -506,3 +507,70 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
 - **2026-11-18, step 3, for step 9: display-name case.** Step 3's `XMLTVScan` lowercases display-names, as *Research* says, but MMTVL's `XMLTVParser.add` keeps names as written, de-duplicated exactly. So "ESPN" and "espn" stay two names when ids merge. Matching folds case either way. Step 9 follows MMTVL, and the parity fixtures decide.
 - **2026-11-18, step 3 (done; QA PASS, security review: 1 medium + lows, all fixed or carried).** Built as the deviations above say: the Probes screen (DEBUG only, OK or `*` on the main scene) with on-screen results, a details page and a summary code. Typed entries go in registry section `mmtvl-probe` and are erased when Run all ends or the screen closes, and a release build deletes that section at launch. The own guide is the typed one, else the playlist's `url-tvg` (`src=typed|tvg|-`). `npm run build:release` (`bsconfig.release.json`, DEBUG=false) checks itself for probe code. `source/lib/Inflate.bs` checks ISIZE, not CRC-32 (too slow per byte in BrightScript; add `GetCRC32` per piece if step 4 keeps inflate), and `XMLTVScan.bs` exists in its first version. `test:local`: 40 passed, 0 failed. Fixes: QA Q1–Q4 (raw memory-call values with types in h, a "guard inactive" note, `xmltv_ns` empty parts as in Swift, a permanent 256 KB inflate test) and security M-1, L-1, L-3, L-4, L-6, L-7. Accepted: L-5 (dotless names pass `safeText` in error text only) and L-8 ("US2" is a guide file name, already in the plans).
   - **Not verified (device):** everything the probes measure; the units of the `ifAppMemoryMonitor` calls; `ReadFile`/`AppendFile` with offsets; whether `cachefs:` holds 77 MB; `roDataGramSocket` broadcast; `StandardKeyboardDialog`; whether `ToAsciiString` decodes UTF-8; whether a stopped Task keeps running.
+- **2026-11-18, step 5 (done; QA PASS).** `RokuParityTests`: 5 tests. Full suite: "2091 tests in 186 suites passed". Fixtures: `playlist.m3u` (43 entries, 36 channels, BOM then CRLF then LF, kept by `roku/tests/fixtures/.gitattributes`), `guide-a.xml`, `guide-b.xml`, `overrides.json`. Goldens, Unix seconds UTC with explicit nulls:
+  - `channels.golden.json`: `guideURLs`, every parsed `entries` item including VOD, `feedNames`, and `channels`.
+  - `matches.golden.json`: channel id → `{guide, file, epgID}` or null.
+  - `programmes.golden.json` (added for step 9): per guide, `wantedIDs`, `channels` and `programmes`.
+
+  Regenerate with `TEST_RUNNER_MMTVL_WRITE_ROKU_GOLDENS=1 xcodebuild … -only-testing:MMTVLTests/RokuParityTests`. Settled for the ports:
+  - display-names keep their case; only a merge de-duplicates them, and repeats within one `<channel>` stay;
+  - the override key is the shown name, after `feedName`;
+  - lowercasing is Unicode (step 6 must check BrightScript's `LCase` on non-ASCII).
+
+  Carried: the `antenna:` override key goes to step 21. A malformed XMLTV file throwing needs a plain test in step 9, since a golden can't express it.
+- **2026-11-18, step 6 (done; QA PASS).** `source/lib/M3U.bs` (`parse`, `makeChannels`, `feedName`, `groups`, `readFile`) reproduces `channels.golden.json` exactly. All 12 M3UParserTests and 6 ChannelListTests cases are in `tests/local/M3U.test.bs`. New file `source/lib/Unicode.bs` (`Unicode.lower`, `trim`, `isExtend`); any component that loads `M3U.bs` also needs it.
+  - **Lowercasing:** whether Roku's `LCase` handles non-ASCII is undocumented, so ids lowercase through an explicit table that matches Swift for U+00C0–U+052F (generated, tested over the whole range).
+  - **URLs are kept as written**, with no percent-encoding or punycode. `M3U.isValidURL` approximates which URLs Swift's `URL(string:)` refuses; ids don't depend on it.
+  - **Fixtures:** the local build stages `tests/fixtures/**` as `pkg:/fixtures/` (`brs-cli -r`), and the app zips have none.
+  - **Moved to step 8:** `guideGroups` and `channels(in:)` from ChannelListTests.
+  - **Device checks:** what `LCase`, `ReadAsciiFile` (BOM, UTF-8), `Len`/`Mid` and `roRegex` actually do, and parse time on the stick. brs-node: 5,000 entries take 0.7 s to parse plus 0.5 s to build channels.
+- **2026-11-18, step 7 (done; QA PASS, majors fixed).** `source/lib/SettingsStore.bs` (L5) and `Capabilities.bs` (L7), with 85 local tests at that point.
+  - **The registry is injected:** `read`, `write`, `delete`, `flush`, `spaceAvailable`.
+  - **QA fixes:** every save checks the value's size against the space left. A save that won't fit gets a "too large" message and writes nothing, and overrides keep 4 KB free. `save` and `replaceAll` are all or nothing, putting the old values back on a failed write or flush. Override keys are lowercased, and on a collision the last in sorted order wins.
+  - **Deviations:** `lastChannelID` and `lastGroup` use `""` for none. Sizes are estimated uncompressed, which is conservative against the 32 KB compressed budget; revisit with real `GetSpaceAvailable` numbers. The memory-limit unit is guessed from its magnitude, provisionally, until step 4. The thresholds are named constants.
+  - **bsc gotcha:** inside a namespace, a local variable named like a function of that namespace is rewritten to the function. Avoid such names.
+- **2026-11-18, step 8, decisions on the implementer's questions:** stream URLs are checked by step 11's player **as MMTVL does**: http(s), and the entry's own host is allowed whatever it is. `GuideTask` (step 9) checks typed guides with no referrer and `url-tvg` guides with the playlist as referrer, then checks the peer address with `URLPolicy.allowsPeer`. Step 12's guide calls `refreshPlaylistIfStale()` when it opens. **Security L-3 is open:** the root scene's `lineup` and `playlistGuideURLs` fields hold token-bearing URLs. Decide after the first device session checks whether dev-mode ECP `/query/app-ui` or `/query/sgnodes` shows node fields; if it does, keep URLs in `m` and expose only ids.
+- **2026-11-18, step 8 (done; QA PASS, security review: 1 medium (accepted residual, Risks table) and 7 lows, fixed except L-3 and L-6).** `test:local`: 155 passed.
+  - **New `lib` code:** `Lineup.bs`, a port of `ChannelLineup`, `guideGroups` and `channels(in:)`, with all 16 ChannelLineupTests cases plus 2 ChannelListTests cases. `Lineup.build(channels, prefs, liveTeamChannelIDs)` takes the live team channel ids; upcoming games wait for step 18. Antenna channels are those with `source: "antenna"` and a `guideNumber` (step 21).
+  - **`URLPolicy.bs`:**
+    - `allows(url, referrer)` judges the first URL. With a referrer, the host must be plain ASCII with no empty label, and a host whose last label is a number must read as IPv4 (WHATWG's rule, narrower than review L-2 as written, so `cafe.be` passes).
+    - `allowsStream(url)` accepts any http(s) host, as MMTVL does.
+    - `allowsPeer(ip, publicChain)` judges the address a fetch actually reached.
+    - `allowsInChain` is the full MMTVL rule, kept for if redirect hops ever become visible.
+  - **`Refresh.bs`:** `isDue` and the cadence and timeout constants.
+  - **`PlaylistTask`:** http(s) only, the CA bundle, a 4 MB cap, a 30 s timeout, try/catch around the body, and host-only logs. It logs whether `GetTargetIpAddress` reported a peer (a device check). Its `url-tvg` guides are filtered with the playlist as referrer.
+  - **MainScene:** loads the settings registry, loads the playlist at launch and every 15 min (`refreshPlaylistIfStale()`), has a 60 s watchdog, and keeps the last list when a load fails.
+  - **`Log.host`** returns "" for an authority with a backslash, space or control character.
+  - **Device checks:**
+    - the "Loaded N channels from <host>" line;
+    - whether the 4 MB cap applies while downloading (does `tmp:` grow?);
+    - what `GetTargetIpAddress` reports, and for which hop;
+    - what `GetIPAddrs` returns;
+    - that the watchdog and the 15-minute timer fire;
+    - that try/catch works in a Task thread;
+    - lineup build time on the stick.
+- **2026-11-18, step 9 (done; QA PASS ×3, two security reviews with all mediums fixed).**
+  - **Pure logic:** `XMLTVScan` at parity with MMTVL, `XMLTVDate`, `EPGMatcher` (with a Foundation fold table generated by `roku/tools/gen-epg-fold.swift`), and `GuidePipeline`, which matches across all guides and keeps only the winners' programmes. It reproduces `matches.golden.json` and `programmes.golden.json` exactly.
+  - **Task side:** `GuideSources.bs` (source choice as MMTVL's, cache names by SHA-1, `.time` and `.fail` in wall-clock seconds), `GuideFetch.bs` (limits, memory guard, status rows), `FieldMove.bs`, `components/tasks/GuideTask.*`, and the MainScene wiring.
+  - **Caps and limits (provisional until step 4):**
+    - downloads: 120 MB per file and 300 MB of cachefs per run;
+    - time: 180 s per download, 600 s to read the guides;
+    - memory: stop at 15 % left, or when held data × 2 exceeds what's left;
+    - text: titles 400 UTF-16 units, desc 1,000, display-names 200;
+    - programmes: 300 per channel; in total 60,000 (High) or 25,000 (Low), shown as "OK, N channels matched (guide shortened)".
+  - **Retries:** a failed guide waits 1 h; a refused or too-large one waits 12 h. A changed channel set reruns matching at most hourly, and a failed run backs off 1 h.
+  - **Hand-off:** the scene keeps the finished task as `guideHolder`. Step 12 reads `guideHolder.guideData` once per `guideRevision`.
+  - **URL checks:** typed guides `allows(url)`, `url-tvg` guides `allows(url, playlistURL)`, then `allowsPeer` on the reported peer. `EnableEncodings` stays off.
+  - **`Log.host`** returns "" for scheme-less, over-long or non-ASCII hosts, and `Log.withHost` drops the "()".
+  - **For step 13:** Settings must refresh the scene's `m.store`, or call `refreshGuideIfDue()`, after saving guides or `usePlaylistGuide`. Otherwise the scene and the task disagree on the source set.
+  - **Noted, no change:** security L-7 (a crash backtrace on port 8085 shows locals; re-check in step 24) and L-8 (unsalted SHA-1 of guide URLs in file names; readable only with dev-mode access).
+  - **Device checks:**
+    - FANDUEL1- and US2-sized timings;
+    - cachefs subfolders, `Rename`, and whether files survive a reboot;
+    - `GetTargetIpAddress`;
+    - `GetChannelAvailableMemory` units against the guard;
+    - `MoveIntoField` on OS 15;
+    - a Task stopping on `control="stop"`, and seeing `cancel`;
+    - how `Len`/`Asc` treat non-BMP text;
+    - the copy cost of reading `guideData`;
+    - the watchdogs and back-offs in the log.
