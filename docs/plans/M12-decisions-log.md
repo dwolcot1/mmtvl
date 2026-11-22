@@ -584,7 +584,7 @@ Each entry has:
   - **Transitive changes:** `jimp` and every `@jimp/*` 1.6.1 → 1.7.0, `bmp-ts` 1.0.9 → 1.1.0, `zod` 3.25.76 → 4.6.7 (jimp 1.7.0's), `decode-uri-component` removed, `source-map-resolve` 0.5.3 → 0.5.0 (deprecated; npm's choice).
   - All four gates pass after it.
 - **Why:** The plan's step 24 asked for `npm audit`, and step 2 accepted 43 high as dev-only. The fix needed no direct version change.
-- **Explained:** The build tools' own dependencies were updated to versions without the known problems. Nothing from npm ships in the Roku app.
+- **Explained:** The build tools' own dependencies were updated to versions without the known problems. None of these ships in the Roku app (the one npm package that does, bslib, isn't among them: D61).
 - **Pros:** A clean audit, so a new advisory stands out.
 - **Cons:**
   - `zod` is a major version newer under brs-node's jimp. Only brs-node's image handling uses jimp, and no local test exercises it.
@@ -601,3 +601,22 @@ Each entry has:
   - A LAN IPv4 address on screen (and in photos of it).
   - **Unverified:** the 8-row panel at 720p (step 23).
 - **To reverse:** Drop the first row in `summaryRows` and its third argument.
+
+### D61. bslib's MIT notice ships inside the package, and in the README
+- **Step:** 25 (security N-5 of step 24). **Decision (Recommended):** `roku/licenses/bslib.txt` holds the MIT license of `@rokucommunity/bslib` 0.1.1 (© 2021 RokuCommunity), with a line saying it covers `source/bslib.brs`. `"licenses/**/*"` is in the `files` of `bsconfig.json`, `bsconfig.test.json` and `bsconfig.release.json`, so every zip carries it at `licenses/bslib.txt`. `roku/README.md` (Third-party code) and `CLAUDE.md` (Roku (M12)) name it too. The plan's L1, step 2's entry, step 24's text and D59, which said nothing from npm ships, are corrected.
+- **Why:** BrighterScript's compiler adds bslib to every build as `source/bslib.brs` (1,416 bytes), so the app does ship npm code, and MIT asks for its notice "in all copies or substantial portions of the Software". A notice inside the package travels with every copy of the zip; a README alone stays in the repo.
+- **Explained:** A small text file with bslib's license now rides along in the app. It is never shown on screen.
+- **Checked:** `npm run build:release` went from 126 to 127 files ("Release build: 127 files, no probe code, no DEBUG memory line"), and `unzip -l` lists `licenses/bslib.txt` (1,345 bytes) in `out/mmtvl-live-tv.zip` and `out/mmtvl-live-tv-release.zip`. The other gates pass ("LOCAL TESTS: 742 passed, 0 failed").
+- **Pros:** Meets the license for every copy of the app, at the cost of 1.3 KB in the package, with no code change.
+- **Cons:**
+  - Nothing checks that the notice matches bslib's version: a bslib update (with a BrighterScript update) needs the file changed by hand. (That the notice is there, `build:release` checks since D62.)
+  - The notice isn't reachable from the app's UI (a Licenses page like MMTVL's would be new UI).
+  - The test zip also holds the Rooibos framework (MIT), with no notice in it; that zip goes only to a developer's own Roku.
+- **To reverse:** Delete `roku/licenses/` and the `"licenses/**/*"` lines; keep the README's notice.
+
+### D62. The release build checks for bslib's notice; no Rooibos notice or `deploy:release`; a pointer in the root README
+- **Step:** 25 (the implementer's three questions). **Decision (Recommended):** `npm run build:release` fails when `licenses/bslib.txt` is missing from the release build, like the team catalogs. The test zip gets no Rooibos notice and no `deploy:release` script is added. The root `README.md` gets one line pointing at `roku/README.md`.
+- **Why:** The notice is a license duty, so a missing one should stop the build that gets installed. The test zip is never handed out (it runs on the dev Roku only), and a release build goes on through the installer page, as the README says.
+- **Explained:** The check is one more entry in the list of files a release build must hold.
+- **Pros:** The notice can't silently drop out; the repo's front page says the Roku app exists. **Cons:** The check proves the file is there, not that it matches bslib's version.
+- **To reverse:** Remove `licenses/bslib.txt` from the list in `roku/tools/roku.mjs`; delete the README line.

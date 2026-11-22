@@ -14,8 +14,14 @@
   - Every decision taken without the user is in **[M12-decisions-log.md](M12-decisions-log.md)**, with the reason and pros and cons.
   - Git: after QA, each step is committed, scanned with gitleaks and pushed. Each phase gets a PR when it's done, stacked on the one before. Once phase 6's automated steps are done, every gate runs again and the PRs are squash-merged in order (#1, #2, #4, #5, then phases 4–6), each rebased onto `master` first.
   - Device steps (1, 4, 15, 23) stay open for the user.
-- **Branches stack:** `m12-phase0` (PR #1) → `m12-phase1` (#2) → `m12-step13` (#4, phase 2) → `m12-step14` (#5, phase 3) → `m12-step16` → `m12-step17` → `m12-step18` → `m12-step19` → `m12-step20` (#6, phase 4: base `m12-step14`) → `m12-step21` (#7, phase 5: base `m12-step20`) → **`m12-step22`** → `m12-step24` (phase 6 is steps 22, 24 and 25 on stacked branches; its PR opens after step 25, base `m12-step21`). Worktree `.claude/worktrees/step9`. Done and QA-passed: steps 2, 3, 5–14 and 16–21; step 24 is done (no findings above low; the lows are in its entry); step 22 is built and QA-passed, its done-when (a 2-hour stick run under 80 % of `GetChannelMemoryLimit`) waits for step 23. `test:local`: 742 passed; script tests 40; MMTVL full suite 2096.
-- **Next: step 25 (docs)**, with the step 24 items handed to it (N-5 bslib's notice and the "nothing from npm ships" wording, N-7 the registry's plain-text URLs and how to wipe them, the .pen provider-name check), then the phase 6 PR, the final gates and the squash-merges in order. Steps 21 and 22 are built with every unprobed path gated or guarded (U1, D21–D55); their device checks are in their Deviations entries. Pencil: read frames with `execute` on the file's `uri`, read-only, and never save from this session.
+- **Branches stack:** `m12-phase0` (PR #1) → `m12-phase1` (#2) → `m12-step13` (#4, phase 2) → `m12-step14` (#5, phase 3) → `m12-step16` → `m12-step17` → `m12-step18` → `m12-step19` → `m12-step20` (#6, phase 4: base `m12-step14`) → `m12-step21` (#7, phase 5: base `m12-step20`) → `m12-step22` → `m12-step24` → **`m12-step25`** (phase 6 is steps 22, 24 and 25 on stacked branches; its PR opens now, base `m12-step21`). Worktree `.claude/worktrees/step9`. Done and QA-passed: steps 2, 3, 5–14 and 16–21; step 24 is done (no findings above low; the lows are in its entry); step 25 is done (docs, D61); step 22 is built and QA-passed, its done-when (a 2-hour stick run under 80 % of `GetChannelMemoryLimit`) waits for step 23. `test:local`: 742 passed; release build 127 files; script tests 40; MMTVL full suite 2096.
+- **Next (automated run): the phase 6 PR** (`m12-step25`, base `m12-step21`; steps 22, 24 and 25), then **every gate again** on the top of the stack (`cd roku && npm run build && npm run lint && npm run test:local && npm run build:release`, `python3 -I scripts/test_roku_export_settings.py`, the MMTVL full suite, and step 24's gitleaks commands), then the **squash-merges in order** (#1, #2, #4, #5, #6, #7, then phase 6), each rebased onto `master` first. Steps 21 and 22 are built with every unprobed path gated or guarded (U1, D21–D55); their device checks are in their Deviations entries. Pencil: read frames with `execute` on the file's `uri`, read-only, and never save from this session.
+- **For the user (device steps, still open; the receiver at −75 dB, the TV and receiver off when done):**
+  - **Step 1:** a Roku (Ultra as the reference, plus a Streaming Stick or Express), developer mode, a DHCP reservation, `roku/.env`; record model, OS and Control by mobile apps here.
+  - **Step 4:** run the probe build (`npm run build` → `out/mmtvl-live-tv.zip`, or `npm run deploy`) on both, record the table, and decide .gz guides, the guide window, MPEG-2 and Multiview; then flip `AntennaConfig.bs` and the provisional limits to match.
+  - **Step 15:** device build A (the migration, zapping, guides, a 30-minute stick run, reboot, re-sideload for Q33), plus the device checks steps 2–14 list.
+  - **Step 23:** device build B (My Teams, Search, Match Guide, antenna, an hour on the stick), plus step 22's done-when (a 2-hour stick run under 80 %) and the device checks steps 16–24 list.
+  - **Not device:** look through `design/roku-live-tv.pen` for the provider's name (step 25's entry).
 - Gates for every Roku step: `cd roku && npm run build && npm run lint && npm run test:local` (264 passed at the end of phase 1), plus `npm run build:release`. No simulator runs with network access. Use a separate git worktree for parallel steps (`git worktree add -b m12-stepN .claude/worktrees/stepN <commit>`); the built-in isolation started from the wrong commit.
 
 ## Goal
@@ -213,7 +219,7 @@ scripts/roku-export-settings.py   one-time migration (L2), python3 -I, standard 
 
 ### Local decisions
 
-- **L1, tooling:** BrighterScript (`.bs`, namespaces and classes, compiled to BrightScript), `roku-deploy`, Rooibos and bslint as npm **devDependencies** in `roku/`. `package-lock.json` is committed. Nothing from npm ships in the app. The device address and password come from gitignored `roku/.env`.
+- **L1, tooling:** BrighterScript (`.bs`, namespaces and classes, compiled to BrightScript), `roku-deploy`, Rooibos and bslint as npm **devDependencies** in `roku/`. `package-lock.json` is committed. Nothing from npm ships in the app except BrighterScript's runtime, `@rokucommunity/bslib` 0.1.1 (MIT), which `bsc` adds to every build as `source/bslib.brs`, with its notice in `licenses/bslib.txt` (corrected at step 25: security N-5, D61). The device address and password come from gitignored `roku/.env`.
   - *Why:* type checks and tests with no runtime dependency.
 - **L2, migration** is a one-time script, `scripts/roku-export-settings.py` (Python standard library, run as `python3 -I`):
   1. Reads `iptv-playlist-url` and `iptv-guide-urls` with `security find-generic-password -s dev.mmtvl.launcher -a <account> -w` (macOS may ask to allow it), plus the JSON files above.
@@ -449,7 +455,7 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
   5. The stick: an hour of use without a crash, and the Settings → Device texts are right.
   - Done when: each check is ticked or its failure is recorded here.
 - [x] **24. Security review** `[security]`
-  - The whole `roku/` tree and the script: no URL, token, `DeviceAuth` or secret in logs; the import's validation; LAN-only rules for import and antenna; HTTPS certificate use; the registry contents; the npm devDependencies (versions, `npm audit`, nothing shipped); gitleaks (`scripts/gitleaks.toml`) over the branch; no provider name.
+  - The whole `roku/` tree and the script: no URL, token, `DeviceAuth` or secret in logs; the import's validation; LAN-only rules for import and antenna; HTTPS certificate use; the registry contents; the npm devDependencies (versions, `npm audit`, nothing shipped; step 24 found bslib does ship, N-5); gitleaks (`scripts/gitleaks.toml`) over the branch; no provider name.
   - gitleaks, from the repo root: the branch's commits, then the files as they are, one directory per run:
     - `gitleaks git --config scripts/gitleaks.toml --log-opts="origin/master..m12-step24" --redact --no-banner .`
     - `gitleaks dir --config scripts/gitleaks.toml --redact --no-banner roku`
@@ -457,7 +463,7 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
     - `gitleaks dir --config scripts/gitleaks.toml --redact --no-banner MMTVLTests`
     - `gitleaks dir --config scripts/gitleaks.toml --redact --no-banner docs`
   - Done when: no open findings above low, and lows are recorded here.
-- [ ] **25. Docs** `[doc]`
+- [x] **25. Docs** `[doc]`
   - A **Roku (M12)** section in `CLAUDE.md`:
     - the commands: `npm run build|lint|deploy|test|console` in `roku/`, `.env`, the migration script and its flags;
     - the layout; the registry section `mmtvl` and its keys;
@@ -512,7 +518,7 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
   - `roku/tools/roku.mjs` runs `deploy`, `test`, `console` and `test-local`, reads `roku/.env` (a one-line message and exit 1 when it's missing), and passes the password to Rooibos by environment, never argv.
   - The Rooibos build is `bsconfig.test.json` (extends `bsconfig.json`, specs staged as `source/tests`). The off-device build is `bsconfig.local.json`. Local suites are `tests/local/<Suite>.test.bs` with `namespace <Suite>Tests` and `sub test_<name>(t)`, run by `tests/local/support/LocalTest.bs`, and `npm run test:local` exits 1 on any failure. `npm run lint` covers all three projects.
   - Also: HD icon and splash variants, and `bs_const=DEBUG=true` in the manifest. **The release build must set DEBUG=false** (QA minor): owed by whichever step adds packaging; no `package` script yet.
-  - **`npm audit`: 43 high, accepted as dev-only.** zod via brs-node's jimp, picomatch (no patched release exists) and decode-uri-component. Nothing from npm ships in the app (L1). Re-check at step 24.
+  - **`npm audit`: 43 high, accepted as dev-only.** zod via brs-node's jimp, picomatch (no patched release exists) and decode-uri-component. Nothing from npm ships in the app (L1). Re-check at step 24. *(Corrected at step 25: bslib ships as `source/bslib.brs`, N-5, D61; the audit's packages are dev-only either way.)*
   - Device checks owed to the first device session: `npm run deploy` shows the scene and version, the icon and splash look right, and the Rooibos sample passes.
 - **2026-11-18, step 3 review (security L-2), carried to steps 6, 8, 9 and 21:** the app fetches whatever the playlist names: its `url-tvg` guide, and its stream URLs. Carry over the equivalent of MMTVL's `RelayURLPolicy`, so public entries never reach loopback, link-local, LAN or the Roku's own addresses.
 - **2026-11-18, step 3, for step 9: display-name case.** Step 3's `XMLTVScan` lowercases display-names, as *Research* says, but MMTVL's `XMLTVParser.add` keeps names as written, de-duplicated exactly. So "ESPN" and "espn" stay two names when ids merge. Matching folds case either way. Step 9 follows MMTVL, and the parity fixtures decide.
@@ -968,3 +974,15 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
     - `scripts/roku-export-settings.py` wasn't touched, so its tests weren't run.
   - **Counts:** `test:local` 742 passed (736 + 6); release 126 files (`JsonDepth.brs`).
   - **Device checks (step 23):** the From row at 1080p and 720p (8 rows); a tuner's `lineup.json` passing the depth scan in reasonable time on a stick; Remove Live TV Source with logos still loading (the "Live TV source changed: N waiting logos dropped" line, and no logo fetched after it).
+- **2026-11-22, step 25 (docs; done-when met).** Written against the code, not the plan: a **Roku (M12)** section in `CLAUDE.md` (plus the gates line in its Commands), a new `roku/README.md`, D54–D56 "as built", Q30–Q33 "pending" notes, the M12 row and the repo layout in the master plan, and **D61** in [M12-decisions-log.md](M12-decisions-log.md).
+  - **Done-when:** every `npm run` script the docs name exists in `roku/package.json`: `build`, `build:release`, `lint`, `test:local`, `deploy`, `test`, `console` (the plan's `build|lint|deploy|test|console` among them). The script's flags are `--roku` and `--dry-run` (`argparse`, `roku-export-settings.py:710-712`).
+  - **N-5 (D61):** `roku/licenses/bslib.txt` (bslib 0.1.1's MIT notice) is in `files` of `bsconfig.json`, `bsconfig.test.json` and `bsconfig.release.json`, so it ships in every zip. "Nothing from npm ships" is corrected in L1, step 2's entry, step 24's text and D59.
+  - **N-7:** the README and `CLAUDE.md` say the playlist and guide URLs are in the registry in plain text, unavoidably, and how to wipe them (Remove Live TV Source, Remove Guide, or delete the dev app), next to the dev-mode console on port 8085.
+  - **Where the plan and the build differ** (recorded, not changed; the docs describe the build):
+    - The layout's `package` script doesn't exist. Packaging is `build:release`, an unsigned zip that checks itself; `test:local` was added (Deviations, 2026-11-18).
+    - *Tests* lists Rooibos suites. They're `test:local` suites run by brs-node; Rooibos has only the `Log` sample (`tests/Log.spec.bs`).
+    - `npm run deploy` sideloads the **DEBUG** build (with the Probes screen). A release build goes on through the installer page; there's no `deploy:release`.
+    - Step 20 names `components/guide/MatchGuide.*`. It's built as `MatchGuideTask.*`, with the menu in `ChannelMenuView` (D16).
+  - **No app bugs found** while checking the docs.
+  - **Gates** (in `roku/`): `npm run build && npm run lint && npm run test:local && npm run build:release` → "LOCAL TESTS: 742 passed, 0 failed", "Release build: 127 files, no probe code, no DEBUG memory line" (126 + the notice). No network, simulator or Roku was used.
+  - **Human check (handed on by step 24):** the text in `design/roku-live-tv.pen` hasn't been checked for the provider's name, its domains or its Roku app's name. A `.pen` file can only be read through the Pencil MCP tools, and there's no private-terms file to grep with, so **the user should look through the frames' text** (titles, sample channel and programme names, notes frame) before the phase 6 PR merges.
