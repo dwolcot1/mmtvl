@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The full-screen player (M12 step 11, L4, D49, D51). The screen is the focused Group; its Video never has focus,
+     so every key (including *) reaches onKeyEvent, which hands it to PlayerKeys and carries out the action. Over the
+     video: the bottom gradient and the banner-role panel holding Banner A (shown on a channel change and on OK, gone
+     5 s later) and, step 11b, the timeshift bar (after a pause, resume or skip, and while paused until 15 s after the
+     last press, D51), one under the other on one panel (frame qDm9F); the behind-live badge top right while the bar
+     shows and playback is behind live; and the error panel (a Video error, or buffering for
+     PlayerSession.stallSeconds; OK retries). Zapping, Replay, the guide and
+     the channel menu are the scene's: the screen asks for them through action, and the scene sets channel.
+     Step 12: the banner's programmes and logo come from the scene (programmes: the guide screen's copy of this
+     channel's list, never the whole guide; logo: LogoTask's cached file); in the guide the Video shows in the
+     guide's preview place (preview) with no overlays; failed says when the error panel is up (Back from the guide
+     retries then, as MMTVL). Logs show the stream's host only (L6). -->
+<component name="PlayerScreen" extends="Group">
+    <interface>
+        <!-- The channel to play: PlayerSession.playerItem's { id, title, url, logo }, logo a cachefs: file or "". Each
+             set plays it (again). -->
+        <field id="channel" type="assocarray" alwaysNotify="true" onChange="onChannel" />
+        <!-- What Replay goes to (PlayerKeys.previousChannelID), "" for none. -->
+        <field id="previousChannelID" type="string" value="" />
+        <field id="channelUpMovesUpList" type="boolean" value="true" />
+        <!-- Step 12: the playing channel's programmes (GuideScreen.programmesFor, through the scene; invalid for
+             none): the banner's now and next. Set after channel and again on each new guide. -->
+        <field id="programmes" type="array" alwaysNotify="true" onChange="onProgrammes" />
+        <!-- Step 12: the channel's logo once LogoTask has cached it (a cachefs: path), after channel. -->
+        <field id="logo" type="string" alwaysNotify="true" onChange="onLogo" />
+        <!-- Step 12: true while the guide shows: the Video in the guide's preview place (guidePreviewRect), no
+             banner, bar, badge or error panel. -->
+        <field id="preview" type="boolean" value="false" onChange="onPreview" />
+        <!-- Out (step 12): the error panel is up (a Video error, a stall or a refused stream). -->
+        <field id="failed" type="boolean" value="false" />
+        <!-- To the scene: { type: "zap", step }, { type: "previousChannel", channelID }, { type: "openGuide" },
+             { type: "openChannelMenu", channelID }. -->
+        <field id="action" type="assocarray" alwaysNotify="true" />
+        <!-- "stop": stop playing and forget the channel (the scene, before something else uses the video).
+             "togglePause" (step 12, Play/Pause in the guide): pause or resume, with no overlay. "showBanner" (step 12,
+             back from the guide without a reconnect): the banner, as on a channel change. -->
+        <field id="control" type="string" alwaysNotify="true" onChange="onControl" />
+        <!-- Out: whether the timeshift bar shows (PlayerSession.visible's timeshift). -->
+        <field id="timeshiftShown" type="boolean" value="false" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Refresh.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Lineup.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/PlayerKeys.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/PlayerSession.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/BannerText.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Timeshift.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/URLPolicy.bs" />
+    <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
+    <children>
+        <Video id="video" />
+        <!-- The behind-live badge (badge_banner.9.png around "−m:ss"), top right; its own fade, as MMTVL's. -->
+        <Group id="badge" visible="false" opacity="0">
+            <Poster id="badgePanel" />
+            <Label id="badgeLabel" />
+        </Group>
+        <Group id="overlay" visible="false" opacity="0">
+            <Poster id="overlayGradient" loadDisplayMode="scaleToFill" />
+            <Group id="panelGroup">
+                <Poster id="overlayPanel" />
+                <PlayerBanner id="banner" />
+                <TimeshiftBar id="timeshiftBar" />
+            </Group>
+        </Group>
+        <ErrorPanel id="errorPanel" visible="false" />
+        <Animation id="overlayFade" repeat="false" easeFunction="linear">
+            <FloatFieldInterpolator id="overlayFadeValue" key="[0.0, 1.0]" keyValue="[0.0, 1.0]" fieldToInterp="overlay.opacity" />
+        </Animation>
+        <Animation id="badgeFade" repeat="false" easeFunction="linear">
+            <FloatFieldInterpolator id="badgeFadeValue" key="[0.0, 1.0]" keyValue="[0.0, 1.0]" fieldToInterp="badge.opacity" />
+        </Animation>
+        <!-- While the bar shows: its label, playhead and the badge read again every Timeshift.refreshSeconds. -->
+        <Timer id="timeshiftTimer" repeat="true" />
+        <Timer id="bannerTimer" repeat="false" />
+        <Timer id="barTimer" repeat="false" />
+        <Timer id="pausedTimer" repeat="false" />
+        <Timer id="stallTimer" repeat="false" />
+    </children>
+</component>

@@ -1,0 +1,36 @@
+' GuideIdle (M12 step 12, D51): the 3-minute return to the playing channel. Ported from MMTVL's LiveTVModelTests
+' guide idle cases (returnToVideo): only in Live TV, only while a channel plays; the menu closes, the guide returns.
+' Off-device.
+namespace GuideIdleTests
+
+    sub test_dueAfterTheLimit(t as object)
+        ' Theme.bs timing.guideIdleReturn (D51's 3 minutes; Theme isn't in the off-device build).
+        limit = 180
+        t.assertFalse(GuideIdle.isDue(100, 100 + 179, limit))
+        t.assertTrue(GuideIdle.isDue(100, 100 + 180, limit))
+        t.assertTrue(GuideIdle.isDue(100, 100 + 500, limit))
+        t.assertFalse(GuideIdle.isDue(invalid, 500, limit), "no input noted yet")
+        t.assertFalse(GuideIdle.isDue(100, invalid, limit))
+    end sub
+
+    sub test_theGuideReturnsToThePlayingChannel(t as object)
+        result = GuideIdle.outcome({ screen: "guide", menuOpen: false, isPlaying: true })
+        t.assertEqual(result, { closeMenu: false, returnToChannel: true, changed: true })
+        withMenu = GuideIdle.outcome({ screen: "guide", menuOpen: true, isPlaying: true })
+        t.assertEqual(withMenu, { closeMenu: true, returnToChannel: true, changed: true })
+    end sub
+
+    sub test_aMenuOverThePlayerCloses(t as object)
+        t.assertEqual(GuideIdle.outcome({ screen: "player", menuOpen: true, isPlaying: true }), { closeMenu: true, returnToChannel: false, changed: true })
+        t.assertEqual(GuideIdle.outcome({ screen: "player", menuOpen: false, isPlaying: true }), { closeMenu: false, returnToChannel: false, changed: false }, "full screen already: nothing")
+    end sub
+
+    sub test_nothingWithoutAPlayingChannelOrOutsideLiveTV(t as object)
+        none = { closeMenu: false, returnToChannel: false, changed: false }
+        t.assertEqual(GuideIdle.outcome({ screen: "guide", menuOpen: true, isPlaying: false }), none, "a failed or no channel: never starts a play")
+        t.assertEqual(GuideIdle.outcome({ screen: "settings", menuOpen: false, isPlaying: true }), none)
+        t.assertEqual(GuideIdle.outcome({ screen: "guide", menuOpen: false }), none, "isPlaying missing")
+        t.assertEqual(GuideIdle.outcome(invalid), none)
+    end sub
+
+end namespace

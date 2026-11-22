@@ -15,12 +15,22 @@ namespace CapabilitiesTests
         t.assertEqual(caps.programmeLimit, 60000)
     end sub
 
+    ' Step 13: Settings → Device shows the model's name; a Roku OS without GetModelDisplayName gives "".
+    sub test_theModelsNameForSettings(t as object)
+        caps = Capabilities.detect(CapabilitiesTests.device({}), CapabilitiesTests.monitor(1024))
+        t.assertEqual(caps.modelName, "Roku Ultra")
+        t.assertEqual(caps.model, "4850X")
+        bare = CapabilitiesTests.device({})
+        bare.Delete("GetModelDisplayName")
+        t.assertEqual(Capabilities.detect(bare, CapabilitiesTests.monitor(1024)).modelName, "")
+    end sub
+
     sub test_aLimitAtOrUnder512MBIsLow(t as object)
         caps = Capabilities.detect(CapabilitiesTests.device({}), CapabilitiesTests.monitor(512))
         t.assertEqual(caps.deviceClass, "Low")
         t.assertEqual(caps.classReason, "Low-end Roku: memory limit 512 MB")
         t.assertEqual(caps.guideHours, 24)
-        t.assertFalse(caps.logosDefault)
+        t.assertTrue(caps.logosDefault, "logos on everywhere (L7 as amended 2026-11-21)")
         t.assertEqual(caps.inflateMaxCompressedBytes, 2097152)
         t.assertEqual(caps.programmeLimit, 25000)
         t.assertEqual(Capabilities.detect(CapabilitiesTests.device({}), CapabilitiesTests.monitor(513)).deviceClass, "High")
@@ -116,8 +126,13 @@ namespace CapabilitiesTests
         low = Capabilities.detect(CapabilitiesTests.device({ ui: { name: "HD", height: 720 } }), CapabilitiesTests.monitor(256))
         t.assertEqual(low.classReason, "Low-end Roku: memory limit 256 MB, 720p UI")
         for each item in low.features
-            t.assertFalse(item.on, item.id)
-            t.assertTrue(item.reason <> "", item.id + " has a reason")
+            if item.id = "logos"
+                ' L7 as amended 2026-11-21: logos are on on every class (the user turns them off in Settings → Device).
+                t.assertEqual(item, { id: "logos", on: true, reason: "" })
+            else
+                t.assertFalse(item.on, item.id)
+                t.assertTrue(item.reason <> "", item.id + " has a reason")
+            end if
         end for
         t.assertEqual(low.features[3].reason, "This Roku can't play MPEG-2; antenna MPEG-2 channels are hidden")
     end sub
@@ -140,6 +155,7 @@ namespace CapabilitiesTests
             ac3: CapabilitiesTests.flag(options.ac3),
             version: "15.1",
             GetModel: CapabilitiesTests.fakeModel,
+            GetModelDisplayName: CapabilitiesTests.fakeModelName,
             GetOSVersion: CapabilitiesTests.fakeOSVersion,
             GetVersion: CapabilitiesTests.fakeVersion,
             GetUIResolution: CapabilitiesTests.fakeUIResolution,
@@ -160,6 +176,10 @@ namespace CapabilitiesTests
     ' The methods below run with m = the fake.
     function fakeModel() as string
         return "4850X"
+    end function
+
+    function fakeModelName() as string
+        return "Roku Ultra"
     end function
 
     function fakeOSVersion() as object

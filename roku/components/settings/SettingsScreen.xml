@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Settings (M12 step 13; frames LQwUy root, wjg72 Live TV, DEDBc a guide, B94oz Device, E2Hjc4 720p, approved
+     2026-11-21): MMTVL's Settings (D42, M7g): the gray page title, two columns on a sliding track, and the focused
+     row's description in the band at the bottom. The root list starts centred with nothing beside it and slides left
+     when a category opens; then the open page is on the right and its parent, dimmed, on the left with its opening
+     row marked. Every row is its own capsule; the focused one is white with black text. Pages and rows come from
+     SettingsPages over the scene's model (SettingsStatus.make: no URL in it, security L-3); focus and keys from
+     SettingsNav. The screen never saves: it reports what to do in action, and the scene saves through SettingsStore,
+     opens the keyboard for an address (so a typed URL never passes through this node), and sends back a new model,
+     and a message when something was refused. Every key is handled here (D49): Back on the root asks the scene to
+     close Settings. Sizes from Theme.bs (the 3-px grid), images: settings_row, settings_info_row, focus_capsule
+     (and their _tall versions for two-line rows). -->
+<component name="SettingsScreen" extends="Group">
+    <interface>
+        <!-- In: SettingsStatus.make's model. A change redraws the pages; the stack and focus stay (by row id). -->
+        <field id="model" type="assocarray" onChange="onModel" />
+        <!-- In: { kind, text }: kind "playlist" or "guide" (a refused address: its row's detail) or "band" (a refused
+             save: the band, in warningText) until the next page change; text "" clears it. -->
+        <field id="message" type="assocarray" alwaysNotify="true" onChange="onMessage" />
+        <!-- Out: what the scene does: { type: "close" } (Back on the root), the row actions SettingsPages lists
+             (toggle, editURL, moveGuide, removeGuide, toggleGroupHidden, unhideChannel, refresh, removeSource), and in
+             DEBUG builds { type: "openProbes" } (L8: three Replays on the About page). No URL is ever in it. -->
+        <field id="action" type="assocarray" alwaysNotify="true" />
+        <!-- open({ page }): "root", or "device" (the low-memory notice's Open Settings). takeFocus(): the scene's
+             focusCurrent. -->
+        <function name="open" />
+        <function name="takeFocus" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/URLPolicy.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/URLDisplay.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Refresh.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/SettingsStore.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/GuideSources.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Lineup.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/SettingsStatus.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/SettingsPages.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/SettingsNav.bs" />
+    <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
+    <children>
+        <Poster id="background" />
+        <Label id="title" />
+        <!-- The columns, created as pages open (one per stack page); slid by the animation below. -->
+        <Group id="track" />
+        <Label id="band" />
+        <Animation id="slide" repeat="false" easeFunction="outCubic">
+            <Vector2DFieldInterpolator id="slideTrack" key="[0.0, 1.0]" fieldToInterp="track.translation" />
+        </Animation>
+    </children>
+</component>

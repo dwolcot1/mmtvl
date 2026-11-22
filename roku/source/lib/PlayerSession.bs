@@ -1,0 +1,158 @@
+' The player's session logic (M12 step 11) around PlayerKeys: what opens at launch, what `state` keeps after a
+' channel plays, the item the player screen is given, and which overlays show (MMTVL's LiveTVModel banner,
+' timeshift bar and paused overlay timing). Pure functions, no nodes. Uses Lineup (displayNumber) and PlayerKeys
+' (remembered), so a component that loads this file loads Lineup.bs, PlayerKeys.bs and Refresh.bs too.
+'
+'   launchTarget(channels, lastChannelID) -> { screen: "player", channel } or { screen: "guide", channel: invalid }
+'     MMTVL's LiveTVModel.open (IPTV/LiveTVModel.swift:243-247): the last channel full screen when the playlist
+'     still has it (hidden or not, as MMTVL looks in all its channels), else the guide.
+'   stateAfterPlaying(state, id) -> SettingsStore's state with id as lastChannelID and first in recentChannelIDs
+'     (PlayerKeys.remembered: each id once, at most 10); the other fields are kept (IPTVLibrary.rememberChannel).
+'   launchRoute(target, screen) -> { show, settingsReturn, deferredID } (QA of step 13): what the first playlist
+'     answer does with launchTarget's target while screen is on (m.screen). Settings open (screen "settings", its
+'     keyboard included, which only Settings opens): the screen stays (show ""), Settings returns to the target's
+'     screen (settingsReturn), and the last channel waits for Settings to close (deferredID; "" for the guide), so
+'     nothing starts playing under Settings at launch. Otherwise show is the target's screen ("player": play
+'     target.channel), settingsReturn and deferredID "".
+'   returnFromSettings(settingsReturn, deferredID, channels, hasChannel) -> { screen, playID }: where Back on
+'     Settings' root goes. A launch channel deferred by launchRoute plays now (playID) if nothing plays and the
+'     playlist still has it; else the screen Settings came from, the guide instead of an empty player.
+'   channelByID(channels, id) -> the channel or invalid.
+'   playerItem(channel, logo) -> what PlayerScreen.channel takes: { id, title, url, logo } (logo "" for none). The
+'     title is MMTVL's banner line "<number>  <name>".
+'
+' Overlays (MMTVL's banner, showsTimeshiftBar and pausedOverlayVisible): overlays is { banner, bar, paused }, all
+' booleans. apply(overlays, event) -> { overlays, timers: { banner, bar, paused } }, each timer "start" (restart
+' it), "stop" or "" (leave it). Events:
+'   press         any key the player handles (MMTVL's handle: showPausedOverlay on every command), first
+'   showOverlays  OK: the banner and the timeshift bar
+'   hideOverlays  OK again or Back: all three off
+'   timeshift     pause, resume or a skip: the timeshift bar
+'   channel       a channel starts (a zap, Replay, retry, launch): the banner
+'   bannerTimeout, barTimeout, pausedTimeout   a timer fired: that overlay goes
+' visible(overlays, paused) -> { banner, timeshift, any }: the timeshift bar shows after a pause, resume or skip,
+' and while paused until pausedOverlayDuration after the last press (M7m L15, D51). any is PlayerKeys' overlaysShown.
+namespace PlayerSession
+
+    ' A stream that stays buffering this long shows the error panel (step 11).
+    const stallSeconds = 15
+
+    function launchTarget(channels as dynamic, lastChannelID as dynamic) as object
+        found = PlayerSession.channelByID(channels, lastChannelID)
+        if found = invalid then return { screen: "guide", channel: invalid }
+        return { screen: "player", channel: found }
+    end function
+
+    function launchRoute(target as object, screen as dynamic) as object
+        if PlayerSession.isText(screen) and screen = "settings"
+            deferredID = ""
+            if target.screen = "player" and target.channel <> invalid then deferredID = target.channel.id
+            return { show: "", settingsReturn: target.screen, deferredID: deferredID }
+        end if
+        return { show: target.screen, settingsReturn: "", deferredID: "" }
+    end function
+
+    function returnFromSettings(settingsReturn as dynamic, deferredID as dynamic, channels as dynamic, hasChannel as boolean) as object
+        target = "guide"
+        if PlayerSession.isText(settingsReturn) and settingsReturn = "player" then target = "player"
+        if target = "player" and not hasChannel
+            if PlayerSession.channelByID(channels, deferredID) <> invalid then return { screen: "player", playID: deferredID }
+            target = "guide"
+        end if
+        return { screen: target, playID: "" }
+    end function
+
+    function channelByID(channels as dynamic, id as dynamic) as dynamic
+        if LCase(type(channels)) <> "roarray" then return invalid
+        if not PlayerSession.isText(id) then return invalid
+        if id = "" then return invalid
+        for each channel in channels
+            if LCase(type(channel)) = "roassociativearray"
+                if PlayerSession.isText(channel.id) and channel.id = id then return channel
+            end if
+        end for
+        return invalid
+    end function
+
+    function stateAfterPlaying(state as dynamic, id as string) as object
+        result = {}
+        if LCase(type(state)) = "roassociativearray"
+            for each field in state
+                result[field] = state[field]
+            end for
+        end if
+        result["lastChannelID"] = id
+        result["recentChannelIDs"] = PlayerKeys.remembered(result.recentChannelIDs, id)
+        return result
+    end function
+
+    function playerItem(channel as object, logo as dynamic) as object
+        shownLogo = ""
+        if PlayerSession.isText(logo) then shownLogo = logo
+        name = ""
+        if PlayerSession.isText(channel.name) then name = channel.name
+        url = ""
+        if PlayerSession.isText(channel.url) then url = channel.url
+        return { id: channel.id, title: Lineup.displayNumber(channel) + "  " + name, url: url, logo: shownLogo }
+    end function
+
+    ' --- overlays -------------------------------------------------------------------------------------------------
+
+    function noOverlays() as object
+        return { banner: false, bar: false, paused: false }
+    end function
+
+    function apply(overlays as dynamic, event as string) as object
+        result = PlayerSession.noOverlays()
+        if LCase(type(overlays)) = "roassociativearray"
+            for each field in ["banner", "bar", "paused"]
+                if PlayerSession.isTrue(overlays[field]) then result[field] = true
+            end for
+        end if
+        timers = { banner: "", bar: "", paused: "" }
+        if event = "press"
+            result.paused = true
+            timers.paused = "start"
+        else if event = "showOverlays"
+            result.banner = true
+            result.bar = true
+            timers.banner = "start"
+            timers.bar = "start"
+        else if event = "hideOverlays"
+            result = PlayerSession.noOverlays()
+            timers = { banner: "stop", bar: "stop", paused: "stop" }
+        else if event = "timeshift"
+            result.bar = true
+            timers.bar = "start"
+        else if event = "channel"
+            result.banner = true
+            timers.banner = "start"
+        else if event = "bannerTimeout"
+            result.banner = false
+        else if event = "barTimeout"
+            result.bar = false
+        else if event = "pausedTimeout"
+            result.paused = false
+        end if
+        return { overlays: result, timers: timers }
+    end function
+
+    function visible(overlays as dynamic, paused as boolean) as object
+        state = PlayerSession.apply(overlays, "").overlays
+        barShown = state.bar or (paused and state.paused)
+        return { banner: state.banner, timeshift: barShown, any: state.banner or barShown }
+    end function
+
+    function isText(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "string" or kind = "rostring"
+    end function
+
+    ' true only for a boolean true (comparing invalid with true is a type mismatch on a Roku).
+    function isTrue(value as dynamic) as boolean
+        kind = LCase(type(value))
+        if kind <> "boolean" and kind <> "roboolean" then return false
+        return value
+    end function
+
+end namespace

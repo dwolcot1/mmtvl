@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The channel menu (M12 step 12, L3, L4; frame "Channel menu", Z3UnCj): over the guide (OK on the channel cell, or
+     *) and over the player (*). menuDim over the screen, a panel_solid panel liveMenuWidth wide in the middle: the
+     channel ("<number>  <name>", liveMenuTitle), the programme on now (liveMenuValue, secondaryText), the rows
+     (MenuListView, liveMenuRow, at most liveMenuVisibleRows), and "Back: close". Its keys go through ChannelMenu.handle;
+     it reports what was picked through choice, and the scene carries it out (MMTVL's LiveTVModel.perform). It takes
+     every key, so Back never leaves Live TV (D49). -->
+<component name="ChannelMenuView" extends="Group">
+    <interface>
+        <!-- ChannelMenu.make's menu: { title, subtitle, items: [{ id, title, action }], focusedIndex, firstVisible,
+             visibleRows }. -->
+        <field id="menu" type="assocarray" onChange="onMenu" />
+        <!-- Out: { outcome: "choose", action } or { outcome: "close" }. -->
+        <field id="choice" type="assocarray" alwaysNotify="true" />
+        <!-- Out: set on every key press (the scene's idle return, D51). -->
+        <field id="input" type="boolean" alwaysNotify="true" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Lineup.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/GuideKeys.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/ChannelMenu.bs" />
+    <children>
+        <Rectangle id="dim" />
+        <Group id="panelGroup">
+            <Poster id="panel" />
+            <Label id="title" />
+            <Label id="subtitle" />
+            <MenuListView id="list" />
+            <Label id="hint" text="Back: close" />
+        </Group>
+    </children>
+</component>

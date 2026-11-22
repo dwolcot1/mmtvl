@@ -1,0 +1,281 @@
+' What Settings shows (M12 step 13): the scene's store, channels and guide results turned into plain data with no
+' URL in it (security L-3), the Roku's IPTVSettingsStatus (MMTVL's Settings/SettingsTypes.swift, built by
+' AppDelegate from IPTVLibrary). Pure functions, no nodes. Uses GuideSources (cacheID, chooseSources), URLDisplay
+' (with Log and URLPolicy) and Lineup (displayNumber), so a component that loads this file loads those too.
+'
+'   make(input) -> model
+'     input {
+'       store              SettingsStore's store (source, guides, prefs, settings, lowSpace, spaceLeft)
+'       channels           the playlist's channels (M3U.makeChannels; from step 21 the antenna's too)
+'       playlistGuideURLs  the playlist's url-tvg guides as PlaylistTask allowed them
+'       playlist           { loading, status, updated }: a load is running; the scene's playlistStatus ("" after a
+'                          load); the last load's local time ("6:12 PM", "" before one)
+'       guideStatuses      { cache id: GuideFetch.statusRows' row } from the last guide run that answered
+'       guideUpdated       { cache id: the guide file's download time, "6:12 PM" }
+'       guideLoading       a guide run is going
+'       caps               Capabilities.detect's result
+'       inflateEnabled     GuideSources.inflateEnabled (missing: true): whether .gz guides are read at all
+'       version, build     "0.1", "1"
+'     }
+'     model {
+'       version, build, hasLiveSource, totalChannelCount
+'       playlist           { has, host, channelCount, line }: host is URLDisplay.playlistLabel's; line "Loading…",
+'                          "Updated 6:12 PM" or the failure ("Couldn't load the playlist (host)")
+'       guides             [{ id, label, line, fromPlaylist, inUse }]: the guides in use in priority order, then the
+'                          typed guides not in use (MMTVL's guideSources, M6b L1, M7f L4). id: the cache id
+'                          (GuideSources.cacheID), label: URLDisplay.guideLabel (M6b L2)
+'       pastedGuideCount, playlistNamesGuide, usePlaylistGuide, matchedChannelCount
+'       groups             [{ name, channelCount, hidden }] in playlist order (M6b L5)
+'       hiddenChannels     [{ id, number, name, group }] in playlist order; number is Lineup.displayNumber's
+'       channelUpMovesUpList, channelLogos
+'       device             { modelName, os, memory, deviceClass, classLabel, guideHours, compressed, mpeg2, ac3 }
+'                          (L7): os "Roku OS 15.0" ("" unknown), memory "512 MB" or "Unknown", classLabel the class
+'                          as the Memory row shows it ("Low (720p UI)" when only the 720p UI makes it Low, from
+'                          classReason), compressed the Compressed Guides value
+'       lowSpace, spaceLeft   the registry (L5)
+'     }
+'   guideLine(row, updated, loading, inUse) -> a guide's status line (below).
+'   countText(n, one, many) -> "1 channel", "1,234 channels".
+'   grouped(n) -> "1,234".
+namespace SettingsStatus
+
+    const notInUseLine = "Not in use (kept)"
+    const notLoadedLine = "Not loaded yet"
+    const loadingLine = "Loading…"
+    const updatedPrefix = "Updated "
+    const shortenedText = " (guide shortened)"
+    const inflateOffText = "Off: Can't read .gz"
+    ' Capabilities.classReason's prefix and its 720p reason.
+    const lowReasonPrefix = "Low-end Roku: "
+    const uiReason = "720p UI"
+
+    function make(input as object) as object
+        store = input.store
+        channels = input.channels
+        if type(channels) <> "roArray" then channels = []
+        named = input.playlistGuideURLs
+        if type(named) <> "roArray" then named = []
+        statuses = SettingsStatus.aa(input.guideStatuses)
+        updatedTimes = SettingsStatus.aa(input.guideUpdated)
+        settings = store.settings
+        hasSource = SettingsStatus.text(store.source) <> ""
+        model = {
+            version: SettingsStatus.text(input.version),
+            build: SettingsStatus.text(input.build),
+            ' Step 21: a tuner that was found counts as set up too (MMTVL's hasLiveSource).
+            hasLiveSource: hasSource,
+            totalChannelCount: channels.Count(),
+            playlist: {
+                has: hasSource,
+                host: URLDisplay.playlistLabel(store.source),
+                channelCount: channels.Count(),
+                line: SettingsStatus.playlistLine(input.playlist)
+            },
+            pastedGuideCount: store.guides.Count(),
+            playlistNamesGuide: named.Count() > 0,
+            usePlaylistGuide: SettingsStatus.isTrue(settings.usePlaylistGuide),
+            channelUpMovesUpList: SettingsStatus.isTrue(settings.channelUpMovesUpList),
+            channelLogos: SettingsStatus.isTrue(settings.channelLogos),
+            lowSpace: SettingsStatus.isTrue(store.lowSpace),
+            spaceLeft: store.spaceLeft
+        }
+        loading = SettingsStatus.isTrue(input.guideLoading)
+        guides = []
+        matched = 0
+        sources = GuideSources.chooseSources(store.guides, named, settings.usePlaylistGuide, store.source)
+        for each source in sources
+            id = GuideSources.cacheID(source.url)
+            statusRow = statuses[id]
+            guides.Push({ id: id, label: URLDisplay.guideLabel(source.url), line: SettingsStatus.guideLine(statusRow, updatedTimes[id], loading, true), fromPlaylist: source.fromPlaylist, inUse: true })
+            if type(statusRow) = "roAssociativeArray"
+                if SettingsStatus.isNumber(statusRow.matched) then matched += statusRow.matched
+            end if
+        end for
+        usesPlaylist = false
+        if sources.Count() > 0 then usesPlaylist = sources[0].fromPlaylist
+        if usesPlaylist
+            for each url in store.guides
+                guides.Push({ id: GuideSources.cacheID(url), label: URLDisplay.guideLabel(url), line: SettingsStatus.notInUseLine, fromPlaylist: false, inUse: false })
+            end for
+        end if
+        model.guides = guides
+        model.matchedChannelCount = matched
+        model.groups = SettingsStatus.groupsOf(channels, store.prefs.hiddenGroups)
+        model.hiddenChannels = SettingsStatus.hiddenChannelsOf(channels, store.prefs.hiddenChannels)
+        inflates = true
+        if SettingsStatus.isBoolean(input.inflateEnabled) then inflates = input.inflateEnabled
+        model.device = SettingsStatus.deviceOf(input.caps, inflates)
+        return model
+    end function
+
+    ' MMTVL's playlistLine: "Loading…", the failure, "Updated 6:12 PM", or "".
+    function playlistLine(playlist as dynamic) as string
+        if type(playlist) <> "roAssociativeArray" then return ""
+        if SettingsStatus.isTrue(playlist.loading) then return SettingsStatus.loadingLine
+        problem = SettingsStatus.text(playlist.status)
+        if problem <> "" then return problem
+        updated = SettingsStatus.text(playlist.updated)
+        if updated <> "" then return SettingsStatus.updatedPrefix + updated
+        return ""
+    end function
+
+    ' A guide's line: "Not in use (kept)" for a typed guide the playlist's guide replaces; the last run's result
+    ' (frame wjg72: "48,210 programmes · 398 channels · Updated 6:12 PM", with " (guide shortened)" after the
+    ' channels when a cap cut it; or the problem: "Can't read .gz on this Roku", "Too large for this Roku",
+    ' "Failed: <host>"); before any result "Loading…" while a run goes, else "Not loaded yet".
+    function guideLine(statusRow as dynamic, updated as dynamic, loading as boolean, inUse as boolean) as string
+        if not inUse then return SettingsStatus.notInUseLine
+        if type(statusRow) <> "roAssociativeArray"
+            if loading then return SettingsStatus.loadingLine
+            return SettingsStatus.notLoadedLine
+        end if
+        status = SettingsStatus.text(statusRow.status)
+        if SettingsStatus.text(statusRow.problem) <> "" then return status
+        dot = " " + URLDisplay.separator() + " "
+        programmeTotal = 0
+        if SettingsStatus.isNumber(statusRow.programmes) then programmeTotal = statusRow.programmes
+        channelTotal = 0
+        if SettingsStatus.isNumber(statusRow.matched) then channelTotal = statusRow.matched
+        line = SettingsStatus.countText(programmeTotal, "programme", "programmes") + dot + SettingsStatus.countText(channelTotal, "channel", "channels")
+        suffix = SettingsStatus.shortenedText
+        if Len(status) >= Len(suffix) and Right(status, Len(suffix)) = suffix then line += suffix
+        when = SettingsStatus.text(updated)
+        if when <> "" then line += dot + SettingsStatus.updatedPrefix + when
+        return line
+    end function
+
+    ' The playlist's groups in first-seen order with their channel counts, and whether prefs hide them.
+    function groupsOf(channels as object, hiddenGroups as dynamic) as object
+        hidden = SettingsStatus.textSet(hiddenGroups)
+        order = []
+        counts = {}
+        counts.SetModeCaseSensitive()
+        for each channel in channels
+            name = SettingsStatus.text(channel.group)
+            if counts.DoesExist(name)
+                counts[name] = counts[name] + 1
+            else
+                counts[name] = 1
+                order.Push(name)
+            end if
+        end for
+        result = []
+        for each name in order
+            result.Push({ name: name, channelCount: counts[name], hidden: hidden.DoesExist(name) })
+        end for
+        return result
+    end function
+
+    ' The hidden channels the playlist has, in its order (ids it doesn't have are kept in prefs and not listed).
+    function hiddenChannelsOf(channels as object, hiddenIDs as dynamic) as object
+        hidden = SettingsStatus.textSet(hiddenIDs)
+        result = []
+        seen = {}
+        seen.SetModeCaseSensitive()
+        for each channel in channels
+            id = SettingsStatus.text(channel.id)
+            if hidden.DoesExist(id) and not seen.DoesExist(id)
+                seen[id] = true
+                result.Push({ id: id, number: Lineup.displayNumber(channel), name: SettingsStatus.text(channel.name), group: SettingsStatus.text(channel.group) })
+            end if
+        end for
+        return result
+    end function
+
+    ' Settings → Device's values from Capabilities (L7). Guide Window and Compressed Guides are what Capabilities
+    ' decides per class; step 4's measurements may change both, or turn inflate off (inflateEnabled false:
+    ' "Off: Can't read .gz").
+    function deviceOf(caps as dynamic, inflateEnabled = true as boolean) as object
+        device = { modelName: "Roku", os: "", memory: "Unknown", deviceClass: "Low", classLabel: "Low", guideHours: 24, compressed: "On", mpeg2: false, ac3: false }
+        if not inflateEnabled then device.compressed = SettingsStatus.inflateOffText
+        if type(caps) <> "roAssociativeArray" then return device
+        name = SettingsStatus.text(caps.modelName)
+        if name = "" then name = SettingsStatus.text(caps.model)
+        if name <> "" then device.modelName = name
+        device.os = SettingsStatus.osText(caps.osVersion)
+        if SettingsStatus.isNumber(caps.memoryMB) then device.memory = SettingsStatus.grouped(caps.memoryMB) + " MB"
+        if SettingsStatus.text(caps.deviceClass) <> "" then device.deviceClass = caps.deviceClass
+        device.classLabel = device.deviceClass
+        ' QA of step 13: a Roku with memory to spare is Low only for its 720p UI; the row says why.
+        if SettingsStatus.text(caps.classReason) = SettingsStatus.lowReasonPrefix + SettingsStatus.uiReason then device.classLabel += " (" + SettingsStatus.uiReason + ")"
+        if SettingsStatus.isNumber(caps.guideHours) then device.guideHours = caps.guideHours
+        if inflateEnabled and SettingsStatus.isNumber(caps.inflateMaxCompressedBytes)
+            device.compressed = "On: Up to " + Int(caps.inflateMaxCompressedBytes / 1048576).ToStr() + " MB"
+        end if
+        device.mpeg2 = SettingsStatus.isTrue(caps.mpeg2)
+        device.ac3 = SettingsStatus.isTrue(caps.ac3)
+        return device
+    end function
+
+    ' "Roku OS 15.0" from "15.0.4.1234"; "" when unknown.
+    function osText(version as dynamic) as string
+        full = SettingsStatus.text(version)
+        if full = "" then return ""
+        parts = full.Split(".")
+        shown = parts[0]
+        if parts.Count() > 1 then shown += "." + parts[1]
+        return "Roku OS " + shown
+    end function
+
+    function countText(count as integer, one as string, many as string) as string
+        if count = 1 then return "1 " + one
+        return SettingsStatus.grouped(count) + " " + many
+    end function
+
+    ' Thousands separated by commas, as Swift's formatted() in an English locale.
+    function grouped(value as dynamic) as string
+        digits = Int(value).ToStr()
+        negative = Left(digits, 1) = "-"
+        if negative then digits = Mid(digits, 2)
+        result = ""
+        while Len(digits) > 3
+            result = "," + Right(digits, 3) + result
+            digits = Left(digits, Len(digits) - 3)
+        end while
+        result = digits + result
+        if negative then result = "-" + result
+        return result
+    end function
+
+    function textSet(value as dynamic) as object
+        result = {}
+        result.SetModeCaseSensitive()
+        if type(value) <> "roArray" then return result
+        for each item in value
+            if SettingsStatus.isText(item) then result[item] = true
+        end for
+        return result
+    end function
+
+    function aa(value as dynamic) as object
+        if type(value) = "roAssociativeArray" then return value
+        return {}
+    end function
+
+    function text(value as dynamic) as string
+        if SettingsStatus.isText(value) then return value
+        return ""
+    end function
+
+    function isText(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "string" or kind = "rostring"
+    end function
+
+    function isBoolean(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "boolean" or kind = "roboolean"
+    end function
+
+    function isTrue(value as dynamic) as boolean
+        kind = LCase(type(value))
+        if kind <> "boolean" and kind <> "roboolean" then return false
+        return value
+    end function
+
+    function isNumber(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "integer" or kind = "roint" or kind = "rointeger" or kind = "longinteger" or kind = "rolonginteger" or kind = "float" or kind = "rofloat" or kind = "double" or kind = "rodouble"
+    end function
+
+end namespace

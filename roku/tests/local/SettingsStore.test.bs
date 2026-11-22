@@ -9,7 +9,7 @@ namespace SettingsStoreTests
         t.assertEqual(store.guides, [])
         t.assertEqual(store.prefs, { favorites: [], hiddenChannels: [], hiddenGroups: [], teams: [] })
         t.assertEqual(store.overrides, {})
-        t.assertEqual(store.state, { lastChannelID: "", lastGroup: "", recentChannelIDs: [] })
+        t.assertEqual(store.state, { lastChannelID: "", lastGroup: "", recentChannelIDs: [], lowMemoryNoticeShown: false })
         t.assertEqual(store.settings, SettingsStoreTests.mmtvlDefaults())
         t.assertEqual(store.schema, 0)
         t.assertFalse(store.lowSpace)
@@ -62,7 +62,7 @@ namespace SettingsStoreTests
         expected = SettingsStoreTests.mmtvlDefaults()
         expected.usePlaylistGuide = true
         t.assertEqual(store.settings, expected)
-        t.assertEqual(store.state, { lastChannelID: "", lastGroup: "", recentChannelIDs: [] })
+        t.assertEqual(store.state, { lastChannelID: "", lastGroup: "", recentChannelIDs: [], lowMemoryNoticeShown: false })
     end sub
 
     sub test_aValueThatIsntJSONReadsAsItsDefaultAndTheOtherKeysAreKept(t as object)
@@ -90,7 +90,7 @@ namespace SettingsStoreTests
         t.assertTrue(store.settings.teamMatchInitials, "kept")
         t.assertFalse(store.settings.teamMatchNicknames, "missing")
         t.assertEqual(store.prefs, { favorites: [], hiddenChannels: ["id:b", "id:c"], hiddenGroups: [], teams: ["nba.lal"] })
-        t.assertEqual(store.state, { lastChannelID: "", lastGroup: "Sports", recentChannelIDs: [] })
+        t.assertEqual(store.state, { lastChannelID: "", lastGroup: "Sports", recentChannelIDs: [], lowMemoryNoticeShown: false })
     end sub
 
     sub test_aWrongTypeForAWholeKeyReadsAsItsDefault(t as object)
@@ -106,7 +106,7 @@ namespace SettingsStoreTests
         t.assertEqual(store.guides, [])
         t.assertEqual(store.prefs, { favorites: [], hiddenChannels: [], hiddenGroups: [], teams: [] })
         t.assertEqual(store.overrides, {})
-        t.assertEqual(store.state, { lastChannelID: "", lastGroup: "", recentChannelIDs: [] })
+        t.assertEqual(store.state, { lastChannelID: "", lastGroup: "", recentChannelIDs: [], lowMemoryNoticeShown: false })
         t.assertEqual(store.settings, SettingsStoreTests.mmtvlDefaults())
     end sub
 
@@ -423,6 +423,39 @@ namespace SettingsStoreTests
         t.assertEqual(SettingsStoreTests.rawKeys(ParseJson(registry.data.overrides)), ["sports hd"])
     end sub
 
+    ' Step 11: the Roku-only fields round-trip, read a wrong type as their default, and survive an import.
+    sub test_theRokuOnlyFieldsRoundTripAndReadBadValuesAsDefaults(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        t.assertFalse(store.state.lowMemoryNoticeShown, "the notice is due by default")
+        t.assertTrue(store.settings.channelLogos, "logos on by default")
+        t.assertTrue(SettingsStore.save(store, "state", { lastChannelID: "id:a", lowMemoryNoticeShown: true }).ok)
+        t.assertTrue(SettingsStore.save(store, "settings", { channelLogos: false }).ok)
+        reloaded = SettingsStore.load(registry)
+        t.assertTrue(reloaded.state.lowMemoryNoticeShown)
+        t.assertFalse(reloaded.settings.channelLogos)
+        registry.data.state = FormatJson({ lastChannelID: "id:a", lowMemoryNoticeShown: "yes" })
+        registry.data.settings = FormatJson({ channelLogos: 0 })
+        wrong = SettingsStore.load(registry)
+        t.assertFalse(wrong.state.lowMemoryNoticeShown, "a string reads as the default")
+        t.assertTrue(wrong.settings.channelLogos, "a number reads as the default")
+        t.assertEqual(wrong.state.lastChannelID, "id:a")
+    end sub
+
+    sub test_replaceAllKeepsTheRokuOnlyFields(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        SettingsStore.save(store, "state", { lastChannelID: "id:old", lowMemoryNoticeShown: true })
+        SettingsStore.save(store, "settings", { channelLogos: false })
+        t.assertTrue(SettingsStore.replaceAll(store, SettingsStoreTests.bundle()).ok)
+        t.assertTrue(store.state.lowMemoryNoticeShown, "the notice doesn't come back after an import")
+        t.assertFalse(store.settings.channelLogos, "the logos stay off")
+        t.assertEqual(store.state.lastChannelID, "id:news1.example", "the bundle's state otherwise")
+        reloaded = SettingsStore.load(registry)
+        t.assertTrue(reloaded.state.lowMemoryNoticeShown)
+        t.assertFalse(reloaded.settings.channelLogos)
+    end sub
+
     sub test_anUnknownSpaceAnswerCountsAsEnough(t as object)
         registry = SettingsStoreTests.fakeRegistry(invalid)
         store = SettingsStore.load(registry)
@@ -559,7 +592,7 @@ namespace SettingsStoreTests
         return result
     end function
 
-    ' AppSettings.swift's defaults for the six migrated settings.
+    ' AppSettings.swift's defaults for the six migrated settings, plus the Roku-only channelLogos (on, L7 as amended).
     function mmtvlDefaults() as object
         return {
             channelUpMovesUpList: true,
@@ -567,7 +600,8 @@ namespace SettingsStoreTests
             teamMatchInitials: false,
             teamMatchNicknames: false,
             antennaEnabled: true,
-            antennaGuide: true
+            antennaGuide: true,
+            channelLogos: true
         }
     end function
 
@@ -582,14 +616,16 @@ namespace SettingsStoreTests
                 teams: ["nba.lal", "ncaaf.michigan-wolverines"]
             },
             overrides: { "News One": "news1.example", "Shop": "", "antenna:5.1": "wabc.example" },
-            state: { lastChannelID: "id:news1.example", lastGroup: "News", recentChannelIDs: ["id:news1.example", "name:shop"] },
+            ' The Roku-only fields at their defaults: an import keeps the current ones (see the Roku-only tests).
+            state: { lastChannelID: "id:news1.example", lastGroup: "News", recentChannelIDs: ["id:news1.example", "name:shop"], lowMemoryNoticeShown: false },
             settings: {
                 channelUpMovesUpList: false,
                 usePlaylistGuide: true,
                 teamMatchInitials: true,
                 teamMatchNicknames: true,
                 antennaEnabled: false,
-                antennaGuide: false
+                antennaGuide: false,
+                channelLogos: true
             }
         }
     end function
@@ -641,5 +677,41 @@ namespace SettingsStoreTests
         end for
         return result
     end function
+
+    ' Step 13 (QA 5): several keys in one save, all or nothing (Remove Live TV Source).
+    sub test_saveManySavesEveryKeyOrNone(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        t.assertTrue(SettingsStore.save(store, "source", "https://iptv.example/a.m3u").ok)
+        t.assertTrue(SettingsStore.save(store, "guides", ["https://epg.example/a.xml"]).ok)
+        registry.failWriteNumber = registry.writes + 2
+        failed = SettingsStore.saveMany(store, { guides: [], source: "" })
+        t.assertFalse(failed.ok)
+        t.assertEqual(failed.message, SettingsStore.saveFailedMessage)
+        t.assertEqual(store.source, "https://iptv.example/a.m3u", "the store keeps both")
+        t.assertEqual(store.guides, ["https://epg.example/a.xml"])
+        reloaded = SettingsStore.load(registry)
+        t.assertEqual(reloaded.source, "https://iptv.example/a.m3u", "the guides written first were put back")
+        t.assertEqual(reloaded.guides, ["https://epg.example/a.xml"])
+        registry.failWriteNumber = -1
+        saved = SettingsStore.saveMany(store, { guides: [], source: "" })
+        t.assertTrue(saved.ok)
+        t.assertEqual([store.source, store.guides], ["", []])
+        reloaded = SettingsStore.load(registry)
+        t.assertEqual([reloaded.source, reloaded.guides], ["", []])
+    end sub
+
+    sub test_saveManyRefusesUnknownKeysAndWhatWontFit(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        t.assertFalse(SettingsStore.saveMany(store, { source: "https://iptv.example/a.m3u", nonsense: 1 }).ok)
+        t.assertEqual(store.source, "", "nothing saved")
+        t.assertTrue(SettingsStore.saveMany(store, {}).ok, "nothing to save")
+        registry.space = 10
+        tooLarge = SettingsStore.saveMany(store, { source: "https://iptv.example/a-long-playlist-address.m3u", guides: ["https://epg.example/a.xml"] })
+        t.assertFalse(tooLarge.ok)
+        t.assertEqual(tooLarge.message, SettingsStore.tooLargeMessage)
+        t.assertEqual([store.source, store.guides], ["", []])
+    end sub
 
 end namespace

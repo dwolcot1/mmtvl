@@ -1,0 +1,672 @@
+' The guide (fields in GuideScreen.xml). m.state is GuideKeys' state; per row of the selected group, m.rowNodes holds
+' its TimeGrid ContentNode, m.rowCells its GuideReader.gridProgrammes (invalid until the row is filled) and
+' m.rowProgrammes its programmes (references into the one copy GuideReader read). m.lineup is the one copy of the
+' lineup field (read once per change; m.state.lineup is the same object). m.pendingJump is the last jump sent to
+' TimeGrid and not yet reported, m.rebuilding true while rebuildGrid replaces TimeGrid's content (GuideKeys.gridReport),
+' m.gridAt the cell TimeGrid last reported ({ row, kind }, invalid after new content) and m.programFocus the programme
+' cell it last reported on row m.programFocusRow (-1: none), whether or not the model took the report.
+
+sub init()
+    m.theme = Theme.make()
+    m.reader = GuideReader.newReader()
+    m.fs = CreateObject("roFileSystem")
+    m.lineup = emptyLineup()
+    m.lineupUnread = false
+    m.state = GuideKeys.open(m.lineup, invalid, "")
+    m.opened = false
+    m.pendingJump = invalid
+    m.rebuilding = false
+    m.gridAt = invalid
+    m.programFocusRow = -1
+    m.stale = false
+    m.openArgs = { lastGroup: "", channelID: "" }
+    m.rowNodes = []
+    m.rowCells = []
+    m.rowProgrammes = []
+    m.channelsByID = {}
+    m.contentStart = 0
+    m.windowEnd = 0
+    m.programFocus = 0
+    m.logoWaits = {}
+    m.groupFirst = 0
+    m.grid = m.top.findNode("grid")
+    m.column = m.top.findNode("column")
+    m.columnList = m.top.findNode("columnList")
+    style()
+    m.grid.observeField("programFocusedDetails", "onProgramFocused")
+    m.grid.observeField("channelInfoFocused", "onChannelInfoFocused")
+    m.grid.observeField("programSelected", "onProgramSelected")
+    m.grid.observeField("channelInfoSelected", "onChannelInfoSelected")
+    m.top.observeField("visible", "onVisible")
+    showInfo()
+end sub
+
+' The frames' layout, from Theme.bs.
+sub style()
+    colors = m.theme.colors
+    fonts = m.theme.fonts
+    layout = m.theme.layout
+    images = m.theme.images
+    canvas = m.theme.canvas
+    rect = layout.guideInfoRect
+    m.top.findNode("info").translation = [rect.x, rect.y]
+    styleLabel("infoChannel", fonts.guideInfoDetail, colors.secondaryText, rect.width, false)
+    infoTitle = styleLabel("infoTitle", fonts.guideInfoTitle, colors.primaryText, rect.width, true)
+    infoTitle.maxLines = layout.guideInfoTitleMaxLines
+    styleLabel("infoTime", fonts.guideInfoDetail, colors.secondaryText, rect.width, false)
+    description = styleLabel("infoDescription", fonts.guideInfoDetail, colors.primaryText, rect.width, true)
+    description.maxLines = layout.guideInfoDescriptionMaxLines
+    preview = layout.guidePreviewRect
+    previewText = styleLabel("previewText", fonts.guideInfoDetail, colors.secondaryText, preview.width, false)
+    previewText.height = preview.height
+    previewText.horizAlign = "center"
+    previewText.translation = [preview.x, preview.y]
+
+    groupName = styleLabel("groupName", fonts.guideGroupTitle, colors.primaryText, 0, false)
+    groupName.height = layout.guideTimeHeaderHeight
+    groupName.translation = [layout.sideMargin, layout.guideGridTop]
+    groupHint = styleLabel("groupHint", fonts.guideChannel, colors.secondaryText, 0, false)
+    groupHint.height = layout.guideTimeHeaderHeight
+
+    hint = styleLabel("hint", fonts.settingsHint, colors.secondaryText, canvas.width - 2 * layout.sideMargin, false)
+    hint.translation = [layout.sideMargin, layout.guideHintTop]
+    hint.text = hintText()
+
+    grid = m.grid
+    grid.translation = [layout.sideMargin, layout.guideGridTop]
+    grid.channelInfoComponentName = "GuideChannelCell"
+    grid.channelInfoWidth = layout.guideChannelColumnWidth
+    grid.infoGridGap = layout.guideInfoGridGap
+    grid.channelInfoFocusable = true
+    ' A space: the frames draw the group's name in their own Label here; "" would show the day of the week.
+    grid.channelInfoColumnLabel = " "
+    grid.duration = layout.guideDuration
+    grid.timeBarHeight = layout.guideTimeHeaderHeight
+    grid.timeBarBitmapUri = images.clear
+    grid.timeLabelFont = Theme.font(fonts.guideCellTime)
+    grid.timeLabelColor = colors.secondaryText
+    grid.timeLabelOffset = layout.guideProgramHorizMargin
+    grid.programTitleFont = Theme.font(fonts.guideCell)
+    grid.programTitleColor = colors.primaryText
+    grid.programTitleFocusedColor = colors.focusedRowText
+    grid.programBackgroundBitmapUri = images.guideCell
+    grid.focusBitmapUri = images.guideFocus
+    grid.programHorizMargin = layout.guideProgramHorizMargin
+    grid.channelNoDataText = noGuideText()
+    grid.fillProgramGaps = true
+    grid.showPastTimeScreen = false
+    grid.nowBarBitmapUri = images.bar
+    grid.nowBarWidth = layout.guideNowBarWidth
+    grid.nowBarBlendColor = colors.guideNowLine
+    grid.overlayBitmapUri = images.clear
+    ' Rewind / Fast Forward page by GuideKeys' 6 rows (L4), and Replay does nothing (not TimeGrid's jump to now).
+    grid.ignoreTrickPlayKeys = true
+    grid.automaticLoadingDataFeedback = false
+    ' Not documented fields (step 10's notes): the row height, the rows shown and the grid's size (frame LMTqH:
+    ' 1680 x 534 from the channel column's left), set only on a Roku that has them. Which it has, and TimeGrid's
+    ' real row height, are step 15's device checks.
+    setIfPresent(grid, "rowHeight", layout.guideRowHeight)
+    setIfPresent(grid, "numRows", layout.guideVisibleRows)
+    setIfPresent(grid, "width", layout.guideChannelColumnWidth + layout.guideInfoGridGap + layout.guideGridWidth)
+    setIfPresent(grid, "height", layout.guideTimeHeaderHeight + layout.guideVisibleRows * layout.guideRowHeight)
+
+    shade = m.top.findNode("columnDim")
+    shade.color = colors.menuDim
+    shade.width = canvas.width
+    shade.height = canvas.height
+    origin = layout.guideGroupPanelOrigin
+    panel = m.top.findNode("columnPanel")
+    panel.uri = images.panelSolid
+    panel.translation = [origin.x, origin.y]
+    panel.width = layout.guideGroupPanelWidth
+    padding = layout.guideGroupPanelPadding
+    m.columnList.translation = [origin.x + padding, origin.y + padding]
+    m.columnList.visibleRows = layout.guideGroupVisibleRows
+    m.columnList.rowWidth = layout.guideGroupPanelWidth - 2 * padding
+    m.columnList.rowHeight = layout.guideGroupRowHeight
+    m.columnList.textInset = layout.menuRowPadding
+    m.columnList.fontSpec = fonts.guideGroup
+end sub
+
+function styleLabel(id as string, spec as object, color as string, width as integer, wraps as boolean) as object
+    label = m.top.findNode(id)
+    label.font = Theme.font(spec)
+    label.color = color
+    label.width = width
+    label.wrap = wraps
+    if not wraps then label.height = Theme.lineHeight(spec)
+    label.vertAlign = "center"
+    return label
+end function
+
+sub setIfPresent(node as object, field as string, value as dynamic)
+    if node.hasField(field) then node.setField(field, value)
+end sub
+
+' Frame LMTqH's hint; step 13: with the group column open, or with no channels, * opens Settings, and the hint says so.
+function hintText() as string
+    dot = " " + Chr(183) + " "
+    if m.column <> invalid
+        if m.column.visible then return "OK: choose" + dot + "*: Settings" + dot + "Back: close"
+    end if
+    if m.state <> invalid
+        if m.state.rows.Count() = 0 then return "*: Settings"
+    end if
+    return "OK: watch" + dot + "*: channel menu" + dot + "Left: groups" + dot + "Rewind/Fast Forward: page"
+end function
+
+sub showHint()
+    m.top.findNode("hint").text = hintText()
+end sub
+
+function noGuideText() as string
+    return "No guide"
+end function
+
+function emptyLineup() as object
+    return Lineup.build([], {})
+end function
+
+' Reads the lineup field into m.lineup (reading a field copies it, so only once per change).
+sub readLineup()
+    m.lineupUnread = false
+    m.lineup = emptyLineup()
+    built = m.top.lineup
+    if type(built) <> "roAssociativeArray" then return
+    if type(built.groups) <> "roArray" then return
+    m.lineup = built
+end sub
+
+' --- interface functions ---------------------------------------------------------------------------------------
+
+function open(args as dynamic) as boolean
+    lastGroup = ""
+    channelID = ""
+    if type(args) = "roAssociativeArray"
+        if GuideKeys.isText(args.lastGroup) then lastGroup = args.lastGroup
+        if GuideKeys.isText(args.channelID) then channelID = args.channelID
+    end if
+    m.openArgs = { lastGroup: lastGroup, channelID: channelID }
+    m.opened = true
+    if m.lineupUnread then readLineup()
+    m.state = GuideKeys.open(m.lineup, lastGroup, channelID)
+    m.groupFirst = 0
+    m.column.visible = false
+    rebuildGrid()
+    return true
+end function
+
+function takeFocus() as boolean
+    if m.column.visible or m.state.rows.Count() = 0
+        m.top.setFocus(true)
+    else
+        m.grid.setFocus(true)
+    end if
+    return true
+end function
+
+' One channel's programmes, for the scene (the player's banner, the channel menu's programme line): callFunc
+' copies just this list. Reads the holder only on a new revision.
+function programmesFor(channelID as dynamic) as dynamic
+    return GuideReader.programmesFor(currentData(), channelID)
+end function
+
+function currentData() as dynamic
+    return GuideReader.read(m.reader, m.top.guideHolder, m.top.guideRevision)
+end function
+
+' --- the lineup and the guide data -----------------------------------------------------------------------------
+
+' A refresh or a favorites or hiding change keeps the group and row (GuideKeys.setLineup). Before the first lineup
+' (the guide opened while the playlist loaded) it opens as asked then.
+sub onLineup()
+    if not m.opened
+        ' Read at the open.
+        m.lineupUnread = true
+        return
+    end if
+    readLineup()
+    ' Focus stays where it is (the notice, the channel menu, the player); the guide keeps it if it had it.
+    hadFocus = m.top.isInFocusChain()
+    if m.state.groups.Count() = 0
+        open(m.openArgs)
+    else
+        m.state = GuideKeys.setLineup(m.state, m.lineup)
+        rebuildGrid()
+        if m.column.visible then renderColumn()
+    end if
+    if hadFocus then takeFocus()
+end sub
+
+' A new guide: shown now when the guide is on screen, else at the next open (which rebuilds anyway).
+sub onGuideRevision()
+    if not m.opened then return
+    if m.top.visible then rebuildGrid() else m.stale = true
+end sub
+
+' Step 13: Channel Logos turned on or off in Settings: the rows are drawn again (now when shown, else when shown).
+sub onSettings()
+    if not m.opened then return
+    if m.top.visible then rebuildGrid() else m.stale = true
+end sub
+
+' Shown again (from Settings) after a new guide arrived while hidden.
+sub onVisible()
+    if m.top.visible and m.stale and m.opened then rebuildGrid()
+end sub
+
+sub onPlayback()
+    playback = m.top.playback
+    text = ""
+    if type(playback) = "roAssociativeArray"
+        if not isTrue(playback.hasChannel)
+            text = "Nothing playing"
+        else if not isTrue(playback.isPlaying)
+            text = "Can't play this channel"
+        end if
+    end if
+    m.top.findNode("previewText").text = text
+end sub
+
+' TimeGrid's content for the selected group: one ContentNode per row, programmes only around the focused row.
+sub rebuildGrid()
+    m.stale = false
+    m.rebuilding = true
+    now = CreateObject("roDateTime").AsSeconds()
+    data = currentData()
+    m.contentStart = GuideReader.contentStart(now)
+    m.windowEnd = m.contentStart + GuideReader.daySeconds
+    if type(data) = "roAssociativeArray"
+        if GuideReader.isNumber(data.windowEnd) then m.windowEnd = data.windowEnd
+    end if
+    m.grid.contentStartTime = m.contentStart
+    m.grid.maxDays = GuideReader.maxDays(m.contentStart, m.windowEnd)
+    m.channelsByID = {}
+    m.channelsByID.SetModeCaseSensitive()
+    for each channel in m.lineup.visibleChannels
+        m.channelsByID[channel.id] = channel
+    end for
+    root = CreateObject("roSGNode", "ContentNode")
+    m.rowNodes = []
+    m.rowCells = []
+    m.rowProgrammes = []
+    m.logoWaits = {}
+    for each row in m.state.rows
+        node = root.createChild("ContentNode")
+        if row.kind = "channel"
+            channel = m.channelsByID[row.channelID]
+            if channel <> invalid
+                node.title = textOf(channel.name)
+                node.shortDescriptionLine1 = Lineup.displayNumber(channel)
+            end if
+        else
+            node.title = chooseTeamsText()
+            node.shortDescriptionLine1 = ""
+        end if
+        m.rowNodes.Push(node)
+        m.rowCells.Push(invalid)
+        m.rowProgrammes.Push(invalid)
+    end for
+    ' TimeGrid's focus in the new content is unknown until it reports.
+    m.gridAt = invalid
+    m.programFocus = 0
+    m.programFocusRow = -1
+    m.grid.content = root
+    fillAround(m.state.row)
+    jumpToFocus()
+    m.rebuilding = false
+    showGroupName()
+    showHint()
+    showInfo()
+end sub
+
+' Sends TimeGrid to the model's row and cell (GuideKeys.jumpTarget); its focus report is then the code's own. No
+' report is awaited for the cell TimeGrid already holds (GuideKeys.pendingFor).
+sub jumpToFocus()
+    target = GuideKeys.jumpTarget(m.state)
+    m.pendingJump = GuideKeys.pendingFor(target, m.gridAt)
+    if target = invalid then return
+    if target.kind = "channel" then m.grid.jumpToChannelInfo = target.row else m.grid.jumpToChannel = target.row
+end sub
+
+sub fillAround(row as integer)
+    range = GuideReader.fillRange(row, m.state.rows.Count())
+    for r = range.first to range.last
+        if m.rowCells[r] = invalid then fillRow(r) else askLogoAgain(r)
+    end for
+end sub
+
+' A filled row without its logo and no request out (LogoTask dropped it from its full queue and said so): ask again.
+sub askLogoAgain(r as integer)
+    row = m.state.rows[r]
+    if row.kind <> "channel" then return
+    node = m.rowNodes[r]
+    if node.hdSmallIconUrl <> "" then return
+    requestLogo(node, m.channelsByID[row.channelID])
+end sub
+
+sub fillRow(r as integer)
+    if m.rowCells[r] <> invalid then return
+    row = m.state.rows[r]
+    node = m.rowNodes[r]
+    if row.kind = "channel"
+        programmes = GuideReader.programmesFor(currentData(), row.channelID)
+        cells = GuideReader.gridProgrammes(programmes, m.contentStart, m.windowEnd)
+        m.rowProgrammes[r] = programmes
+        requestLogo(node, m.channelsByID[row.channelID])
+    else
+        ' My Teams' Choose Teams row (the picker is step 18): one cell across the window.
+        cells = [{ index: -1, start: m.contentStart, duration: m.windowEnd - m.contentStart, title: chooseTeamsText() }]
+    end if
+    for each cell in cells
+        child = node.createChild("ContentNode")
+        child.title = cell.title
+        child.playStart = cell.start
+        child.playDuration = cell.duration
+    end for
+    m.rowCells[r] = cells
+end sub
+
+function chooseTeamsText() as string
+    return "Choose Teams" + Chr(8230)
+end function
+
+' --- logos (LogoTask, cachefs:) ---------------------------------------------------------------------------------
+
+sub onLogoTask()
+    task = m.top.logoTask
+    if task <> invalid then task.observeFieldScoped("ready", "onLogoReady")
+end sub
+
+sub requestLogo(node as object, channel as dynamic)
+    url = LogoCache.wanted(channel, m.top.settings)
+    if url = "" then return
+    cached = LogoCache.path(url)
+    waits = m.logoWaits[cached]
+    if waits <> invalid
+        for each waiting in waits
+            if waiting.isSameNode(node) then return
+        end for
+    end if
+    if m.fs.Exists(cached)
+        node.hdSmallIconUrl = cached
+        return
+    end if
+    if waits = invalid
+        waits = []
+        m.logoWaits[cached] = waits
+        task = m.top.logoTask
+        if task <> invalid then task.request = { url: url, path: cached }
+    end if
+    waits.Push(node)
+end sub
+
+sub onLogoReady()
+    task = m.top.logoTask
+    if task = invalid then return
+    ready = task.ready
+    if type(ready) <> "roAssociativeArray" then return
+    if not GuideKeys.isText(ready.path) then return
+    waits = m.logoWaits[ready.path]
+    if waits = invalid then return
+    ' ok false: failed, or dropped from LogoTask's full queue; askLogoAgain asks again for a row in view.
+    m.logoWaits.Delete(ready.path)
+    if not isTrue(ready.ok) then return
+    for each node in waits
+        node.hdSmallIconUrl = ready.path
+    end for
+end sub
+
+' --- TimeGrid's focus and selections ---------------------------------------------------------------------------
+
+' A focus report: the user's move, or the code's own jump (GuideKeys.gridReport). With the column open neither
+' changes the model, which keeps the column's focus.
+sub onProgramFocused()
+    details = m.grid.programFocusedDetails
+    if type(details) <> "roAssociativeArray" then return
+    row = m.state.row
+    if GuideReader.isNumber(details.focusChannelIndex) then row = details.focusChannelIndex
+    if GuideReader.isNumber(details.focusIndex)
+        m.programFocus = details.focusIndex
+        m.programFocusRow = row
+    end if
+    if takeReport(row, "grid") then afterMove()
+end sub
+
+sub onChannelInfoFocused()
+    row = m.grid.channelInfoFocused
+    if not GuideReader.isNumber(row) then return
+    if takeReport(row, "channel") then afterMove()
+end sub
+
+' Whether the report applies; if so the model takes its row and focus. Only the user's moves, on the shown guide,
+' restart the idle timer (D51).
+function takeReport(row as integer, kind as string) as boolean
+    m.gridAt = { row: row, kind: kind }
+    decision = GuideKeys.gridReport(m.state.focus, m.pendingJump, m.gridAt, m.rebuilding)
+    m.pendingJump = decision.pending
+    if decision.isInput and m.top.visible then m.top.input = true
+    if not decision.apply then return false
+    m.state.row = row
+    m.state.focus = kind
+    return true
+end function
+
+' OK on a programme or a channel cell: TimeGrid took the key; GuideKeys decides (play; the channel menu; Choose
+' Teams' picker).
+sub onProgramSelected()
+    m.state.focus = "grid"
+    dispatch("OK")
+end sub
+
+sub onChannelInfoSelected()
+    m.state.row = m.grid.channelInfoSelected
+    m.state.focus = "channel"
+    dispatch("OK")
+end sub
+
+' After a focus move. Not input itself: keys note it in onKeyEvent and dispatch, TimeGrid's moves in takeReport.
+sub afterMove()
+    if m.state.row >= 0 and m.state.row < m.state.rows.Count() then fillAround(m.state.row)
+    showInfo()
+end sub
+
+' --- keys ------------------------------------------------------------------------------------------------------
+
+' The keys TimeGrid didn't take, and every key while the column is open (D49: every GuideKeys key is handled).
+function onKeyEvent(key as string, press as boolean) as boolean
+    if press then m.top.input = true
+    result = GuideKeys.handle(key, press, keyState())
+    if press and result.handled then apply(result)
+    return result.handled
+end function
+
+sub dispatch(key as string)
+    m.top.input = true
+    apply(GuideKeys.handle(key, true, keyState()))
+end sub
+
+function keyState() as object
+    state = GuideKeys.copyState(m.state)
+    playback = m.top.playback
+    if type(playback) = "roAssociativeArray"
+        state.canReturn = isTrue(playback.canReturn)
+        state.isPlaying = isTrue(playback.isPlaying)
+    end if
+    return state
+end function
+
+sub apply(result as object)
+    before = m.state
+    m.state = result.state
+    wasColumn = isColumnFocus(before.focus)
+    isColumn = isColumnFocus(m.state.focus)
+    chosen = result.action
+    if wasColumn and not isColumn
+        m.column.visible = false
+        ' TimeGrid lands on the row's programme cell, as the model (MMTVL's
+        ' backFromTheGroupListGoesToTheGridThenTheChannel); rebuildGrid jumps itself.
+        if chosen.type = "groupChanged" then rebuildGrid() else jumpToFocus()
+        takeFocus()
+    else if isColumn
+        if not wasColumn
+            m.column.visible = true
+            takeFocus()
+        end if
+        renderColumn()
+    else if m.state.rows.Count() > 0 and (m.state.row <> before.row or m.state.focus <> before.focus)
+        jumpToFocus()
+        afterMove()
+    end if
+    showGroupName()
+    showHint()
+    report(chosen)
+end sub
+
+sub report(chosen as object)
+    kind = chosen.type
+    if kind = "none" then return
+    if kind = "channelMenu"
+        m.top.action = { type: kind, channelID: chosen.channelID, group: selectedGroup() }
+    else if kind = "groupChanged"
+        m.top.action = { type: kind, group: chosen.group }
+    else
+        m.top.action = chosen
+    end if
+end sub
+
+function isColumnFocus(focus as string) as boolean
+    return focus = "groups" or focus = "search"
+end function
+
+function selectedGroup() as string
+    name = GuideKeys.groupName(m.state.groups, m.state.groupIndex)
+    if GuideKeys.isText(name) then return name
+    return ""
+end function
+
+' --- the group column ------------------------------------------------------------------------------------------
+
+sub renderColumn()
+    layout = m.theme.layout
+    titles = [searchText()]
+    titles.Append(m.state.groups)
+    position = 0
+    if m.state.focus = "groups" then position = m.state.groupFocus + 1
+    visible = layout.guideGroupVisibleRows
+    m.groupFirst = GuideKeys.visibleStart(m.groupFirst, position, titles.Count(), visible)
+    shown = titles.Count()
+    if shown > visible then shown = visible
+    m.top.findNode("columnPanel").height = 2 * layout.guideGroupPanelPadding + shown * layout.guideGroupRowHeight
+    m.columnList.items = titles
+    m.columnList.firstVisible = m.groupFirst
+    m.columnList.focusedIndex = position
+end sub
+
+function searchText() as string
+    return "Search"
+end function
+
+' --- the info area ---------------------------------------------------------------------------------------------
+
+' The group's name, then "‹ Groups" guideGroupLabelSpacing after it.
+sub showGroupName()
+    nameLabel = m.top.findNode("groupName")
+    nameLabel.text = selectedGroup()
+    nameLabel.width = 0
+    width = Int(nameLabel.boundingRect().width + 0.5)
+    layout = m.theme.layout
+    hintX = layout.sideMargin
+    if width > 0 then hintX = hintX + width + layout.guideGroupLabelSpacing
+    m.top.findNode("groupHint").translation = [hintX, layout.guideGridTop]
+end sub
+
+' The focused programme (frame LMTqH): "<number>  <name>", the title, "<range> · N min left", the description. On a
+' channel cell, the programme on now. Without a programme: the channel's name and MMTVL's "No programme
+' information". With no channels: the app's name, the playlist's status and the version.
+sub showInfo()
+    lines = { channel: "", title: "", time: "", description: "" }
+    count = m.state.rows.Count()
+    row = m.state.row
+    if count = 0
+        lines.title = "MMTVL Live TV"
+        lines.time = m.top.status
+        lines.description = m.top.version
+    else if row >= 0 and row < count
+        rowData = m.state.rows[row]
+        if rowData.kind = "channel"
+            channel = m.channelsByID[rowData.channelID]
+            if channel <> invalid then fillChannelInfo(lines, channel, row)
+        else
+            lines.title = chooseTeamsText()
+            lines.description = "Pick pro and college teams. Their live games show here, then their games in the next 3 days."
+        end if
+    end if
+    placeInfo(lines)
+end sub
+
+sub fillChannelInfo(lines as object, channel as object, row as integer)
+    lines.channel = Lineup.displayNumber(channel) + "  " + textOf(channel.name)
+    now = CreateObject("roDateTime").AsSeconds()
+    programme = focusedProgramme(row, now)
+    if programme = invalid
+        lines.title = textOf(channel.name)
+        lines.time = BannerText.noProgramme
+        return
+    end if
+    lines.title = textOf(programme.title)
+    ends = programme.stop
+    if ends < programme.start then ends = programme.start
+    lines.time = GuideReader.timeDetail(BannerText.timeRange(localParts(programme.start), localParts(ends)), programme, now)
+    lines.description = textOf(programme.summary)
+end sub
+
+function focusedProgramme(row as integer, now as dynamic) as dynamic
+    programmes = m.rowProgrammes[row]
+    if type(programmes) <> "roArray" then return invalid
+    if m.state.focus = "grid" and m.programFocusRow = row
+        cells = m.rowCells[row]
+        if type(cells) = "roArray"
+            if m.programFocus >= 0 and m.programFocus < cells.Count()
+                index = cells[m.programFocus].index
+                if index >= 0 and index < programmes.Count() then return programmes[index]
+            end if
+        end if
+    end if
+    return BannerText.nowNext(programmes, now).now
+end function
+
+' The lines guideInfoSpacing apart; empty ones are left out.
+sub placeInfo(lines as object)
+    spacing = m.theme.layout.guideInfoSpacing
+    y = 0
+    for each pair in [["infoChannel", lines.channel], ["infoTitle", lines.title], ["infoTime", lines.time], ["infoDescription", lines.description]]
+        label = m.top.findNode(pair[0])
+        label.text = pair[1]
+        label.visible = pair[1] <> ""
+        if label.visible
+            label.translation = [0, y]
+            y = y + Int(label.boundingRect().height + 0.5) + spacing
+        end if
+    end for
+end sub
+
+' Local clock parts for BannerText.
+function localParts(seconds as dynamic) as object
+    date = CreateObject("roDateTime")
+    date.FromSeconds(Int(seconds))
+    date.ToLocalTime()
+    return { hours: date.GetHours(), minutes: date.GetMinutes() }
+end function
+
+' true only for a boolean true (comparing invalid with true is a type mismatch on a Roku).
+function isTrue(value as dynamic) as boolean
+    kind = LCase(type(value))
+    if kind <> "boolean" and kind <> "roboolean" then return false
+    return value
+end function
+
+function textOf(value as dynamic) as string
+    if GuideKeys.isText(value) then return value
+    return ""
+end function

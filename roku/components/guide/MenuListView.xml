@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- A list of one-line rows drawn from Labels (M12 step 12): the guide's group column (frame lB8XX) and the channel
+     menu (frame Z3UnCj). It draws; it takes no keys: the screen that owns it moves focusedIndex and firstVisible
+     with GuideKeys (the column loops, Search above the groups) or ChannelMenu (the menu clamps), so the list
+     behaves exactly as those tested models say. The focused row is the white focus_row 9-patch with focusedRowText;
+     the others primaryText. Rows are rowHeight high, text inset textInset from the row's left. -->
+<component name="MenuListView" extends="Group">
+    <interface>
+        <!-- The rows' titles, in order. -->
+        <field id="items" type="array" onChange="render" />
+        <field id="focusedIndex" type="integer" value="0" onChange="render" />
+        <!-- The first row shown (GuideKeys.visibleStart keeps the focused one in view). -->
+        <field id="firstVisible" type="integer" value="0" onChange="render" />
+        <!-- Set once, before items: rows shown, row size, text inset and the Theme font spec. -->
+        <field id="visibleRows" type="integer" value="8" />
+        <field id="rowWidth" type="integer" value="0" />
+        <field id="rowHeight" type="integer" value="0" />
+        <field id="textInset" type="integer" value="0" />
+        <field id="fontSpec" type="assocarray" />
+        <!-- false: no focus highlight (the list isn't the focused part of its screen). -->
+        <field id="showFocus" type="boolean" value="true" onChange="render" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
+    <children>
+        <Poster id="focus" visible="false" />
+        <Group id="rows" />
+    </children>
+</component>

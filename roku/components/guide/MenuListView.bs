@@ -1,0 +1,57 @@
+' The rows of MenuListView (fields in MenuListView.xml): visibleRows Labels made on first render, reused after.
+
+sub init()
+    m.theme = Theme.make()
+    m.focus = m.top.findNode("focus")
+    m.focus.uri = m.theme.images.focusRow
+    m.rows = m.top.findNode("rows")
+    m.labels = []
+end sub
+
+sub makeLabels()
+    if m.labels.Count() = m.top.visibleRows then return
+    m.rows.removeChildrenIndex(m.rows.getChildCount(), 0)
+    m.labels = []
+    spec = m.top.fontSpec
+    if type(spec) <> "roAssociativeArray" then spec = m.theme.fonts.liveMenuRow
+    font = Theme.font(spec)
+    for i = 0 to m.top.visibleRows - 1
+        label = CreateObject("roSGNode", "Label")
+        label.font = font
+        label.vertAlign = "center"
+        label.wrap = false
+        m.rows.appendChild(label)
+        m.labels.Push(label)
+    end for
+end sub
+
+sub render()
+    makeLabels()
+    titles = m.top.items
+    if type(titles) <> "roArray" then titles = []
+    rowHeight = m.top.rowHeight
+    inset = m.top.textInset
+    first = m.top.firstVisible
+    focused = m.top.focusedIndex
+    colors = m.theme.colors
+    for i = 0 to m.labels.Count() - 1
+        label = m.labels[i]
+        index = first + i
+        if index < titles.Count()
+            label.text = titles[index]
+            label.visible = true
+        else
+            label.text = ""
+            label.visible = false
+        end if
+        label.translation = [inset, i * rowHeight]
+        label.width = m.top.rowWidth - 2 * inset
+        label.height = rowHeight
+        if index = focused and m.top.showFocus then label.color = colors.focusedRowText else label.color = colors.primaryText
+    end for
+    slot = focused - first
+    m.focus.visible = m.top.showFocus and slot >= 0 and slot < m.labels.Count() and focused < titles.Count()
+    m.focus.translation = [0, slot * rowHeight]
+    m.focus.width = m.top.rowWidth
+    m.focus.height = rowHeight
+end sub

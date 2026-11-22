@@ -1,0 +1,191 @@
+' ChannelMenu (M12 step 12): the channel menu's rows per context, its keys (LiveMenu.handle) and the favorites and
+' hiding edits. Ported from MMTVL's LiveMenuTests and LiveTVModelTests channel menu cases (Watch, Add/Remove
+' Favorites, Move Up/Down only in Favorites and only with a neighbour, Hide Channel; the menu over the player has
+' no Move) and IPTVLibraryTests (setFavorite, moveFavorite, setChannelHidden). Not here: Add to Multiview (Out of
+' scope), the teams' rows (step 18), Match Guide (step 20). Off-device.
+namespace ChannelMenuTests
+
+    ' MARK: rows per context
+
+    sub test_theGuideOutsideFavorites(t as object)
+        rows = ChannelMenu.items({ channelID: "id:c3", isFavorite: false, group: "Live", movableIDs: [] })
+        t.assertEqual(ChannelMenuTests.idsOf(rows), ["watch", "favorite", "hide"])
+        t.assertEqual(ChannelMenuTests.titlesOf(rows), ["Watch", "Add to Favorites", "Hide Channel"])
+        t.assertEqual(rows[0].action, { type: "watch", channelID: "id:c3" })
+        t.assertEqual(rows[1].action, { type: "toggleFavorite", channelID: "id:c3" })
+        t.assertEqual(rows[2].action, { type: "hideChannel", channelID: "id:c3" })
+    end sub
+
+    sub test_inFavoritesTheMovesFollowTheNeighbours(t as object)
+        movable = ["id:c1", "id:c2", "id:c3"]
+        first = ChannelMenu.items({ channelID: "id:c1", isFavorite: true, group: "Favorites", movableIDs: movable })
+        t.assertEqual(ChannelMenuTests.titlesOf(first), ["Watch", "Remove from Favorites", "Move Down", "Hide Channel"])
+        t.assertEqual(first[2].action, { type: "moveFavorite", channelID: "id:c1", step: 1 })
+        middle = ChannelMenu.items({ channelID: "id:c2", isFavorite: true, group: "Favorites", movableIDs: movable })
+        t.assertEqual(ChannelMenuTests.idsOf(middle), ["watch", "favorite", "moveUp", "moveDown", "hide"])
+        t.assertEqual(middle[2].action, { type: "moveFavorite", channelID: "id:c2", step: -1 })
+        last = ChannelMenu.items({ channelID: "id:c3", isFavorite: true, group: "Favorites", movableIDs: movable })
+        t.assertEqual(ChannelMenuTests.idsOf(last), ["watch", "favorite", "moveUp", "hide"])
+        alone = ChannelMenu.items({ channelID: "id:c1", isFavorite: true, group: "Favorites", movableIDs: ["id:c1"] })
+        t.assertEqual(ChannelMenuTests.idsOf(alone), ["watch", "favorite", "hide"])
+    end sub
+
+    ' M7l 8b: a team game leading Favorites isn't movable.
+    sub test_aTeamGameInFavoritesDoesntMove(t as object)
+        rows = ChannelMenu.items({ channelID: "id:c9", isFavorite: false, group: "Favorites", movableIDs: ["id:c1", "id:c2"] })
+        t.assertEqual(ChannelMenuTests.idsOf(rows), ["watch", "favorite", "hide"])
+    end sub
+
+    ' M7 L5: the menu over the player has no Move Up/Down (the guide isn't open).
+    sub test_overThePlayerThereIsNoMove(t as object)
+        rows = ChannelMenu.items({ channelID: "id:c2", isFavorite: true, group: "", movableIDs: ["id:c1", "id:c2", "id:c3"] })
+        t.assertEqual(ChannelMenuTests.titlesOf(rows), ["Watch", "Remove from Favorites", "Hide Channel"])
+        t.assertEqual(ChannelMenuTests.idsOf(ChannelMenu.items({ channelID: "id:c2", isFavorite: invalid, group: invalid, movableIDs: invalid })), ["watch", "favorite", "hide"])
+    end sub
+
+    ' MARK: keys (LiveMenu.handle)
+
+    sub test_upDownClampAndOKChooses(t as object)
+        menu = ChannelMenuTests.makeMenu(3, 0)
+        result = ChannelMenu.handle(menu, "up", true)
+        t.assertEqual(result.menu.focusedIndex, 0, "clamped at the top")
+        t.assertEqual(result.outcome, "none")
+        menu = ChannelMenu.handle(ChannelMenu.handle(ChannelMenu.handle(menu, "down", true).menu, "down", true).menu, "down", true).menu
+        t.assertEqual(menu.focusedIndex, 2, "clamped at the bottom")
+        chosen = ChannelMenu.handle(menu, "OK", true)
+        t.assertEqual(chosen.outcome, "choose")
+        t.assertEqual(chosen.action, { type: "row", index: 2 })
+        t.assertEqual(ChannelMenu.handle(menu, "OK", false).outcome, "none", "a release does nothing")
+    end sub
+
+    sub test_backAndStarClose(t as object)
+        menu = ChannelMenuTests.makeMenu(3, 1)
+        t.assertEqual(ChannelMenu.handle(menu, "back", true).outcome, "close")
+        t.assertEqual(ChannelMenu.handle(menu, "options", true).outcome, "close")
+        for each key in ["left", "right", "play", "replay"]
+            result = ChannelMenu.handle(menu, key, true)
+            t.assertEqual(result.outcome, "none", key)
+            t.assertEqual(result.menu.focusedIndex, 1, key)
+        end for
+    end sub
+
+    ' MMTVL's Channel Up/Down page by visibleRows (8); the window follows the focus.
+    sub test_pagesAndTheWindow(t as object)
+        menu = ChannelMenuTests.makeMenu(20, 0)
+        t.assertEqual(menu.firstVisible, 0)
+        menu = ChannelMenu.handle(menu, "fastforward", true).menu
+        t.assertEqual(menu.focusedIndex, 8)
+        t.assertEqual(menu.firstVisible, 1)
+        menu = ChannelMenu.handle(menu, "channeldown", true).menu
+        t.assertEqual(menu.focusedIndex, 16)
+        t.assertEqual(menu.firstVisible, 9)
+        menu = ChannelMenu.handle(menu, "fastforward", true).menu
+        t.assertEqual(menu.focusedIndex, 19)
+        t.assertEqual(menu.firstVisible, 12)
+        menu = ChannelMenu.handle(menu, "rewind", true).menu
+        t.assertEqual(menu.focusedIndex, 11)
+        t.assertEqual(menu.firstVisible, 11)
+        menu = ChannelMenu.handle(menu, "channelup", true).menu
+        t.assertEqual(menu.focusedIndex, 3)
+        t.assertEqual(menu.firstVisible, 3)
+        t.assertEqual(ChannelMenu.make("T", "", ChannelMenuTests.makeRows(20), 19, 8).firstVisible, 12, "opening on a late row")
+        t.assertEqual(ChannelMenu.make("T", "", ChannelMenuTests.makeRows(2), 5, 8).focusedIndex, 1, "clamped")
+        ' The window and the page are the rows the view shows (Theme's liveMenuVisibleRows, passed in).
+        short = ChannelMenu.make("T", "", ChannelMenuTests.makeRows(20), 0, 3)
+        t.assertEqual(short.visibleRows, 3)
+        short = ChannelMenu.handle(short, "fastforward", true).menu
+        t.assertEqual(short.focusedIndex, 3)
+        t.assertEqual(short.firstVisible, 1)
+    end sub
+
+    ' MARK: edits (IPTVLibrary)
+
+    sub test_toggleFavoriteAppendsAndRemoves(t as object)
+        prefs = { favorites: ["id:c1"], hiddenChannels: [], hiddenGroups: ["NHL"], teams: ["nba.lal"] }
+        added = ChannelMenu.prefsAfter(prefs, { type: "toggleFavorite", channelID: "id:c5" }, [])
+        t.assertEqual(added.favorites, ["id:c1", "id:c5"], "in the order added")
+        t.assertEqual(added.hiddenGroups, ["NHL"])
+        t.assertEqual(added.teams, ["nba.lal"])
+        t.assertEqual(prefs.favorites, ["id:c1"], "the caller's prefs don't change")
+        removed = ChannelMenu.prefsAfter(added, { type: "toggleFavorite", channelID: "id:c1" }, [])
+        t.assertEqual(removed.favorites, ["id:c5"])
+        t.assertTrue(ChannelMenu.isFavorite(added, "id:c1"))
+        t.assertFalse(ChannelMenu.isFavorite(removed, "id:c1"))
+        t.assertFalse(ChannelMenu.isFavorite(invalid, "id:c1"))
+    end sub
+
+    ' Swaps in the saved list with the neighbour among the movable (visible) favorites, skipping hidden ones.
+    sub test_moveFavoriteSwapsWithTheVisibleNeighbour(t as object)
+        prefs = { favorites: ["id:c1", "id:hidden", "id:c2", "id:c3"] }
+        movable = ["id:c1", "id:c2", "id:c3"]
+        up = ChannelMenu.prefsAfter(prefs, { type: "moveFavorite", channelID: "id:c2", step: -1 }, movable)
+        t.assertEqual(up.favorites, ["id:c2", "id:hidden", "id:c1", "id:c3"])
+        down = ChannelMenu.prefsAfter(prefs, { type: "moveFavorite", channelID: "id:c2", step: 1 }, movable)
+        t.assertEqual(down.favorites, ["id:c1", "id:hidden", "id:c3", "id:c2"])
+        t.assertEqual(ChannelMenu.prefsAfter(prefs, { type: "moveFavorite", channelID: "id:c1", step: -1 }, movable).favorites, prefs.favorites, "past the top")
+        t.assertEqual(ChannelMenu.prefsAfter(prefs, { type: "moveFavorite", channelID: "id:c3", step: 1 }, movable).favorites, prefs.favorites, "past the bottom")
+        t.assertEqual(ChannelMenu.prefsAfter(prefs, { type: "moveFavorite", channelID: "id:c9", step: 1 }, movable).favorites, prefs.favorites, "a team game")
+    end sub
+
+    sub test_hideChannelOnce(t as object)
+        hidden = ChannelMenu.prefsAfter({ hiddenChannels: ["id:c1"] }, { type: "hideChannel", channelID: "id:c4" }, [])
+        t.assertEqual(hidden.hiddenChannels, ["id:c1", "id:c4"])
+        t.assertEqual(hidden.favorites, [])
+        again = ChannelMenu.prefsAfter(hidden, { type: "hideChannel", channelID: "id:c4" }, [])
+        t.assertEqual(again.hiddenChannels, ["id:c1", "id:c4"])
+        t.assertEqual(ChannelMenu.prefsAfter(hidden, { type: "watch", channelID: "id:c4" }, []), hidden, "watch changes nothing")
+        t.assertEqual(ChannelMenu.prefsAfter(hidden, invalid, []), hidden)
+    end sub
+
+    ' The prefs an edit makes rebuild the lineup with Lineup.build: hiding drops the row, a favorite adds the group.
+    sub test_editsRebuildTheLineup(t as object)
+        channels = GuideKeysTests.channels()
+        prefs = ChannelMenu.prefsAfter({}, { type: "toggleFavorite", channelID: "id:c4" }, [])
+        built = Lineup.build(channels, prefs, [])
+        t.assertEqual(built.groups[0], "Favorites")
+        t.assertEqual(built.movableFavorites[0].id, "id:c4")
+        prefs = ChannelMenu.prefsAfter(prefs, { type: "hideChannel", channelID: "id:c4" }, [])
+        built = Lineup.build(channels, prefs, [])
+        t.assertEqual(built.groups, ["My Teams", "All Channels", "Live", "NBA", "NHL"])
+        t.assertFalse(Lineup.isVisible(built, "id:c4"))
+    end sub
+
+    ' MMTVL M6b L8: after Move Up/Down the menu stays open on the same row, or the one now at its place.
+    sub test_focusAfterMove(t as object)
+        movable = ["id:c1", "id:c2", "id:c3"]
+        after = ChannelMenu.items({ channelID: "id:c1", isFavorite: true, group: "Favorites", movableIDs: movable })
+        t.assertEqual(ChannelMenu.focusAfterMove(after, "moveDown", 3), 2)
+        t.assertEqual(ChannelMenu.focusAfterMove(after, "moveUp", 2), 2, "Move Up went: the row now at its place")
+        t.assertEqual(ChannelMenu.focusAfterMove(after, "moveUp", 9), 3, "clamped")
+    end sub
+
+    function makeRows(count as integer) as object
+        result = []
+        for i = 0 to count - 1
+            result.Push({ id: "row" + i.ToStr(), title: "Row " + i.ToStr(), action: { type: "row", index: i } })
+        end for
+        return result
+    end function
+
+    function makeMenu(count as integer, focused as integer) as object
+        ' Theme.bs layout.liveMenuVisibleRows (8; Theme isn't in the off-device build).
+        return ChannelMenu.make("201  Channel", "Programme", ChannelMenuTests.makeRows(count), focused, 8)
+    end function
+
+    function idsOf(list as object) as object
+        result = []
+        for each row in list
+            result.Push(row.id)
+        end for
+        return result
+    end function
+
+    function titlesOf(list as object) as object
+        result = []
+        for each row in list
+            result.Push(row.title)
+        end for
+        return result
+    end function
+
+end namespace

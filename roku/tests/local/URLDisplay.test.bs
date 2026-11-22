@@ -1,0 +1,102 @@
+' URLDisplay (M12 step 13): how Settings shows a URL (M6b L2: the host, plus a guide file's name; never the
+' query). Ported from MMTVLTests/GuideSourceTests.swift: guideFileName, queryIsNeverShown, tokenLikePathIsNotShown,
+' longFileNameIsNotShown, plainXML and antennaGuideURLShowsTheHostOnly (its label part), plus the playlist row
+' (IPTVLibraryTests' playlistHost, Settings' "Playlist") and the edges of the 64-character limit. Off-device.
+namespace URLDisplayTests
+
+    sub test_guideFileName(t as object)
+        url = "https://guide.example/epg/provider_US2.xml.gz"
+        t.assertEqual(URLDisplay.guideLabel(url), "guide.example " + Chr(183) + " provider_US2.xml.gz")
+        t.assertEqual(URLDisplay.guideLabel(url), "guide.example · provider_US2.xml.gz", "the separator is U+00B7")
+        t.assertEqual(URLDisplay.guideShortLabel(url), "provider_US2")
+        t.assertEqual(URLDisplay.guideFileName(url), "provider_US2.xml.gz")
+    end sub
+
+    sub test_queryIsNeverShown(t as object)
+        url = "https://host.example/xmltv.php?username=u&password=p"
+        t.assertEqual(URLDisplay.guideLabel(url), "host.example")
+        t.assertEqual(URLDisplay.guideShortLabel(url), "host.example")
+        ' A guide file with a query or a fragment: the name, never what follows it.
+        url = "https://host.example/guide.xml?token=secret#part"
+        t.assertEqual(URLDisplay.guideLabel(url), "host.example " + Chr(183) + " guide.xml")
+        t.assertEqual(Instr(1, URLDisplay.guideLabel(url), "secret"), 0)
+        ' A query that looks like a file isn't one.
+        t.assertEqual(URLDisplay.guideLabel("https://host.example/get.php?file=guide.xml"), "host.example")
+        t.assertEqual(URLDisplay.guideLabel("https://host.example?f=guide.xml"), "host.example")
+    end sub
+
+    sub test_tokenLikePathIsNotShown(t as object)
+        url = "https://provider.example/app2/abcdefghij12345678"
+        t.assertEqual(URLDisplay.guideLabel(url), "provider.example")
+        t.assertEqual(URLDisplay.guideShortLabel(url), "provider.example")
+        ' Only the last segment: the path before it (which may hold a user name and password) never shows.
+        url = "https://provider.example/user/pass/guide.xml"
+        t.assertEqual(URLDisplay.guideLabel(url), "provider.example " + Chr(183) + " guide.xml")
+        ' Nor user info or a port.
+        t.assertEqual(URLDisplay.guideLabel("https://user:pass@provider.example:8443/epg.xml"), "provider.example " + Chr(183) + " epg.xml")
+    end sub
+
+    sub test_longFileNameIsNotShown(t as object)
+        t.assertEqual(URLDisplay.guideLabel("https://guide.example/" + String(66, "a") + ".xml"), "guide.example")
+        ' 64 characters is the limit, extension included.
+        sixtyFour = String(60, "b") + ".xml"
+        t.assertEqual(URLDisplay.guideLabel("https://guide.example/" + sixtyFour), "guide.example " + Chr(183) + " " + sixtyFour)
+        t.assertEqual(URLDisplay.guideLabel("https://guide.example/" + String(61, "b") + ".xml"), "guide.example")
+    end sub
+
+    sub test_plainXML(t as object)
+        url = "https://guide.example/custom.xml"
+        t.assertEqual(URLDisplay.guideLabel(url), "guide.example " + Chr(183) + " custom.xml")
+        t.assertEqual(URLDisplay.guideShortLabel(url), "custom")
+    end sub
+
+    ' The extensions, in any case; just an extension isn't a name.
+    sub test_guideExtensions(t as object)
+        t.assertEqual(URLDisplay.guideFileName("https://g.example/a.gz"), "a.gz")
+        t.assertEqual(URLDisplay.guideShortLabel("https://g.example/a.gz"), "a")
+        t.assertEqual(URLDisplay.guideFileName("https://g.example/Guide.XML.GZ"), "Guide.XML.GZ")
+        t.assertEqual(URLDisplay.guideShortLabel("https://g.example/Guide.XML.GZ"), "Guide")
+        t.assertEqual(URLDisplay.guideFileName("https://g.example/.xml"), "")
+        t.assertEqual(URLDisplay.guideFileName("https://g.example/.xml.gz"), "")
+        t.assertEqual(URLDisplay.guideFileName("https://g.example/.gz"), "")
+        t.assertEqual(URLDisplay.guideFileName("https://g.example/x.xml.gz/"), "x.xml.gz", "a trailing slash, as lastPathComponent")
+    end sub
+
+    ' Names that aren't guide files show the host only.
+    sub test_nonGuideNamesShowTheHostOnly(t as object)
+        for each path in ["/playlist.m3u", "/epg.json", "/xml", "/guide.xml.zip", "/", "", "/a/b/"]
+            t.assertEqual(URLDisplay.guideLabel("https://guide.example" + path), "guide.example", path)
+        end for
+    end sub
+
+    ' M7j L10: SiliconDust's guide URL, whose query is a token, shows the host only.
+    sub test_antennaGuideURLShowsTheHostOnly(t as object)
+        t.assertEqual(URLDisplay.guideLabel("https://api.hdhomerun.com/api/xmltv?DeviceAuth=abcdef0123456789"), "api.hdhomerun.com")
+    end sub
+
+    ' Stricter than MMTVL: escapes of printable ASCII are decoded; a name with anything else shows no file name.
+    sub test_percentEscapes(t as object)
+        t.assertEqual(URLDisplay.guideFileName("https://g.example/my%2Dguide.xml"), "my-guide.xml")
+        t.assertEqual(URLDisplay.guideFileName("https://g.example/my%20guide.xml"), "")
+        t.assertEqual(URLDisplay.guideFileName("https://g.example/caf%C3%A9.xml"), "")
+        t.assertEqual(URLDisplay.guideFileName("https://g.example/a%2Fb.xml"), "a/b.xml")
+    end sub
+
+    ' The host is Log.host's: lowercased; a URL it won't read shows "?".
+    sub test_hosts(t as object)
+        t.assertEqual(URLDisplay.guideLabel("https://Guide.Example/a.xml"), "guide.example " + Chr(183) + " a.xml")
+        t.assertEqual(URLDisplay.guideLabel("https://[fd00::1]:8080/a.xml"), "fd00::1 " + Chr(183) + " a.xml")
+        t.assertEqual(URLDisplay.guideLabel("not a url/guide.xml"), "?")
+        t.assertEqual(URLDisplay.guideLabel("https://bad\host.example/guide.xml"), "?")
+        t.assertEqual(URLDisplay.guideShortLabel(""), "?")
+        t.assertEqual(URLDisplay.guideLabel(invalid), "?")
+    end sub
+
+    sub test_playlistShowsItsHostOnly(t as object)
+        t.assertEqual(URLDisplay.playlistLabel("http://iptv.example:8080/get.php?username=u&password=p&type=m3u_plus"), "iptv.example")
+        t.assertEqual(URLDisplay.playlistLabel("https://iptv.example/playlist.m3u"), "iptv.example")
+        t.assertEqual(URLDisplay.playlistLabel(""), "Playlist")
+        t.assertEqual(URLDisplay.playlistLabel(invalid), "Playlist")
+    end sub
+
+end namespace

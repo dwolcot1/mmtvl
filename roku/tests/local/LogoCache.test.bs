@@ -1,0 +1,103 @@
+' LogoCache (M12 step 12): which logo a channel wants, where it's cached, and what LogoTask prunes. Off-device.
+namespace LogoCacheTests
+
+    sub test_logosAreOnByDefault(t as object)
+        channel = { id: "id:a", logo: "https://logos.example/a.png" }
+        t.assertEqual(LogoCache.wanted(channel, {}), "https://logos.example/a.png")
+        t.assertEqual(LogoCache.wanted(channel, { channelLogos: true }), "https://logos.example/a.png")
+        t.assertEqual(LogoCache.wanted(channel, { channelLogos: "no" }), "https://logos.example/a.png", "mistyped: on")
+        t.assertEqual(LogoCache.wanted(channel, invalid), "https://logos.example/a.png")
+        t.assertEqual(LogoCache.wanted(channel, { channelLogos: false }), "", "Settings → Device turned them off")
+        t.assertEqual(LogoCache.wanted({ id: "id:b", logo: invalid }, {}), "")
+        t.assertEqual(LogoCache.wanted(invalid, {}), "")
+    end sub
+
+    sub test_thePathIsTheURLsSHA1WithItsExtension(t as object)
+        url = "https://logos.example/a.png?token=secret"
+        cached = LogoCache.path(url)
+        t.assertEqual(Left(cached, Len("cachefs:/logos/")), "cachefs:/logos/")
+        t.assertEqual(Len(cached), Len("cachefs:/logos/") + 40 + Len(".png"))
+        t.assertEqual(Instr(1, cached, "secret"), 0, "never the URL")
+        t.assertEqual(Instr(1, cached, "example"), 0)
+        t.assertEqual(cached, LogoCache.path(url), "the same URL, the same file")
+        t.assertFalse(cached = LogoCache.path("https://logos.example/b.png"))
+        t.assertTrue(LogoCache.isOwnPath(url, cached))
+        t.assertFalse(LogoCache.isOwnPath(url, "cachefs:/guides/x.xml"))
+        t.assertFalse(LogoCache.isOwnPath("", LogoCache.path("")))
+    end sub
+
+    sub test_extensions(t as object)
+        t.assertEqual(LogoCache.extensionOf("https://a.example/x/LOGO.JPG"), ".jpg")
+        t.assertEqual(LogoCache.extensionOf("https://a.example/x/logo.webp#f"), ".webp")
+        t.assertEqual(LogoCache.extensionOf("https://a.example/x/logo.svg"), ".png")
+        t.assertEqual(LogoCache.extensionOf("https://a.example/x.y/logo"), ".png", "a dot only in a folder name")
+        t.assertEqual(LogoCache.extensionOf("https://a.example/logo?name=a.gif"), ".png", "not from the query")
+    end sub
+
+    sub test_prunableDropsPartsThenTheExcess(t as object)
+        names = ["c.png", "a.png", "x.png.part", "b.png", "d.png"]
+        t.assertEqual(LogoCache.prunable(names, 10), ["x.png.part"])
+        t.assertEqual(LogoCache.prunable(names, 2), ["x.png.part", "a.png", "b.png"])
+        t.assertEqual(LogoCache.prunable(invalid, 2), [])
+    end sub
+
+    ' LogoTask's queue: last in, first out, at most maximum, no path twice (QA of step 12).
+    sub test_theQueueIsLastInFirstOut(t as object)
+        queue = LogoCache.newQueue()
+        for each name in ["a", "b", "c"]
+            t.assertTrue(LogoCache.enqueue(queue, LogoCacheTests.request(name), 10).added, name)
+        end for
+        t.assertEqual(LogoCache.popNewest(queue).path, LogoCacheTests.request("c").path, "the newest first")
+        LogoCache.enqueue(queue, LogoCacheTests.request("d"), 10)
+        t.assertEqual(LogoCache.popNewest(queue).url, "https://logos.example/d.png")
+        t.assertEqual(LogoCache.popNewest(queue).url, "https://logos.example/b.png")
+        t.assertEqual(LogoCache.popNewest(queue).url, "https://logos.example/a.png")
+        t.assertEqual(LogoCache.popNewest(queue), invalid, "empty")
+    end sub
+
+    sub test_theQueueDropsTheOldestBeyondTheMaximum(t as object)
+        queue = LogoCache.newQueue()
+        LogoCache.enqueue(queue, LogoCacheTests.request("a"), 2)
+        LogoCache.enqueue(queue, LogoCacheTests.request("b"), 2)
+        result = LogoCache.enqueue(queue, LogoCacheTests.request("c"), 2)
+        t.assertTrue(result.added)
+        t.assertEqual(result.dropped, [LogoCacheTests.request("a").path], "scrolled out of view")
+        t.assertEqual(queue.items.Count(), 2)
+        t.assertFalse(queue.paths.DoesExist(LogoCacheTests.request("a").path))
+        t.assertEqual(LogoCache.popNewest(queue).url, "https://logos.example/c.png")
+        t.assertEqual(LogoCache.popNewest(queue).url, "https://logos.example/b.png")
+        t.assertEqual(LogoCache.popNewest(queue), invalid)
+    end sub
+
+    sub test_theQueueSkipsAPathAlreadyWaiting(t as object)
+        queue = LogoCache.newQueue()
+        LogoCache.enqueue(queue, LogoCacheTests.request("a"), 10)
+        LogoCache.enqueue(queue, LogoCacheTests.request("b"), 10)
+        again = LogoCache.enqueue(queue, LogoCacheTests.request("a"), 10)
+        t.assertFalse(again.added)
+        t.assertEqual(again.dropped, [])
+        t.assertEqual(queue.items.Count(), 2)
+        t.assertEqual(LogoCache.popNewest(queue).url, "https://logos.example/b.png")
+        t.assertEqual(LogoCache.popNewest(queue).url, "https://logos.example/a.png")
+        t.assertTrue(LogoCache.enqueue(queue, LogoCacheTests.request("a"), 10).added, "taken out: it may come again")
+    end sub
+
+    ' QA of step 12: a dropped path leaves the queue entirely (LogoTask answers it), so the guide's next ask adds it.
+    sub test_aDroppedPathIsReportedAndMayComeAgain(t as object)
+        queue = LogoCache.newQueue()
+        LogoCache.enqueue(queue, LogoCacheTests.request("a"), 1)
+        result = LogoCache.enqueue(queue, LogoCacheTests.request("b"), 1)
+        t.assertEqual(result.dropped, [LogoCacheTests.request("a").path], "reported")
+        again = LogoCache.enqueue(queue, LogoCacheTests.request("a"), 1)
+        t.assertTrue(again.added, "requested again")
+        t.assertEqual(again.dropped, [LogoCacheTests.request("b").path])
+        t.assertEqual(LogoCache.popNewest(queue).url, "https://logos.example/a.png", "and newest")
+        t.assertEqual(LogoCache.popNewest(queue), invalid)
+    end sub
+
+    function request(name as string) as object
+        url = "https://logos.example/" + name + ".png"
+        return { url: url, path: LogoCache.path(url) }
+    end function
+
+end namespace

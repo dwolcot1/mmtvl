@@ -1,0 +1,444 @@
+' The full-screen player (fields in PlayerScreen.xml). Keys go through PlayerKeys.handle; overlays through
+' PlayerSession.apply/visible (MMTVL's banner, timeshift bar and paused overlay timing); the banner's text through
+' BannerText; the timeshift bar's and badge's through Timeshift (step 11b). The stream URL is checked with URLPolicy.allowsStream (http or https, any host: MMTVL's rule, decided
+' 2026-11-18) and never logged: only its host (L6).
+
+sub init()
+    m.theme = Theme.make()
+    layout = m.theme.layout
+    canvas = m.theme.canvas
+    timing = m.theme.timing
+    m.video = m.top.findNode("video")
+    m.video.width = canvas.width
+    m.video.height = canvas.height
+    m.video.observeField("state", "onVideoState")
+    m.gradient = m.top.findNode("overlayGradient")
+    m.gradient.uri = m.theme.images.overlayBottom
+    m.gradient.width = canvas.width
+    m.overlay = m.top.findNode("overlay")
+    m.panelGroup = m.top.findNode("panelGroup")
+    m.panel = m.top.findNode("overlayPanel")
+    m.panel.uri = m.theme.images.bannerPanel
+    m.panelWidth = canvas.width - 2 * layout.sideMargin
+    m.panel.width = m.panelWidth
+    innerWidth = m.panelWidth - 2 * layout.liveBannerPadding
+    m.banner = m.top.findNode("banner")
+    m.banner.contentWidth = innerWidth
+    m.banner.observeField("contentHeight", "layoutPanel")
+    m.bar = m.top.findNode("timeshiftBar")
+    m.bar.contentWidth = innerWidth
+    m.badge = m.top.findNode("badge")
+    m.badgePanel = m.top.findNode("badgePanel")
+    m.badgePanel.uri = m.theme.images.behindLiveBadge
+    m.badgePanel.height = layout.timeshiftBadgeHeight
+    m.badgeLabel = m.top.findNode("badgeLabel")
+    detail = m.theme.fonts.liveBannerDetail
+    m.badgeLabel.font = Theme.font(detail)
+    m.badgeLabel.color = m.theme.colors.primaryText
+    m.badgeLabel.height = Theme.lineHeight(detail)
+    m.badgeLabel.vertAlign = "center"
+    m.badgeLabel.translation = [layout.timeshiftBadgeHorizontalPadding, Int((layout.timeshiftBadgeHeight - m.badgeLabel.height) / 2)]
+    m.errorPanel = m.top.findNode("errorPanel")
+    ' The overlay (gradient and panel) and the badge fade on their own, as MMTVL's.
+    m.faders = {
+        overlay: makeFader(m.overlay, "overlayFade", "overlayFadeValue", timing.overlayFade),
+        badge: makeFader(m.badge, "badgeFade", "badgeFadeValue", timing.overlayFade)
+    }
+    m.timeshiftTimer = makeTimer("timeshiftTimer", Timeshift.refreshSeconds, "updateTimeshift")
+    m.bannerTimer = makeTimer("bannerTimer", timing.bannerDuration, "onBannerTimeout")
+    m.barTimer = makeTimer("barTimer", timing.bannerDuration, "onBarTimeout")
+    m.pausedTimer = makeTimer("pausedTimer", timing.pausedOverlayDuration, "onPausedTimeout")
+    m.stallTimer = makeTimer("stallTimer", PlayerSession.stallSeconds, "onStall")
+    m.channel = invalid
+    m.overlays = PlayerSession.noOverlays()
+    m.shown = invalid
+    m.errorShown = false
+    m.playClock = CreateObject("roTimespan")
+    m.waitingForStart = false
+end sub
+
+function makeFader(node as object, animationID as string, valueID as string, seconds as dynamic) as object
+    animation = m.top.findNode(animationID)
+    animation.duration = seconds
+    animation.observeField("state", "onFadeState")
+    return { node: node, animation: animation, value: m.top.findNode(valueID), target: 0 }
+end function
+
+function makeTimer(id as string, seconds as dynamic, handler as string) as object
+    timer = m.top.findNode(id)
+    timer.duration = seconds
+    timer.observeField("fire", handler)
+    return timer
+end function
+
+' --- playing --------------------------------------------------------------------------------------------------
+
+sub onChannel()
+    item = m.top.channel
+    if type(item) <> "roAssociativeArray" then return
+    m.channel = item
+    play()
+end sub
+
+sub play()
+    hideError()
+    url = textOf(m.channel.url)
+    host = Log.host(url)
+    if not URLPolicy.allowsStream(url).ok
+        Log.warn("Player", "Not playing " + textOf(m.channel.title) + ": the stream isn't http or https")
+        m.video.control = "stop"
+        showError()
+        applyOverlay("channel")
+        return
+    end if
+    content = CreateObject("roSGNode", "ContentNode")
+    content.url = url
+    content.streamFormat = "hls"
+    content.live = true
+    ' Roku's CA bundle for https streams (as PlaylistTask's transfers).
+    content.HttpCertificatesFile = "common:/certs/ca-bundle.crt"
+    m.video.content = content
+    m.playClock.Mark()
+    m.waitingForStart = true
+    m.video.control = "play"
+    restartTimer(m.stallTimer)
+    Log.info("Player", Log.withHost("Playing " + textOf(m.channel.title), host))
+    applyOverlay("channel")
+end sub
+
+sub onVideoState()
+    state = m.video.state
+    if state = "playing"
+        m.stallTimer.control = "stop"
+        if m.waitingForStart
+            m.waitingForStart = false
+            Log.info("Player", "Playing after " + m.playClock.TotalMilliseconds().ToStr() + " ms")
+        end if
+    else if state = "buffering"
+        restartTimer(m.stallTimer)
+    else if state = "paused"
+        m.stallTimer.control = "stop"
+    else if state = "error"
+        Log.warn("Player", "Stream error " + m.video.errorCode.ToStr() + " on " + channelLabel())
+        failed()
+    else if state = "finished"
+        ' A live stream doesn't end: the provider stopped sending it.
+        Log.warn("Player", "The stream ended on " + channelLabel())
+        failed()
+    end if
+    render()
+end sub
+
+' Buffering for PlayerSession.stallSeconds with no picture: as an error (step 11).
+sub onStall()
+    if m.channel = invalid or m.errorShown then return
+    state = m.video.state
+    if state = "playing" or state = "paused" then return
+    Log.warn("Player", "No picture for " + Str(PlayerSession.stallSeconds).Trim() + " s on " + channelLabel())
+    failed()
+end sub
+
+sub failed()
+    if m.channel = invalid or m.errorShown then return
+    m.waitingForStart = false
+    m.stallTimer.control = "stop"
+    m.video.control = "stop"
+    showError()
+end sub
+
+' The channel's title and its stream's host, for the log (never the URL).
+function channelLabel() as string
+    if m.channel = invalid then return "no channel"
+    return Log.withHost(textOf(m.channel.title), Log.host(textOf(m.channel.url)))
+end function
+
+sub showError()
+    m.errorShown = true
+    m.top.failed = true
+    m.errorPanel.visible = not m.top.preview
+end sub
+
+sub hideError()
+    m.errorShown = false
+    m.top.failed = false
+    m.errorPanel.visible = false
+end sub
+
+sub onControl()
+    if m.top.control = "showBanner"
+        ' Back to full screen from the guide without a reconnect (MMTVL's showBanner).
+        if m.channel <> invalid then applyOverlay("channel")
+        return
+    end if
+    if m.top.control = "togglePause"
+        if m.channel = invalid or m.errorShown then return
+        if isPaused() then m.video.control = "resume" else m.video.control = "pause"
+        return
+    end if
+    if m.top.control <> "stop" then return
+    m.video.control = "stop"
+    m.channel = invalid
+    m.waitingForStart = false
+    m.stallTimer.control = "stop"
+    hideError()
+    applyOverlay("hideOverlays")
+end sub
+
+' --- keys -----------------------------------------------------------------------------------------------------
+
+' Every PlayerKeys key is handled here (so Back never reaches the scene from the player); others bubble up.
+function onKeyEvent(key as string, press as boolean) as boolean
+    result = PlayerKeys.handle(key, press, keyState())
+    if not result.handled then return false
+    if press and m.channel <> invalid then applyOverlay("press")
+    perform(result.action)
+    return true
+end function
+
+function keyState() as object
+    paused = isPaused()
+    shown = PlayerSession.visible(m.overlays, paused)
+    return {
+        hasChannel: m.channel <> invalid,
+        overlaysShown: shown.any,
+        errorShown: m.errorShown,
+        paused: paused,
+        previousChannelID: m.top.previousChannelID,
+        channelUpMovesUpList: m.top.channelUpMovesUpList
+    }
+end function
+
+sub perform(action as object)
+    kind = action.type
+    if kind = "zap"
+        m.top.action = { type: "zap", step: action.step }
+    else if kind = "retry"
+        play()
+    else if kind = "showOverlays" or kind = "hideOverlays"
+        applyOverlay(kind)
+    else if kind = "openGuide"
+        m.top.action = { type: "openGuide" }
+    else if kind = "openChannelMenu"
+        m.top.action = { type: "openChannelMenu", channelID: m.channel.id }
+    else if kind = "previousChannel"
+        m.top.action = { type: "previousChannel", channelID: action.channelID }
+    else if kind = "pause"
+        m.video.control = "pause"
+        applyOverlay("timeshift")
+    else if kind = "resume"
+        m.video.control = "resume"
+        applyOverlay("timeshift")
+    else if kind = "seek"
+        seekBy(action.seconds)
+        applyOverlay("timeshift")
+    end if
+end sub
+
+' Rewind / Fast Forward: within Roku's pause buffer, 30 s from the live edge (PlayerKeys.seekTarget). What the
+' pause-buffer fields hold is a device check (step 15); without them the clamp leaves the position alone.
+sub seekBy(seconds as integer)
+    position = m.video.position
+    target = PlayerKeys.seekTarget(position, seconds, nodeField(m.video, "pauseBufferStart"), nodeField(m.video, "pauseBufferEnd"))
+    if Refresh.isNumber(target) and target <> position then m.video.seek = target
+end sub
+
+function nodeField(node as object, name as string) as dynamic
+    if not node.hasField(name) then return invalid
+    return node.getField(name)
+end function
+
+function isPaused() as boolean
+    return m.video.state = "paused"
+end function
+
+' --- overlays -------------------------------------------------------------------------------------------------
+
+sub applyOverlay(event as string)
+    result = PlayerSession.apply(m.overlays, event)
+    m.overlays = result.overlays
+    setTimer(m.bannerTimer, result.timers.banner)
+    setTimer(m.barTimer, result.timers.bar)
+    setTimer(m.pausedTimer, result.timers.paused)
+    if event = "channel" or event = "showOverlays" then updateBanner()
+    render()
+end sub
+
+sub setTimer(timer as object, command as string)
+    if command = "start"
+        restartTimer(timer)
+    else if command = "stop"
+        timer.control = "stop"
+    end if
+end sub
+
+sub restartTimer(timer as object)
+    timer.control = "stop"
+    timer.control = "start"
+end sub
+
+sub onBannerTimeout()
+    applyOverlay("bannerTimeout")
+end sub
+
+sub onBarTimeout()
+    applyOverlay("barTimeout")
+end sub
+
+sub onPausedTimeout()
+    applyOverlay("pausedTimeout")
+end sub
+
+' What shows: the panel with Banner A, the timeshift bar or both (one under the other, frame qDm9F), and the badge
+' while the bar shows behind live. While everything fades out, the last layout stays.
+sub render()
+    shown = PlayerSession.visible(m.overlays, isPaused())
+    ' In the guide's preview nothing shows over the video.
+    if m.top.preview then shown = { banner: false, timeshift: false, any: false }
+    m.top.timeshiftShown = shown.timeshift
+    m.shown = shown
+    if shown.timeshift
+        if m.timeshiftTimer.control <> "start" then m.timeshiftTimer.control = "start"
+    else
+        m.timeshiftTimer.control = "stop"
+    end if
+    if shown.any
+        m.banner.visible = shown.banner
+        m.bar.visible = shown.timeshift
+        layoutPanel()
+    end if
+    updateTimeshift()
+    if shown.any then fadeTo("overlay", 1) else fadeTo("overlay", 0)
+end sub
+
+' The panel liveBannerPadding around its content, Banner A then liveBannerBarGap then the bar; its bottom
+' liveBannerBottom above the screen's; the gradient from liveOverlayTopPadding above it to the bottom.
+sub layoutPanel()
+    if m.shown = invalid then return
+    if not m.shown.any then return
+    layout = m.theme.layout
+    canvas = m.theme.canvas
+    padding = layout.liveBannerPadding
+    y = padding
+    if m.shown.banner
+        m.banner.translation = [padding, y]
+        y = y + m.banner.contentHeight
+    end if
+    if m.shown.timeshift
+        if m.shown.banner then y = y + layout.liveBannerBarGap
+        m.bar.translation = [padding, y]
+        y = y + m.bar.contentHeight
+    end if
+    height = y + padding
+    panelTop = canvas.height - layout.liveBannerBottom - height
+    m.panel.height = height
+    m.panelGroup.translation = [layout.sideMargin, panelTop]
+    gradientTop = panelTop - layout.liveOverlayTopPadding
+    m.gradient.translation = [0, gradientTop]
+    m.gradient.height = canvas.height - gradientTop
+end sub
+
+' The bar's label and playhead and the badge, from the Video's position and pause buffer (Timeshift.view). Without
+' pause-buffer numbers (unverified fields): "LIVE", no playhead, no badge.
+sub updateTimeshift()
+    if m.shown = invalid then return
+    paused = isPaused()
+    layout = m.theme.layout
+    state = Timeshift.view(m.video.position, nodeField(m.video, "pauseBufferStart"), nodeField(m.video, "pauseBufferEnd"), m.bar.contentWidth, layout.liveBarHeight)
+    m.bar.info = { paused: paused, label: state.label, fillWidth: state.fillWidth }
+    showBadge = m.shown.timeshift and not state.isLive
+    if showBadge
+        m.badgeLabel.text = state.label
+        m.badgeLabel.width = 0
+        inner = Int(m.badgeLabel.boundingRect().width + 0.5)
+        width = Int((inner + 2 * layout.timeshiftBadgeHorizontalPadding + 2) / 3) * 3
+        m.badgePanel.width = width
+        m.badge.translation = [m.theme.canvas.width - layout.sideMargin - width, layout.timeshiftBadgeTop]
+        fadeTo("badge", 1)
+    else
+        fadeTo("badge", 0)
+    end if
+end sub
+
+sub fadeTo(name as string, target as integer)
+    fader = m.faders[name]
+    if fader.target = target then return
+    fader.target = target
+    fader.animation.control = "stop"
+    fader.value.keyValue = [fader.node.opacity, target]
+    if target = 1 then fader.node.visible = true
+    fader.animation.control = "start"
+end sub
+
+sub onFadeState()
+    for each name in m.faders
+        fader = m.faders[name]
+        if fader.animation.state = "stopped" and fader.target = 0 then fader.node.visible = false
+    end for
+end sub
+
+' --- the banner -----------------------------------------------------------------------------------------------
+
+sub updateBanner()
+    if m.channel = invalid then return
+    now = CreateObject("roDateTime").AsSeconds()
+    programmes = m.top.programmes
+    picked = BannerText.nowNext(programmes, now)
+    info = { title: textOf(m.channel.title), logo: textOf(m.channel.logo), nowTitle: "", timeText: "", progress: 0, nextText: "" }
+    current = picked.now
+    if current <> invalid
+        info.nowTitle = textOf(current.title)
+        ends = current.stop
+        if ends < current.start then ends = current.start
+        info.timeText = BannerText.timeRange(localParts(current.start), localParts(ends))
+        info.progress = BannerText.progress(current, now)
+        if picked.next <> invalid then info.nextText = BannerText.nextLine(textOf(picked.next.title), localParts(picked.next.start))
+    end if
+    m.banner.info = info
+end sub
+
+' A new list (a channel change, a new guide): the banner, if it shows.
+sub onProgrammes()
+    if m.shown <> invalid
+        if m.shown.banner then updateBanner()
+    end if
+end sub
+
+' The cached logo arrived after the channel started.
+sub onLogo()
+    if m.channel = invalid then return
+    m.channel.logo = m.top.logo
+    onProgrammes()
+end sub
+
+' The guide's preview place, or full screen again (the error panel comes back if it was up).
+sub onPreview()
+    canvas = m.theme.canvas
+    if m.top.preview
+        rect = m.theme.layout.guidePreviewRect
+        m.video.translation = [rect.x, rect.y]
+        m.video.width = rect.width
+        m.video.height = rect.height
+        m.errorPanel.visible = false
+        applyOverlay("hideOverlays")
+    else
+        m.video.translation = [0, 0]
+        m.video.width = canvas.width
+        m.video.height = canvas.height
+        m.errorPanel.visible = m.errorShown
+        render()
+    end if
+end sub
+
+' Local clock parts for BannerText.
+function localParts(seconds as dynamic) as object
+    date = CreateObject("roDateTime")
+    date.FromSeconds(Int(seconds))
+    date.ToLocalTime()
+    return { hours: date.GetHours(), minutes: date.GetMinutes() }
+end function
+
+function textOf(value as dynamic) as string
+    kind = LCase(type(value))
+    if kind = "string" or kind = "rostring" then return value
+    return ""
+end function

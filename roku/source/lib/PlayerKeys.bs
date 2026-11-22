@@ -1,0 +1,221 @@
+' The full-screen player's keys (M12 step 11, L4, D49) as pure functions: a port of MMTVL's
+' LiveTVModel.handlePlayer (IPTV/LiveTVModel.swift:534-584), zap and zapList (:1524-1556), channelStep (:586-590)
+' and IPTVLibrary.rememberChannel (IPTV/IPTVLibrary.swift:171-179), for the player screen to call from onKeyEvent.
+' No nodes: the screen passes its state in and carries out the action that comes back. Uses Refresh (isNumber)
+' and Lineup (zapList), so a component that loads this file loads those too.
+'
+'   handle(key, press, state) -> { handled, action }
+'     key    Roku's key string: "up", "down", "left", "right", "OK", "back", "options", "replay", "play",
+'            "rewind", "fastforward", and "channelup"/"channeldown" (Roku sends those only to a TimeGrid, but a
+'            channel key is where MMTVL's channelUpMovesUpList applies; see below).
+'     press  true on the key going down. MMTVL acts on the press; a release does nothing (action none) but is
+'            handled for the keys a press handles, so neither half bubbles up.
+'     state  { hasChannel, overlaysShown, errorShown, paused, previousChannelID, channelUpMovesUpList }
+'       hasChannel           a channel is current (playing, failed or stopped). Without one, every key does
+'                            nothing: D49, Back with nothing playing does nothing (and never leaves).
+'       overlaysShown        the info banner or the timeshift bar (also the paused bar, M7m L15) shows.
+'       errorShown           the error panel ("Can't play this channel") shows.
+'       paused               the Video node is paused.
+'       previousChannelID    what Replay goes to (previousChannelID below); "" or missing: none.
+'       channelUpMovesUpList MMTVL's setting (default true when missing).
+'     handled: true for every key above (so Back never reaches the scene and never exits the app, D49), false for
+'     any other key. action: { type, ... }:
+'       none
+'       zap { step }               -1 up the list, +1 down it (zapTarget picks the channel)
+'       retry                      play the current channel again (OK on the error panel)
+'       showOverlays               the banner and the timeshift bar
+'       hideOverlays               the banner, the timeshift bar and the paused bar
+'       openGuide
+'       openChannelMenu            the current channel's menu
+'       previousChannel { channelID }
+'       pause / resume { showTimeshiftBar: true }
+'       seek { seconds, showTimeshiftBar: true }   seekTarget clamps it
+'
+' The key table, as MMTVL's player:
+'   up / down         zap -1 / +1: Up always moves up the list, Down down it (MMTVL's arrows ignore the setting)
+'   channelup/down    zap in the direction channelUpMovesUpList sets: true (default) Channel Up = up the list (-1);
+'                     false Channel Up = the higher number (+1) (M7 L22)
+'   OK                retry on the error panel; else hide the overlays when they show; else show them (M7c L11)
+'   back              hide the overlays when they show; else open the guide (M7c L11, M7m L2)
+'   options           the channel menu (MMTVL's Menu, M7 L5)
+'   play              pause or resume, and show the timeshift bar
+'   rewind / ff       skip back / ahead skipSeconds (10 s; L4, the user's decision of 2026-11-18: MMTVL's Left/Right
+'                     10 s and Rewind/Fast Forward 30 s became Rewind/Fast Forward 10 s on the Roku)
+'   left / right      nothing (handled; Back is the way out)
+'   replay            the previous channel (L4; MMTVL has no such key), when there is one
+'
+'   seekTarget(position, seconds, bufferStart, bufferEnd, liveEdge) -> the position to seek to (L4, Out of scope):
+'     within the pause buffer [bufferStart, bufferEnd] and at least liveEdgeMarginSeconds (30 s) behind the live
+'     edge (liveEdge; invalid: bufferEnd stands for it). Never moves the other way from the skip: a skip ahead
+'     that has no room stays at position, and so does a skip back; 0 seconds stays at position. All in the Video node's position units
+'     (seconds); invalid inputs give position back. The pause buffer's units and meaning are unverified (device).
+'   zapList(lineup, lastGroup, current) -> the channels zapping steps through (MMTVL's zapList): the remembered
+'     group when it holds the current channel, else the channel's own group, else every visible channel.
+'   zapTarget(list, currentID, step) -> the channel a zap plays, or invalid (MMTVL's zap): wraps; from a channel
+'     not in the list (hidden while playing) Down plays the first and Up the last; a one-channel list stays.
+'   remembered(recents, id) -> recents with id first, without its other copies, at most maximumRecents (10).
+'   previousChannelID(recents, currentID) -> the most recent channel that isn't the current one, or "".
+namespace PlayerKeys
+
+    ' Rewind and Fast Forward's skip (L4).
+    const skipSeconds = 10
+    ' Roku: a live stream stays at least this far behind the live edge.
+    const liveEdgeMarginSeconds = 30
+    ' MMTVL's IPTVState.maxRecentChannels (SettingsStore.maximumRecents keeps the same number).
+    const maximumRecents = 10
+
+    function handle(key as dynamic, press as dynamic, state as dynamic) as object
+        if not PlayerKeys.isKey(key) then return { handled: false, action: PlayerKeys.action("none") }
+        if press <> true then return { handled: true, action: PlayerKeys.action("none") }
+        return { handled: true, action: PlayerKeys.actionFor(key, PlayerKeys.readState(state)) }
+    end function
+
+    function isKey(key as dynamic) as boolean
+        if not PlayerKeys.isText(key) then return false
+        for each known in ["up", "down", "left", "right", "OK", "back", "options", "replay", "play", "rewind", "fastforward", "channelup", "channeldown"]
+            if key = known then return true
+        end for
+        return false
+    end function
+
+    function actionFor(key as string, state as object) as object
+        if not state.hasChannel then return PlayerKeys.action("none")
+        if key = "up" then return { type: "zap", step: -1 }
+        if key = "down" then return { type: "zap", step: 1 }
+        if key = "channelup" or key = "channeldown" then return { type: "zap", step: PlayerKeys.channelStep(key, state.channelUpMovesUpList) }
+        if key = "rewind" then return PlayerKeys.seekAction(-PlayerKeys.skipSeconds)
+        if key = "fastforward" then return PlayerKeys.seekAction(PlayerKeys.skipSeconds)
+        if key = "play"
+            if state.paused then return { type: "resume", showTimeshiftBar: true }
+            return { type: "pause", showTimeshiftBar: true }
+        end if
+        if key = "OK"
+            if state.errorShown then return PlayerKeys.action("retry")
+            if state.overlaysShown then return PlayerKeys.action("hideOverlays")
+            return PlayerKeys.action("showOverlays")
+        end if
+        if key = "back"
+            if state.overlaysShown then return PlayerKeys.action("hideOverlays")
+            return PlayerKeys.action("openGuide")
+        end if
+        if key = "options" then return PlayerKeys.action("openChannelMenu")
+        if key = "replay"
+            if state.previousChannelID = "" then return PlayerKeys.action("none")
+            return { type: "previousChannel", channelID: state.previousChannelID }
+        end if
+        return PlayerKeys.action("none")
+    end function
+
+    ' MMTVL's channelStep: Channel Up is -1 (up the list) when movesUpList, else +1 (the higher number); Channel
+    ' Down the opposite.
+    function channelStep(key as string, movesUpList as boolean) as integer
+        upStep = 1
+        if movesUpList then upStep = -1
+        if key = "channelup" then return upStep
+        return -upStep
+    end function
+
+    function seekAction(seconds as integer) as object
+        return { type: "seek", seconds: seconds, showTimeshiftBar: true }
+    end function
+
+    function action(kind as string) as object
+        return { type: kind }
+    end function
+
+    ' The state with every field read tolerantly: a missing or mistyped field reads as its default.
+    function readState(state as dynamic) as object
+        result = {
+            hasChannel: false,
+            overlaysShown: false,
+            errorShown: false,
+            paused: false,
+            previousChannelID: "",
+            channelUpMovesUpList: true
+        }
+        if LCase(type(state)) <> "roassociativearray" then return result
+        for each field in ["hasChannel", "overlaysShown", "errorShown", "paused", "channelUpMovesUpList"]
+            if PlayerKeys.isBoolean(state[field]) then result[field] = state[field]
+        end for
+        if PlayerKeys.isText(state.previousChannelID) then result.previousChannelID = state.previousChannelID
+        return result
+    end function
+
+    function seekTarget(position as dynamic, seconds as dynamic, bufferStart as dynamic, bufferEnd as dynamic, liveEdge = invalid as dynamic) as dynamic
+        if not Refresh.isNumber(position) then return position
+        if not Refresh.isNumber(seconds) or not Refresh.isNumber(bufferStart) or not Refresh.isNumber(bufferEnd) then return position
+        ' QA minor: no skip, no move (even from outside the allowed range).
+        if seconds = 0 then return position
+        edge = bufferEnd
+        if Refresh.isNumber(liveEdge) then edge = liveEdge
+        upper = edge - PlayerKeys.liveEdgeMarginSeconds
+        if bufferEnd < upper then upper = bufferEnd
+        target = position + seconds
+        if target > upper then target = upper
+        if target < bufferStart then target = bufferStart
+        if seconds > 0 and target < position then return position
+        if seconds < 0 and target > position then return position
+        return target
+    end function
+
+    function zapList(built as object, lastGroup as dynamic, current as object) as object
+        rememberedGroup = Lineup.resolvedGroup(built, lastGroup)
+        if PlayerKeys.isText(rememberedGroup)
+            inGroup = Lineup.channelsIn(built, rememberedGroup)
+            if PlayerKeys.indexOf(inGroup, current.id) >= 0 then return inGroup
+        end if
+        own = []
+        if PlayerKeys.isText(current.group) then own = Lineup.channelsIn(built, current.group)
+        if own.Count() = 0 then return built.visibleChannels
+        return own
+    end function
+
+    function zapTarget(list as object, currentID as dynamic, stepSize as integer) as dynamic
+        count = list.Count()
+        if count = 0 then return invalid
+        index = -1
+        if PlayerKeys.isText(currentID) then index = PlayerKeys.indexOf(list, currentID)
+        if index < 0
+            if stepSize > 0 then return list[0]
+            return list[count - 1]
+        end if
+        if count = 1 then return invalid
+        return list[((index + stepSize) mod count + count) mod count]
+    end function
+
+    function remembered(recents as dynamic, id as string) as object
+        result = [id]
+        if LCase(type(recents)) <> "roarray" then return result
+        for each recent in recents
+            if result.Count() >= PlayerKeys.maximumRecents then exit for
+            if PlayerKeys.isText(recent) and recent <> id then result.Push(recent)
+        end for
+        return result
+    end function
+
+    function previousChannelID(recents as dynamic, currentID as dynamic) as string
+        if LCase(type(recents)) <> "roarray" then return ""
+        for each recent in recents
+            if PlayerKeys.isText(recent) and recent <> "" and not (PlayerKeys.isText(currentID) and recent = currentID) then return recent
+        end for
+        return ""
+    end function
+
+    function indexOf(channels as object, id as string) as integer
+        for i = 0 to channels.Count() - 1
+            if channels[i].id = id then return i
+        end for
+        return -1
+    end function
+
+    function isText(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "string" or kind = "rostring"
+    end function
+
+    function isBoolean(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "boolean" or kind = "roboolean"
+    end function
+
+end namespace

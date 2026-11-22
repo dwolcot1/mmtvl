@@ -46,6 +46,10 @@ namespace GuideSources
     ' The scene gives up on a GuideTask after this long: every download's timeout (6 × 180 s), the processing
     ' limit (600 s) and two minutes (GuideFetch's constants).
     const watchdogSeconds = 1800
+    ' Whether .gz guides are inflated at all (D55): step 4 decides from probe 3d; until then on, within
+    ' Capabilities' per-class limit (inflateMaxCompressedBytes). Off: every .gz guide is "Can't read .gz on this
+    ' Roku", and Settings → Device shows Compressed Guides off. (In GuideFetch until step 13.)
+    const inflateEnabled = true
 
     function chooseSources(pastedURLs as dynamic, playlistGuideURLs as dynamic, usePlaylistGuide as dynamic, playlistURL as dynamic) as object
         pasted = GuideSources.textList(pastedURLs)

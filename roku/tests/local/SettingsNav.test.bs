@@ -1,0 +1,268 @@
+' Settings' stack, focus and keys (M12 step 13), ported from MMTVL's SettingsModelTests where they apply
+' (initialFocusIsFirstRow, upDownMovesAndClamps, pushAndPopRestoresFocus, columnsRoles, rightOpensDisclosureRow,
+' rightIgnoresToggle, leftPopsExceptRootAndLearn, parentSelectionIsOpeningRow, repeatedRightAndLeftDontChangePage,
+' channelUpDownPageByEightRows, removeConfirmFocusesCancelFirst, guidePage's pop after Remove), plus Back on the
+' root (D49), the low-memory notice's entry on Device, the track and scroll positions, and L8's About sequence.
+namespace SettingsNavTests
+
+    sub test_initialFocusIsTheFirstRow(t as object)
+        state = SettingsNav.open()
+        t.assertEqual(SettingsNav.currentPage(state), "root")
+        t.assertEqual(SettingsNav.focusedID(state, SettingsNavTests.list(state)), "liveTV")
+    end sub
+
+    sub test_upDownMovesAndClamps(t as object)
+        state = SettingsNavTests.press(SettingsNav.open(), ["up"])
+        t.assertEqual(SettingsNavTests.focus(state), "liveTV")
+        state = SettingsNavTests.press(state, ["down", "down", "down", "down"])
+        t.assertEqual(SettingsNavTests.focus(state), "about")
+        state = SettingsNavTests.press(state, ["down"])
+        t.assertEqual(SettingsNavTests.focus(state), "about", "no wrap")
+    end sub
+
+    sub test_pushAndBackRestoresFocus(t as object)
+        state = SettingsNavTests.press(SettingsNav.open(), ["down", "down"])
+        result = SettingsNavTests.handle(state, "OK")
+        t.assertTrue(result.pageChanged)
+        t.assertEqual(SettingsNav.currentPage(result.state), "device")
+        result = SettingsNavTests.handle(result.state, "back")
+        t.assertTrue(result.pageChanged)
+        t.assertEqual(SettingsNav.currentPage(result.state), "root")
+        t.assertEqual(SettingsNavTests.focus(result.state), "device")
+        t.assertEqual(result.action, { type: "none" })
+    end sub
+
+    ' D49: Back on the root never leaves the app; the scene closes Settings (back to the screen it came from).
+    sub test_backOnTheRootClosesSettings(t as object)
+        result = SettingsNavTests.handle(SettingsNav.open(), "back")
+        t.assertTrue(result.handled)
+        t.assertEqual(result.action, { type: "close" })
+        t.assertEqual(SettingsNav.currentPage(result.state), "root")
+        t.assertFalse(result.pageChanged)
+    end sub
+
+    sub test_everyKeyIsHandled(t as object)
+        state = SettingsNav.open()
+        for each key in ["up", "down", "left", "right", "OK", "back", "options", "play", "replay", "rewind", "fastforward", "instantreplay", "something"]
+            t.assertTrue(SettingsNav.handle(key, true, state, SettingsNavTests.list(state)).handled, key)
+            t.assertTrue(SettingsNav.handle(key, false, state, SettingsNavTests.list(state)).handled, key + " released")
+        end for
+    end sub
+
+    sub test_columnsRoles(t as object)
+        state = SettingsNav.open()
+        t.assertEqual(SettingsNavTests.roles(state), ["current", "empty"])
+        state = SettingsNavTests.press(state, ["OK"])
+        t.assertEqual(SettingsNavTests.roles(state), ["parent", "current", "empty"])
+        state = SettingsNavTests.press(state, ["down", "down", "OK"])
+        t.assertEqual(SettingsNav.currentPage(state), "guide:" + SettingsNavTests.guideIDs()[1], "the second guide's page")
+        t.assertEqual(SettingsNavTests.roles(state), ["hidden", "parent", "current", "empty"])
+        columns = SettingsNav.columns(state)
+        t.assertEqual([columns[0].page, columns[1].page, columns[3].page], ["root", "liveTV", ""])
+        t.assertEqual([columns[0].index, columns[3].index], [0, 3])
+    end sub
+
+    sub test_rightOpensADisclosureRowOnly(t as object)
+        result = SettingsNavTests.handle(SettingsNav.open(), "right")
+        t.assertEqual(SettingsNav.currentPage(result.state), "liveTV")
+        state = SettingsNavTests.press(SettingsNav.open(), ["down", "OK"])
+        t.assertEqual(SettingsNav.currentPage(state), "remoteInput")
+        result = SettingsNavTests.handle(state, "right")
+        t.assertEqual(SettingsNav.currentPage(result.state), "remoteInput", "a toggle doesn't open")
+        t.assertEqual(result.action, { type: "none" }, "nor change")
+        ' A page of info rows only: Right does nothing.
+        state = SettingsNavTests.press(SettingsNav.open(), ["down", "down", "down", "down", "OK"])
+        t.assertEqual(SettingsNav.currentPage(state), "about")
+        t.assertInvalid(SettingsNav.focusedID(state, SettingsNavTests.list(state)))
+        t.assertEqual(SettingsNav.currentPage(SettingsNavTests.handle(state, "right").state), "about")
+        t.assertEqual(SettingsNavTests.handle(state, "OK").action, { type: "none" })
+    end sub
+
+    sub test_leftGoesBackExceptOnTheRoot(t as object)
+        result = SettingsNavTests.handle(SettingsNav.open(), "left")
+        t.assertEqual(SettingsNav.currentPage(result.state), "root")
+        t.assertEqual(result.action, { type: "none" }, "Left never closes Settings")
+        state = SettingsNavTests.press(SettingsNav.open(), ["OK", "down", "down", "OK"])
+        state = SettingsNavTests.press(state, ["left"])
+        t.assertEqual(SettingsNav.currentPage(state), "liveTV")
+        state = SettingsNavTests.press(state, ["left"])
+        t.assertEqual(SettingsNav.currentPage(state), "root")
+    end sub
+
+    sub test_theParentMarksTheOpeningRow(t as object)
+        state = SettingsNavTests.press(SettingsNav.open(), ["OK"])
+        parent = state.stack[0]
+        t.assertEqual(parent.focus, "liveTV", "the first row, never moved to, is the opening row")
+        state = SettingsNavTests.press(state, ["back", "down", "down", "right"])
+        t.assertEqual(state.stack[0].focus, "device")
+    end sub
+
+    ' MMTVL's isRepeat: a press of the key still held is a repeat; Left and Right don't change page on one.
+    sub test_heldLeftAndRightDontChangePage(t as object)
+        state = SettingsNav.open()
+        result = SettingsNavTests.handle(state, "right")
+        t.assertEqual(SettingsNav.currentPage(result.state), "liveTV")
+        result = SettingsNavTests.handle(result.state, "right")
+        t.assertEqual(SettingsNav.currentPage(result.state), "liveTV", "held: no further page")
+        result = SettingsNav.handle("right", false, result.state, SettingsNavTests.list(result.state))
+        result = SettingsNavTests.handle(result.state, "left")
+        t.assertEqual(SettingsNav.currentPage(result.state), "root")
+        deep = SettingsNavTests.press(SettingsNav.open(), ["OK", "down", "OK"])
+        result = SettingsNavTests.handle(deep, "left")
+        t.assertEqual(SettingsNav.currentPage(result.state), "liveTV")
+        result = SettingsNavTests.handle(result.state, "left")
+        t.assertEqual(SettingsNav.currentPage(result.state), "liveTV", "held: one page only")
+        ' Up and Down still repeat.
+        result = SettingsNavTests.handle(SettingsNav.open(), "down")
+        result = SettingsNavTests.handle(result.state, "down")
+        t.assertEqual(SettingsNavTests.focus(result.state), "device")
+    end sub
+
+    sub test_trickPlayKeysPageByEightRows(t as object)
+        state = SettingsNavTests.press(SettingsNav.open(), ["OK"])
+        ids = SettingsPages.focusableIDs(SettingsNavTests.list(state))
+        t.assertEqual(ids.Count(), 8)
+        state = SettingsNavTests.press(state, ["fastforward"])
+        t.assertEqual(SettingsNavTests.focus(state), ids[7])
+        state = SettingsNavTests.press(state, ["rewind"])
+        t.assertEqual(SettingsNavTests.focus(state), ids[0])
+        state = SettingsNavTests.press(state, ["channeldown", "channelup"])
+        t.assertEqual(SettingsNavTests.focus(state), ids[0])
+    end sub
+
+    ' Actions go to the scene; the page stays, except after Remove (as MMTVL).
+    sub test_okReturnsTheRowsAction(t as object)
+        state = SettingsNavTests.press(SettingsNav.open(), ["down", "OK"])
+        result = SettingsNavTests.handle(state, "OK")
+        t.assertEqual(result.action, { type: "toggle", setting: "channelUpMovesUpList" })
+        t.assertFalse(result.pageChanged)
+        state = SettingsNavTests.press(SettingsNav.open(), ["OK", "down", "OK"])
+        id = SettingsNavTests.guideIDs()[0]
+        t.assertEqual(SettingsNav.currentPage(state), "guide:" + id)
+        t.assertEqual(SettingsNavTests.focus(state), "guidePage.moveDown")
+        result = SettingsNavTests.handle(state, "OK")
+        t.assertEqual(result.action, { type: "moveGuide", id: id, step: 1 })
+        t.assertEqual(SettingsNav.currentPage(result.state), "guide:" + id)
+        result = SettingsNavTests.handle(SettingsNavTests.press(state, ["down"]), "OK")
+        t.assertEqual(result.action, { type: "removeGuide", id: id })
+        t.assertTrue(result.pageChanged)
+        t.assertEqual(SettingsNav.currentPage(result.state), "liveTV")
+        edit = SettingsNavTests.handle(SettingsNavTests.press(SettingsNav.open(), ["OK"]), "OK")
+        t.assertEqual(edit.action, { type: "editURL", field: "playlist" })
+    end sub
+
+    sub test_removeConfirmFocusesCancelFirst(t as object)
+        state = SettingsNavTests.press(SettingsNav.open(), ["OK", "fastforward", "OK"])
+        t.assertEqual(SettingsNav.currentPage(state), "confirmRemoveSource")
+        t.assertEqual(SettingsNavTests.focus(state), "confirm.cancel")
+        result = SettingsNavTests.handle(state, "OK")
+        t.assertEqual(SettingsNav.currentPage(result.state), "liveTV")
+        t.assertEqual(result.action, { type: "none" })
+        result = SettingsNavTests.handle(SettingsNavTests.press(state, ["down"]), "OK")
+        t.assertEqual(result.action, { type: "removeSource" })
+        t.assertEqual(SettingsNav.currentPage(result.state), "liveTV")
+    end sub
+
+    ' The low-memory notice's Open Settings: Device, with the root (on Device) behind it.
+    sub test_openingOnDevice(t as object)
+        state = SettingsNav.open("device")
+        t.assertEqual(SettingsNav.currentPage(state), "device")
+        t.assertEqual(SettingsNavTests.focus(state), "device.channelLogos")
+        state = SettingsNavTests.press(state, ["back"])
+        t.assertEqual(SettingsNav.currentPage(state), "root")
+        t.assertEqual(SettingsNavTests.focus(state), "device")
+        t.assertEqual(SettingsNavTests.handle(state, "back").action, { type: "close" })
+    end sub
+
+    ' L8: three Replays in a row on About; not elsewhere, and another key starts the count again.
+    sub test_aboutsReplaySequence(t as object)
+        state = SettingsNavTests.press(SettingsNav.open(), ["down", "down", "down", "down", "OK"])
+        t.assertEqual(SettingsNav.currentPage(state), "about")
+        result = SettingsNavTests.handle(state, "replay")
+        t.assertEqual(result.action, { type: "none" })
+        result = SettingsNavTests.handle(SettingsNavTests.release(result.state, "replay"), "replay")
+        t.assertEqual(result.action, { type: "none" })
+        result = SettingsNavTests.handle(SettingsNavTests.release(result.state, "replay"), "replay")
+        t.assertEqual(result.action, { type: "probeSequence" })
+        state = SettingsNavTests.press(state, ["replay", "up", "replay", "replay"])
+        t.assertEqual(state.replays, 2, "Up started the count again")
+        root = SettingsNav.open()
+        root = SettingsNavTests.press(root, ["replay", "replay"])
+        t.assertEqual(SettingsNavTests.handle(root, "replay").action, { type: "none" }, "only on About")
+        held = SettingsNavTests.handle(SettingsNavTests.handle(state, "replay").state, "replay")
+        t.assertEqual(held.state.replays, 0, "the third, then a held repeat that doesn't count")
+    end sub
+
+    sub test_theTrackSlidesAColumnPerLevel(t as object)
+        layout = Theme.layout()
+        t.assertEqual(SettingsNav.trackX(1, layout), 540, "the root list centred")
+        t.assertEqual(SettingsNav.trackX(2, layout), 81, "the root on the left, the page on the right")
+        t.assertEqual(SettingsNav.trackX(3, layout), 81 - 918)
+        t.assertEqual(SettingsNav.columnX(1, layout), 918)
+        t.assertEqual(SettingsNav.trackX(2, layout) + SettingsNav.columnX(1, layout), 999, "the right column's x in the frames")
+    end sub
+
+    sub test_scrollOffsets(t as object)
+        t.assertEqual(SettingsNav.scrollOffset(600, 792, 300, 72, "middle"), 0, "fits")
+        t.assertEqual(SettingsNav.scrollOffset(1500, 792, 900, 93, "first"), 0)
+        t.assertEqual(SettingsNav.scrollOffset(1500, 792, 900, 93, "last"), 708)
+        t.assertEqual(SettingsNav.scrollOffset(1500, 792, 900, 93, "middle"), 549, "centred: 900 + 46 - 396 = 550, down to the grid")
+        t.assertEqual(SettingsNav.scrollOffset(1500, 792, 100, 72, "middle"), 0, "clamped at the top")
+        t.assertEqual(SettingsNav.scrollOffset(1501, 792, 1400, 72, "middle"), 711, "clamped at the end, up to the grid")
+    end sub
+
+    sub test_listFocus(t as object)
+        t.assertEqual(SettingsNav.resolve(["a", "b"], "b"), "b")
+        t.assertEqual(SettingsNav.resolve(["a", "b"], "gone"), "a")
+        t.assertInvalid(SettingsNav.resolve([], "a"))
+        t.assertEqual(SettingsNav.move(["a", "b", "c"], "a", 8), "c")
+        t.assertEqual(SettingsNav.move(["a", "b", "c"], "c", -8), "a")
+        t.assertInvalid(SettingsNav.move([], "a", 1))
+    end sub
+
+    ' --- helpers ---
+
+    ' A model with a playlist, two typed guides and three channels (SettingsPageTests' fixture).
+    function model() as object
+        return SettingsStatus.make(SettingsPageTests.fixture({}))
+    end function
+
+    function guideIDs() as object
+        return SettingsPageTests.cacheIDs(SettingsPageTests.fixture({}).store.guides)
+    end function
+
+    function list(state as object) as object
+        return SettingsPages.sections(SettingsNav.currentPage(state), SettingsNavTests.model())
+    end function
+
+    function focus(state as object) as dynamic
+        return SettingsNav.focusedID(state, SettingsNavTests.list(state))
+    end function
+
+    function roles(state as object) as object
+        result = []
+        for each column in SettingsNav.columns(state)
+            result.Push(column.role)
+        end for
+        return result
+    end function
+
+    function handle(state as object, key as string) as object
+        return SettingsNav.handle(key, true, state, SettingsNavTests.list(state))
+    end function
+
+    function release(state as object, key as string) as object
+        return SettingsNav.handle(key, false, state, SettingsNavTests.list(state)).state
+    end function
+
+    ' Each key pressed and released.
+    function press(state as object, keys as object) as object
+        current = state
+        for each key in keys
+            current = SettingsNavTests.handle(current, key).state
+            current = SettingsNavTests.release(current, key)
+        end for
+        return current
+    end function
+
+end namespace

@@ -10,7 +10,8 @@
 ## Next session starts here
 
 - **Phase 0 (PR #1)** and **phase 1 (PR #2, stacked on PR #1)** are done off-device. Steps 1, 4 and every device check wait for the remote tester's Roku. The probe build is `cd roku && npm run build` → `roku/out/mmtvl-live-tv.zip`. **Ask the user before sending it.**
-- **Next: Phase 2 (UI).** Step 10 is `[designer]` in the user's pen.dev, and the user picks a frame for each screen before steps 11–13. Phase 3's step 14 (migration) needs no device until step 15.
+- **Phase 2 (UI) is done off-device.** Branches stack: `m12-phase2` (steps 10, 11, 11b) → `m12-step12` (pushed, 6d2bc94) → **`m12-step13`** (worktree `.claude/worktrees/step9`; not pushed yet). There's no PR for phase 2 yet; it will stack on PR #2. Done and QA-passed: steps 10, 11, 11b, 12 (guide) and **13 (Settings)**. `test:local`: 497 passed at 44c1810. Every "with a device" check is collected for step 15 in the *Deviations* entries.
+- **Next: step 14 (export script and import, phase 3)**, `[implementer][security]`: L2 end to end. The Settings page "Import from MMTVL" is text only today; step 14 adds ImportTask and the confirm screen (frame NgJ0S, exported PNG: ask the orchestrator to export it again, since the scratchpad isn't durable). Pencil: to read frames, use `execute` with the file's `uri`, read-only. Pen may have another project in front, so never save from this session unless the user has it open.
 - Gates for every Roku step: `cd roku && npm run build && npm run lint && npm run test:local` (264 passed at the end of phase 1), plus `npm run build:release`. No simulator runs with network access. Use a separate git worktree for parallel steps (`git worktree add -b m12-stepN .claude/worktrees/stepN <commit>`); the built-in isolation started from the wrong commit.
 
 ## Goal
@@ -225,7 +226,7 @@ scripts/roku-export-settings.py   one-time migration (L2), python3 -I, standard 
 - **L3, guide grid:** Roku's `TimeGrid`, with a `LabelList` group column on its left (Search, Favorites, My Teams, Antenna, All Channels, then the playlist's groups, looping like MMTVL's), and the channel menu as an overlay list.
   - *Why:* native performance on sticks, channel keys on Roku TVs, lazy loading. Custom styling is limited to what TimeGrid exposes, which the step 10 design accounts for.
 - **L4, keys:** D49 carries over: **Back never leaves Live TV**, and Roku's Home is the only way out.
-  - **Player:** Up/Down zap (direction from `channelUpMovesUpList`); OK toggles the banner (or retries on the error panel); `*` opens the channel menu; **Replay** goes to the previous channel; Play/Pause pauses (Roku pause buffer); Rewind/Fast Forward skip 10 s within the live window (clamped 30 s from the edge); Back hides the overlays, else opens the guide.
+  - **Player:** Up/Down zap up/down the list, as MMTVL (`channelUpMovesUpList` flips only Channel Up/Down, on Rokus that send them; user, 2026-11-18); Left/Right do nothing; OK toggles the banner (or retries on the error panel); `*` opens the channel menu; **Replay** goes to the previous channel; Play/Pause pauses (Roku pause buffer); Rewind/Fast Forward skip 10 s within the live window (clamped 30 s from the edge); Back hides the overlays, else opens the guide.
   - **Guide:** OK plays; `*` opens the channel menu; Rewind/Fast Forward page by 6 rows (MMTVL's Channel Up/Down); Back closes the groups, then returns to the playing channel, and does nothing with nothing playing.
   - The `Video` node never has focus (so `*` reaches the app).
 - **L5, storage:**
@@ -240,7 +241,7 @@ scripts/roku-export-settings.py   one-time migration (L2), python3 -I, standard 
   - `osVersion`, `model`.
 
   From these:
-  - **Low** (≤ 512 MB limit class or a 720p UI): a 24 h guide window, logos off by default, no inflate for guides over 2 MB compressed, and the Antenna MPEG-2 channels hidden unless `mpeg2`.
+  - **Low** (≤ 512 MB limit class or a 720p UI): a 24 h guide window, no inflate for guides over 2 MB compressed, and the Antenna MPEG-2 channels hidden unless `mpeg2`. Channel logos stay **on** (a toggle in Settings → Device). On a Low Roku's first launch, a **low-memory notice** (shown once, remembered in `state`) names the features that are on and may slow it (Channel Logos, plus any step 4 adds) and offers OK / Open Settings (Settings → Device) (user, 2026-11-21).
   - **High:** a 36 h window, logos on, inflate allowed (if step 4 keeps it).
 
   The thresholds come from step 4's measurements. Settings → Device lists each item with *On*, or *Off: <reason>*.
@@ -325,14 +326,14 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
 
 ### Phase 2 — UI
 
-- [ ] **10. The Roku look** `[designer]`
+- [x] **10. The Roku look** `[designer]`
   - In the user's pen.dev, design the player banner (channel, number, logo, now/next with times and progress), the error panel, the guide (group column plus TimeGrid in its styleable fields), the channel menu, Search, Choose Teams, Settings rows, the Import confirm screen, and Settings → Device.
   - Base them on MMTVL's Live TV and `DesignSystem/Theme.swift` tokens. SceneGraph has no blur, so glass is 9-patch translucent panels with a rim; the banner role (D46) is a darker, more opaque panel.
   - Make a 720p check of type sizes (FHD scaled down).
   - Then write `roku/components/theme/Theme.bs` (colors, fonts, sizes) and the 9-patch images.
   - **The user picks** before steps 11–13 build the screens.
   - Done when: the user has approved a frame for each screen, and `Theme.bs` builds.
-- [ ] **11. Player** `[implementer]`, files: `roku/components/player/**`, `MainScene`
+- [x] **11. Player** `[implementer]`, files: `roku/components/player/**`, `MainScene`
   - L4 player keys.
   - The banner shows on a channel change and on OK, and hides after 5 s.
   - Paused overlays fade after 15 s (D51).
@@ -340,7 +341,7 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
   - Keep the last channel and recents (10) in `state`.
   - At launch, open the last channel full screen if there is one, else the guide.
   - Done when: `PlayerKeyTests` (a key-to-action table: zap direction, Replay, Back states) pass, and with a device, zapping and Back show as L4 says.
-- [ ] **12. Guide** `[implementer]`, files: `roku/components/guide/**`
+- [x] **12. Guide** `[implementer]`, files: `roku/components/guide/**`
   - L3 and L4 guide keys.
   - TimeGrid fed lazily, per visible channel, from the GuideTask results; "No guide" rows for unmatched channels.
   - Channel logos through `LogoTask` (cachefs, off on low devices).
@@ -348,7 +349,7 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
   - Remember `lastGroup`.
   - The guide returns to the playing channel after 3 minutes without a press (D51).
   - Done when: `GuideKeyTests` (the GuideModelTests cases that apply: group looping, Search above the groups, Back states, paging by 6) pass, and with a device, the guide opens in under 2 s with the guide loaded.
-- [ ] **13. Settings** `[implementer]`, files: `roku/components/settings/**`
+- [x] **13. Settings** `[implementer]`, files: `roku/components/settings/**`
   - Pages:
     - **Live TV Source:** shows the playlist's host only; Change… opens the keyboard.
     - **Guides:** up to 6, add/remove/reorder, status per guide, Use the Playlist's Guide.
@@ -574,3 +575,131 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
     - how `Len`/`Asc` treat non-BMP text;
     - the copy cost of reading `guideData`;
     - the watchdogs and back-offs in the log.
+- **2026-11-18, phase 2 start (orchestrator).** No device yet (the remote tester's model is still unknown), so phase 2 is built off-device and every "with a device" check moves to step 15. Order within the phase: step 10's frames and step 11–13's pure logic run in parallel (the logic as `lib` namespaces with `test:local` suites: `PlayerKeys`, `GuideKeys`, `URLDisplay`), then the screens after the user picks the frames. The design file is new: `design/roku-live-tv.pen`, committed like the code.
+- **2026-11-18, steps 11–13 logic (QA PASS; user decisions).** `PlayerKeys.bs`, `GuideKeys.bs` and `URLDisplay.bs` with `test:local` suites (29, 34 and 11 tests; 338 in all), ported from LiveTVModel, GuideModel and GuideSource and their tests. The user decided where MMTVL and L4 disagreed:
+  - **Zap:** as MMTVL. Up is always up the list, and `channelUpMovesUpList` flips only Channel Up/Down. L4 is amended.
+  - **Skips:** as L4. Rewind/Fast Forward skip 10 s, clamped 30 s from the live edge. Left/Right do nothing in the player (MMTVL's 10/30 split isn't used; the 40 s window would clamp 30 s skips).
+  - **Replay** (L4 only) goes to the most recent other channel, so A→B→Replay→Replay alternates.
+  - In the guide, Rewind/Fast Forward and Roku's channelup/channeldown page by 6 rows (the group column by 7, as MMTVL).
+  - `URLDisplay` is stricter than MMTVL (only printable-ASCII escapes are decoded, hosts are lowercased, a refused host shows "?" alone). Accepted.
+  - Left for later: `setLineup` (keep group and row across a refresh) at step 12, and My Teams' upcoming rows at step 18.
+  - **Device checks:** that Back from the player and guide never reaches the scene; whether channelup/channeldown reach a non-TimeGrid node; what `pauseBufferStart/End/Position` hold before the clamp is trusted; that `Chr(183)` shows as a middle dot.
+- **2026-11-18, step 10 (part done; blocked on Pencil).** `roku/components/theme/Theme.bs` (`Theme.make()` → colours, fonts, layout, images, timing; MMTVL token names where one exists; the minimum type size is 24 px, which is 16 px at 720p; Roku system fonts, nothing bundled) and 9 nine-patches in `roku/images/` (panel, banner-role panel, settings row, focus row and capsule, guide cell, guide focus filled (A) or ring (B), bar), made by `python3 -I roku/tools/gen-ninepatch.py`.
+  - **Frames not drawn:** this session's Pencil MCP was the VS Code bridge, with VS Code not running.
+  - **Frames to make:** Banner A (full-width bottom panel, MMTVL) and B (compact bottom-left card, now/next in two columns), the error panel, Guide A (filled focus) and B (ring focus), the guide with the group column open, the channel menu, Search, Choose Teams, Settings → Live TV (source host, guides with status), Settings → Device, Import confirm, 720p copies at 2/3, and a notes frame mapping colours and fonts to fields.
+  - **TimeGrid styling (Roku docs):** text colours and font, one `programBackgroundBitmapUri` for every cell (so no per-cell colour), `focusBitmapUri`, the time bar and now bar bitmaps, colours and sizes, `channelNoDataText` ("No guide") and `fillProgramGaps`, and the channel column as a custom component (`channelInfoComponentName`, `channelInfoWidth` 340, `infoGridGap` 12). Row height and visible rows aren't documented fields (**unverified**, device check in step 12).
+  - **Other nodes:** the group column is a LabelList with `vertFocusAnimationStyle="fixedFocusWrap"` for the looping groups. DynamicMiniKeyboard can only be styled through its palette.
+  - **Deviation:** settings rows have a 32 px radius for one- and two-line rows (MMTVL: a capsule, or 40 for two-line rows); one 9-patch can't do both at 72 px.
+- **2026-11-21, step 10 (frames drawn; user choices).** The Pencil MCP now runs Pen desktop's server, set as a project-local override (`claude mcp add pencil -s local -- /Applications/Pen.app/Contents/Resources/app.asar.unpacked/out/mcp-server-darwin-arm64 --app desktop --agent claudeCodeCLI`). **Pencil can't create a `.pen` file, and it writes to whichever document is in front.** So the user made `design/roku-live-tv.pen` in Pen (File › New, Save As) and left it in front; the designer checked the target before every write and save.
+  - **Frames:** Banner A/B, error panel, Guide A/B, group column open, channel menu, Search, Choose Teams, Settings, Import confirm, 720p checks and a notes frame (Theme.bs tokens → SceneGraph fields).
+  - **Theme.bs additions:** `focusedWarningText`; images `panel_solid` (menus over the guide: the 0.82 panel let guide titles show through without blur), `settings_info_row` (Rectangles can't round corners), and the gradients `overlay_bottom` and `background`, all from `gen-ninepatch.py`.
+  - **User choices:** **Banner A** (full width, as MMTVL). **Guide A** (filled white focus cell, black title). **Settings exactly as MMTVL's Settings** ("it should be set just like it is in the full swift version"): D42's layout, and a root of categories (Live TV, Remote & Input with only Channel Up, then the Roku-only Device and Import from MMTVL, and About). The Live TV page uses MMTVL's sections, wording and footers (Playlist, Guides with a page per guide, Channels, Manage); keyboard rows replace paste rows, and there's no Preview on Home. **This changes step 13's page list:** step 13 builds what the Settings frames show.
+  - **Not possible in SceneGraph as drawn** (in the notes frame): Video corners are square; TimeGrid has one cell background, no tick lines, and `showPastTimeScreen` must be false; DynamicMiniKeyboard styles only through its palette; the 1.03 focus scale needs an Animation; `blendColor` alpha on the opened row is **unverified**. Icons `icon_warning.png` and `icon_check.png` are still to make (steps 11, 18). Montserrat stands in for Roku's system font.
+  - **Device checks (step 15):** text widths in the system font, 720p legibility of dimmed values, `panel_solid` opacity on a TV, TimeGrid's real row height.
+  - **Approved (2026-11-21):** all frames as drawn after the Settings redo, which mirrors MMTVL. Root: Live TV, Remote & Input, Device, Import from MMTVL, About. Live TV page: Playlist, Guides, Channels, Manage, with a page per guide. Roku-only wording: "Change Playlist URL…", "Add Guide…", "Added Guides", "press * on it", and the Manage footer. Every layout value in Theme.bs, the 9-patches and the frames is on Roku's **3-px grid** (FHD→HD is 2/3; Roku's display-resolution doc), with type ≥ 24 px.
+  - **Channel Logos (user, 2026-11-21):** "toggle, but leave it on by default … a banner on initial launch … Any other features for low memory devices that might create issues can be included in this banner too." This amends L7 and D56: logos are on everywhere, and a first-launch **low-memory notice** on Low Rokus points to Settings → Device. It's a new frame; step 11 or 12 builds it (whichever screen opens first).
+  - **4K Rokus:** Roku's UI sizes are SD, HD and FHD only, so a 4K Roku shows the FHD layout scaled up; video plays at 4K. How a 4K Roku scales the UI isn't in the doc (**unverified**); look at it on a 4K Roku in step 15. 720p images for HD devices (the doc recommends them) go to step 22.
+- **2026-11-21, step 11 (built; QA PASS, minors only).** Added: `PlayerScreen`, `PlayerBanner` (Banner A), `ErrorPanel` and `LowMemoryNoticeView`, plus pure logic in `PlayerSession`, `BannerText` and `LowMemoryNotice`. `tools/gen-icons.py` makes `icon_warning.png`. MainScene is now the screen router. `test:local`: 373 passed.
+  - **Decisions:**
+    - The notice flag is `state.lowMemoryNoticeShown`. `settings.channelLogos` defaults to true. Both are Roku-only, and an import keeps them.
+    - A stream that reports "finished" counts as a failure.
+    - Logos are checked like `url-tvg` guides (`URLPolicy.allows(logo, playlist)`).
+    - A failed first playlist load opens the guide, as MMTVL does.
+  - **Placeholders:** the guide and Settings → Device are simple stand-ins in MainScene until steps 12 and 13. Their literal y values go with them. The player's `*` only logs until step 12's channel menu.
+  - **Open, user choice 2026-11-21:** paused and skipped video gets a **Roku timeshift bar designed like MMTVL's** (the bar, the behind-live badge, the paused symbol), drawn by the designer and then built as **step 11b**. Until then the overlay timing exists with nothing drawn, so the first Back or OK after a pause hides an invisible overlay.
+  - **Orchestrator decisions:**
+    - Back on the low-memory notice counts as OK. It dismisses the notice for good, as a modal's Back does, and never leaves the app. Built in step 11b.
+    - The notice doesn't show when every listed feature is already off.
+    - **For step 12:** the guide and the player must share one copy of the guide data, not one each (a Low Roku would hold the programmes twice). Channel logos go through `LogoTask` and cachefs, the player's banner included.
+    - Step 12's Back must retry a failed channel (MMTVL), which needs the player to report when its error panel is up.
+  - **Security L-3 grows:** stream and logo URLs are now also in the `Video` content, `PlayerScreen.channel`, `Poster.uri` and the banner's `info`. Re-assess with the device's `/query/app-ui` answer (step 15) and in step 24.
+  - **Device checks (step 15):** zapping, Replay, Back states, and that Back never exits; whether the `Video`'s own UI shows without focus; pause and the `pauseBuffer*` fields; the 15 s stall; https streams with `HttpCertificatesFile`; logos over https; the →, · and – glyphs in the system font; banner times in local time; launch routing; the notice on a Low Roku; registry writes on every zap; the 720p layouts.
+- **2026-11-21, step 11b (built; QA PASS).** `Timeshift.bs` is a port of MMTVL's `Timeshift`: the track is `pauseBufferStart`→`pauseBufferEnd`, and the labels read "LIVE", "−m:ss" or "−h:mm:ss". New `TimeshiftBar`. The player owns one banner panel for Banner A and the bar, and the behind-live badge sits top right. Back on the low-memory notice answers OK. `test:local`: 383 passed.
+  - **Decisions:** the gradient always starts 120 px above the panel (MMTVL's rule), so it's shorter behind Banner A alone than in frame tpzUV. "Live" uses Roku's 30 s live-edge margin (`PlayerKeys.liveEdgeMarginSeconds`), not MMTVL's 15 s. Missing `pauseBuffer*` fields show "LIVE", with no fill and no badge.
+  - **Device checks (step 15):** what `pauseBufferStart`, `pauseBufferEnd` and `position` hold, and whether they update while paused (both 0 would fill the whole track); how close to `pauseBufferEnd` a Roku plays; the U+2212 glyph; badge widths; the fades; and the 720p bar.
+- **2026-11-21, step 12 (built; QA PASS after two fix rounds).** Added `GuideScreen` (a MenuListView group column and TimeGrid, with `GuideChannelCell` as its channel column), `ChannelMenuView`, `MenuListView` and `LogoTask`, plus pure logic in `GuideReader`, `ChannelMenu`, `GuideIdle` and `LogoCache`, and additions to `GuideKeys`. `test:local`: 427 passed.
+  - **Shared guide data:** GuideScreen is the only reader. It does one plain field get per `guideRevision`. The player's banner and the channel menu get one channel's list through `callFunc("programmesFor")`; `PlayerSession.programmesFor` moved into `GuideReader`.
+  - **Back:** Back retries a failed channel. It uses the player's new `failed` field, set while the error panel is up.
+  - **Logos:** LogoTask fetches the newest request first and keeps at most 120 waiting. It answers a request it drops, so the guide can ask again when the row comes back into view.
+  - **QA fixes:**
+    - The group column keeps focus when the lineup or the guide refreshes while it is open (`GuideKeys.gridReport`, `pendingFor`).
+    - Back or Left from the column lands on the programme cell.
+    - Only key presses and the user's own focus moves restart the 3-minute idle return.
+    - ChannelMenu's visible rows come from Theme.
+    - GuideScreen reads the lineup once per change.
+  - **Orchestrator decisions:**
+    - "Fed lazily": each open builds a ContentNode for every row of the group, but programmes only for the focused row −6/+12.
+    - Match Guide's menu row is left out until step 20.
+    - The group column shows 8 rows (frame lB8XX) and pages by 7 (MMTVL).
+    - The step needed MainScene, PlayerScreen, LogoTask and `lib` beyond `components/guide/**`.
+  - **Reference:** Roku's TimeGrid doc returned 403, so the fields were checked against brs-node's TimeGrid. `rowHeight` and `numRows` are set only if the node has them.
+  - **Device checks (step 15):**
+    - **TimeGrid's channel cell and wrapping:**
+      - the interface `channelInfoComponentName` gets;
+      - whether TimeGrid wraps vertically, and the rows near the end (`GuideReader.fillRange` clamps);
+      - whether it takes or passes channelup/channeldown;
+      - that `*`, Back and Rewind/FF reach GuideScreen;
+      - that children added after `content` is set are drawn.
+    - **TimeGrid's focus reports:**
+      - whether `jumpToChannel` reports synchronously or later, and whether it reports at all when focus doesn't move;
+      - whether `focusIndex` counts gap cells (`fillProgramGaps`).
+    - **Times in TimeGrid:**
+      - **`playStart` is Float per roku-types**: epoch seconds in a 32-bit float step by 128 s, so cell edges may be off; check, and if so use `contentStartTime`-relative values;
+      - the real row height and visible rows.
+    - **Speed:**
+      - the guide opens in under 2 s on All Channels;
+      - `Lineup.build` on the render thread after a favorites edit.
+    - **The column:**
+      - with the column open, a lineup refresh keeps Up/Down in the column;
+      - Back lands on the programme cell;
+      - the info area matches the highlight.
+    - **Logos:**
+      - with a slow logo host, rows scrolled to arrive first, and dropped rows fill in after scrolling back;
+      - logos over https into cachefs.
+    - **Other:**
+      - the 3-minute return;
+      - the Video in the preview place;
+      - `callFunc` with no arguments;
+      - the `‹`, `…` and `·` glyphs.
+- **2026-11-21, step 13 (built; QA PASS after two fix rounds).** Settings is built to the approved frames (LQwUy, wjg72, DEDBc, B94oz), with MMTVL's wording where the frames don't say. New: `SettingsScreen`, and pure `SettingsPages`, `SettingsStatus`, `SettingsNav`, `SettingsEdits` and `GuideRuns`; `SettingsStore.saveMany` (all or nothing); `GuideFetch.statusRows` gains a per-guide `programmes` count; `Capabilities.modelName` (`GetModelDisplayName`). `test:local`: 497 passed.
+  - **Orchestrator decisions:**
+    - **Opening Settings:** `*` in the guide's group column, or in a guide with no rows (so a first launch without a playlist can reach it). This contradicts MMTVL's `menuInTheGroupsColumnDoesNothing` (GuideModelTests.swift:327), deliberately: the Roku has no home screen with a Settings tile. Back from the root returns to where Settings opened.
+    - **The Channels footer** reads "To favorite or hide one channel: in the guide, press * on it." until step 20, which restores the frame's "favorite, hide or match". The frame's Antenna and My Teams rows come with steps 21 and 18.
+    - **"Add Playlist URL…"** when no playlist is set. Typed-URL errors are new text. Refresh Now forces every guide to download again.
+    - **Animation:** only the track slides (outCubic, 0.4 s). Rows are clipped at the track's edges rather than faded, and the title, band and dimming change at once. Step 22 may revisit.
+    - **Probes** (L8) open with three Replays on About, in DEBUG builds only; the guide's Replay route is gone.
+    - **Device:** Compressed Guides follows `GuideSources.inflateEnabled`. A Roku that is Low only for its 720p UI reads "Low (720p UI)". The L5 low-space warning is the This Roku section's footer.
+    - Left as is: a playing channel's sound continues under Settings; a refused-save message stays in the band until the page changes.
+  - **QA fixes:**
+    - The first playlist answer no longer pulls Settings away: the launch channel waits until Back (`PlayerSession.launchRoute`, `returnFromSettings`).
+    - A guide run asked for during another run (a playlist change, Remove then Add, Add Guide, Refresh Now) runs right after it, with a pending delete first (`GuideRuns`).
+    - The watchdog path keeps those requests.
+    - Groups and Hidden Channels edits made during a playlist load survive it (a prefs revision).
+    - Remove Live TV Source saves both addresses at once.
+  - **Accepted (QA minor):** after the 2× watchdog give-up, the delete of `cachefs:/guides` can run while the abandoned task is still alive, and a late write can leave a guide file for the removed source until the next prune. It's the same accepted risk as step 9's security M-3; the files hold XMLTV data under SHA-1 names, no URL or token.
+  - **Security L-3 tally:** the keyboard dialog's `text` holds a typed URL while typing; the scene reads it once and clears it, and clears it on close. Guide cache ids (unsalted SHA-1, L-8) now also appear in `SettingsScreen.model` and row ids. No new interface field holds a URL.
+  - **Reference:** `StandardKeyboardDialog` fields were checked against roku-types (bundled with BrighterScript), not the live doc.
+  - **Device checks (step 15):**
+    - **The keyboard dialog:** typing; pasting from the Roku mobile app; focus back on Settings after OK, Cancel and Back.
+    - **Keys:**
+      - Back never exits;
+      - `*` from the column and from an empty guide;
+      - Replay ×3 on About (DEBUG);
+      - whether held keys repeat without a release.
+    - **Layout:**
+      - `clippingRect`;
+      - the slide at 1080p and 720p (frame E2Hjc4);
+      - `blendColor` on the parent's selected row;
+      - `boundingRect` widths and wrapped footers in the system font;
+      - the `›` and `·` glyphs.
+    - **Saving and reloads:**
+      - each page's save survives a relaunch (the step's done-when);
+      - Channel Logos off and on redraws the guide and the banner;
+      - a new playlist loads and its guide match reruns;
+      - Refresh Now re-downloads the guides;
+      - Remove stops playback and empties `cachefs:/guides`, also during a guide run;
+      - Settings opened during the launch load stays, and Back plays the last channel or opens the guide.
+    - **Speed:**
+      - Groups and Hidden Channels with hundreds of rows (built eagerly);
+      - `Lineup.build` on the render thread when an edit lands during a playlist load.
+    - **Device page:** `GetModelDisplayName` and the OS text on a Low and a High Roku.

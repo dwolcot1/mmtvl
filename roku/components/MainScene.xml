@@ -2,7 +2,19 @@
 <!-- The screen router (M12). Step 2: the app's name and version. Step 8: loads the settings and the playlist
      (PlaylistTask) at launch, then every 15 minutes when stale, and shows the playlist's status. Step 9: after
      each playlist load and on the 15-minute tick, reads the guides (GuideTask) when one is due (12 h) or the
-     guide sources changed. Screens come with steps 10-13 and read the fields below. -->
+     guide sources changed. Screens come with steps 10-13 and read the fields below. Step 11: the player
+     (PlayerScreen) and the screen router: at launch, once the playlist has answered, the last channel full screen
+     if the playlist has it, else the guide; the player's zaps, Replay and Back; the last channel and recents saved
+     in state; on a Low Roku's first launch, the low-memory notice over whatever opened first. Step 12: the guide
+     (GuideScreen, over the player, whose Video shows in the guide's preview place), the channel menu
+     (ChannelMenuView, over the guide or the player), the logos (LogoTask), favorites and hidden channels saved in
+     prefs with the lineup built again, lastGroup, and the 3-minute return to the playing channel (D51). Step 13:
+     Settings (SettingsScreen), opened with * in the guide's group column (or in a guide with no channels) and by
+     the low-memory notice's Open Settings (on Device); the scene saves what it asks through SettingsStore, opens
+     the keyboard for addresses (StandardKeyboardDialog, as the scene's dialog: a typed URL goes from the dialog to
+     the store, never through another node), reloads the playlist or starts a guide run after a source or guide
+     change, and gives it a model with no URL in it (SettingsStatus.make). In DEBUG builds the Probes screen opens
+     from Settings → About (L8). Back never leaves the app (D49): the scene handles every key that reaches it. -->
 <component name="MainScene" extends="Scene">
     <interface>
         <!-- Lineup.build's result for the last playlist that loaded (kept when a later load fails). -->
@@ -12,7 +24,7 @@
         <!-- "" after a load, else what to show: "Couldn't load the playlist (<host>)", or without "(<host>)" when there is none. -->
         <field id="playlistStatus" type="string" />
         <!-- Step 9, Settings → Guides: one row per guide in priority order, no URLs (security L-3):
-             { index, host, status, problem, matched, fromPlaylist, stale } (GuideFetch.statusRows). Kept when a
+             { index, host, status, problem, matched, programmes, fromPlaylist, stale } (GuideFetch.statusRows). Kept when a
              guide task fails. -->
         <field id="guideStatuses" type="array" />
         <!-- "" or a note on the last guide run ("Memory guard inactive: …"). -->
@@ -20,10 +32,10 @@
         <!-- QA-M2 / security M-2 of step 9: the finished GuideTask that holds the programmes in its guideData field
              (GuideFetch.guideData's shape, see GuideFetch.bs: { windowStart, windowEnd, programmeCount, matches,
              guides: [{ programmes, channels }] }; read with GuidePipeline.programmesFor(data, channelID)). The scene
-             never copies or relays them. Step 12: when guideRevision changes, read guideHolder.guideData once
-             with a plain field get (one copy, in the screen's own logic) and keep it in the screen's m; never
-             MoveFromField (it would empty the holder for other readers), never read it per row. invalid until a
-             run finishes. -->
+             never copies or relays them. Step 12: one reader only, the guide screen (GuideReader: one plain field get
+             per guideRevision, kept in its m; never MoveFromField, never per row); the player's banner and the
+             channel menu get one channel's programmes from it (GuideScreen.programmesFor). invalid until a run
+             finishes. -->
         <field id="guideHolder" type="node" />
         <!-- Goes up by 1 each time guideHolder and guideStatuses are replaced; observe this. -->
         <field id="guideRevision" type="integer" value="0" />
@@ -32,29 +44,38 @@
     <script type="text/brighterscript" uri="pkg:/source/lib/SettingsStore.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/Refresh.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/GuideSources.bs" />
+    <!-- Step 10: the Roku look (colours, fonts, sizes, 9-patches); the screens of steps 11-13 read it. -->
+    <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
+    <!-- Step 11: launch routing, zapping, recents and the low-memory notice. -->
+    <script type="text/brighterscript" uri="pkg:/source/lib/Lineup.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/PlayerKeys.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/PlayerSession.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/URLPolicy.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Capabilities.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/LowMemoryNotice.bs" />
+    <!-- Step 12: the channel menu, its edits, the logos and the idle return. -->
+    <script type="text/brighterscript" uri="pkg:/source/lib/GuideKeys.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/ChannelMenu.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/BannerText.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/LogoCache.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/GuideIdle.bs" />
+    <!-- Step 13: Settings' model and edits. -->
+    <script type="text/brighterscript" uri="pkg:/source/lib/URLDisplay.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/SettingsStatus.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/SettingsEdits.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/GuideRuns.bs" />
     <children>
-        <Rectangle id="background" width="1920" height="1080" color="0x1C1C1EFF" />
-        <Label
-            id="title"
-            text="MMTVL Live TV"
-            font="font:LargeBoldSystemFont"
-            color="0xFFFFFFFF"
-            width="1920"
-            horizAlign="center"
-            translation="[0, 470]" />
-        <Label
-            id="version"
-            font="font:MediumSystemFont"
-            color="0xFFFFFF99"
-            width="1920"
-            horizAlign="center"
-            translation="[0, 560]" />
-        <Label
-            id="status"
-            font="font:SmallSystemFont"
-            color="0xFFFFFFCC"
-            width="1920"
-            horizAlign="center"
-            translation="[0, 700]" />
+        <!-- The guide's background too: the guide has none, so the player's Video shows through in its preview place. -->
+        <Poster id="background" />
+        <!-- Shown once a channel plays; under the guide it plays on in the guide's preview place (preview). -->
+        <PlayerScreen id="player" visible="false" />
+        <GuideScreen id="guide" visible="false" />
+        <!-- Step 13: over the guide and the player (which plays on under it); Back on its root returns to the
+             screen it came from. -->
+        <SettingsScreen id="settings" visible="false" />
+        <!-- Over the guide or the player while open. -->
+        <ChannelMenuView id="channelMenu" visible="false" />
+        <!-- D51: the 3-minute return to the playing channel (Theme timing.guideIdleReturn), from the last input. -->
+        <Timer id="idleTimer" repeat="false" />
     </children>
 </component>

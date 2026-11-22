@@ -1,0 +1,131 @@
+' GuideReader (M12 step 12): the shared guide-data reader (one field get per revision), the TimeGrid rows'
+' programmes, and the guide's info text. Off-device.
+namespace GuideReaderTests
+
+    ' MARK: the reader
+
+    sub test_readsTheHolderOncePerRevision(t as object)
+        holder = { guideData: GuideReaderTests.sampleData() }
+        reader = GuideReader.newReader()
+        first = GuideReader.read(reader, holder, 1)
+        t.assertEqual(first.programmeCount, 3)
+        GuideReader.read(reader, holder, 1)
+        GuideReader.read(reader, holder, 1)
+        t.assertEqual(reader.reads, 1, "one field get for revision 1")
+        holder.guideData = { programmeCount: 7, matches: {}, guides: [] }
+        t.assertEqual(GuideReader.read(reader, holder, 1).programmeCount, 3, "the copy read for revision 1 stays")
+        t.assertEqual(GuideReader.read(reader, holder, 2).programmeCount, 7, "a new revision reads again")
+        t.assertEqual(reader.reads, 2)
+    end sub
+
+    sub test_noHolderForgetsTheData(t as object)
+        reader = GuideReader.newReader()
+        GuideReader.read(reader, { guideData: GuideReaderTests.sampleData() }, 3)
+        t.assertInvalid(GuideReader.read(reader, invalid, 3))
+        t.assertInvalid(reader.data)
+        t.assertEqual(reader.revision, -1)
+        t.assertInvalid(GuideReader.read(reader, { guideData: GuideReaderTests.sampleData() }, invalid), "no revision: nothing read")
+        t.assertEqual(reader.reads, 1)
+    end sub
+
+    sub test_programmesForAChannel(t as object)
+        data = GuideReaderTests.sampleData()
+        t.assertEqual(GuideReader.programmesFor(data, "id:a").Count(), 2)
+        t.assertEqual(GuideReader.programmesFor(data, "id:b")[0].title, "B1")
+        t.assertInvalid(GuideReader.programmesFor(data, "id:none"))
+        t.assertInvalid(GuideReader.programmesFor(invalid, "id:a"))
+        t.assertInvalid(GuideReader.programmesFor(data, invalid))
+        t.assertInvalid(GuideReader.programmesFor({ matches: { "id:x": { guide: 4, epgID: "x" } }, guides: [] }, "id:x"))
+        ' From step 11's PlayerSession test, which this replaces.
+        t.assertInvalid(GuideReader.programmesFor({ matches: {} }, "id:a"), "no guides")
+        t.assertInvalid(GuideReader.programmesFor({ matches: { "id:a": { guide: 0, epgID: "a.tv" } }, guides: [{ programmes: {} }] }, "id:a"), "no programmes for the id")
+    end sub
+
+    ' MARK: TimeGrid rows
+
+    sub test_gridProgrammesSortAndKeepTheWindow(t as object)
+        list = [
+            { start: 300, stop: 400, title: "C" },
+            { start: 100, stop: 200, title: "A" },
+            { start: 200, stop: 300, title: "B" },
+            { start: 0, stop: 100, title: "Before" },
+            { start: 900, stop: 1000, title: "After" }
+        ]
+        cells = GuideReader.gridProgrammes(list, 150, 900)
+        t.assertEqual(cells, [
+            { index: 1, start: 100, duration: 100, title: "A" },
+            { index: 2, start: 200, duration: 100, title: "B" },
+            { index: 0, start: 300, duration: 100, title: "C" }
+        ])
+    end sub
+
+    ' TimeGrid needs each programme to end by the next one's start.
+    sub test_gridProgrammesTrimOverlapsAndDropTies(t as object)
+        list = [
+            { start: 0, stop: 120, title: "Long" },
+            { start: 60, stop: 180, title: "Overlap" },
+            { start: 60, stop: 90, title: "Same start" },
+            { start: 180, stop: 180, title: "Empty" },
+            { start: 200, stop: 260 }
+        ]
+        cells = GuideReader.gridProgrammes(list, 0, 1000)
+        t.assertEqual(cells, [
+            { index: 0, start: 0, duration: 60, title: "Long" },
+            { index: 1, start: 60, duration: 120, title: "Overlap" },
+            { index: 4, start: 200, duration: 60, title: "" }
+        ])
+    end sub
+
+    sub test_gridProgrammesOfNothing(t as object)
+        t.assertEqual(GuideReader.gridProgrammes(invalid, 0, 10), [])
+        t.assertEqual(GuideReader.gridProgrammes([{ title: "no times" }, "text"], 0, 10), [])
+        t.assertEqual(GuideReader.gridProgrammes([{ start: 0, stop: 5 }], invalid, 10), [])
+    end sub
+
+    sub test_contentStartIsTheHalfHourAtOrBeforeNow(t as object)
+        t.assertEqual(GuideReader.contentStart(1800 * 1000 + 1799), 1800 * 1000)
+        t.assertEqual(GuideReader.contentStart(1800 * 1000), 1800 * 1000)
+        t.assertEqual(GuideReader.contentStart(invalid), 0)
+    end sub
+
+    sub test_maxDaysCoversTheWindow(t as object)
+        t.assertEqual(GuideReader.maxDays(0, 86400), 1)
+        t.assertEqual(GuideReader.maxDays(0, 86401), 2)
+        t.assertEqual(GuideReader.maxDays(1000, 1000 + 36 * 3600), 2)
+        t.assertEqual(GuideReader.maxDays(invalid, 5), 1)
+        t.assertEqual(GuideReader.maxDays(100, 50), 1)
+    end sub
+
+    sub test_fillRangeIsAPageAboveAndTwoBelow(t as object)
+        t.assertEqual(GuideReader.fillRange(20, 100), { first: 14, last: 32 })
+        t.assertEqual(GuideReader.fillRange(2, 100), { first: 0, last: 14 })
+        t.assertEqual(GuideReader.fillRange(98, 100), { first: 92, last: 99 })
+        t.assertEqual(GuideReader.fillRange(0, 0), { first: 0, last: -1 })
+    end sub
+
+    ' MARK: info text
+
+    sub test_timeDetailSaysTheMinutesLeftWhileItAirs(t as object)
+        programme = { start: 1000, stop: 1000 + 3600, title: "Evening Report" }
+        dot = " " + Chr(183) + " "
+        t.assertEqual(GuideReader.timeDetail("6:00 – 7:00 PM", programme, 1000 + 1200), "6:00 – 7:00 PM" + dot + "40 min left")
+        t.assertEqual(GuideReader.timeDetail("R", programme, 1000 + 3600 - 30), "R" + dot + "1 min left", "rounded up")
+        t.assertEqual(GuideReader.timeDetail("R", programme, 999), "R", "not started")
+        t.assertEqual(GuideReader.timeDetail("R", programme, 1000 + 3600), "R", "ended")
+        t.assertEqual(GuideReader.timeDetail("R", invalid, 1000), "R")
+    end sub
+
+    function sampleData() as object
+        return {
+            windowStart: 0,
+            windowEnd: 86400,
+            programmeCount: 3,
+            matches: { "id:a": { guide: 0, sourceID: "0", epgID: "a.tv" }, "id:b": { guide: 1, sourceID: "1", epgID: "b.tv" } },
+            guides: [
+                { programmes: { "a.tv": [{ start: 0, stop: 60, title: "A1" }, { start: 60, stop: 120, title: "A2" }] }, channels: [] },
+                { programmes: { "b.tv": [{ start: 0, stop: 60, title: "B1" }] }, channels: [] }
+            ]
+        }
+    end function
+
+end namespace

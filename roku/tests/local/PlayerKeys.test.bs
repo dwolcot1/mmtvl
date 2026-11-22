@@ -1,0 +1,282 @@
+' PlayerKeys (M12 step 11): the player's key table (L4, D49) as MMTVL's LiveTVModel.handlePlayer, its zapping,
+' recents and the skip clamp. Ported from MMTVLTests/LiveTVModelTests.swift: upDownZapWithinTheRememberedGroupAndWrap,
+' zapUsesTheChannelsOwnGroupWhenTheRememberedOneLacksIt, zapSkipsAHiddenChannel, zapInFavoritesWraps,
+' zapFromAChannelHiddenWhilePlaying, seeks (Rewind/Fast Forward 10 s on the Roku), playPauseToggles, backHidesOverlaysThenOpensTheGuide,
+' selectShowsThenHidesTheBanner, failureRefreshesThePlaylistOnceThenShowsAnError (OK retries),
+' channelUpZapsUpTheListByDefault, channelUpCanMeanTheHigherNumber, menuInThePlayerOpensTheChannelMenu; and
+' IPTVLibrary.rememberChannel (M7 L13). Replay and the skip clamp are the Roku's own (L4). Off-device.
+namespace PlayerKeysTests
+
+    ' MARK: the key table
+
+    sub test_upAndDownZapUpAndDownTheListWhateverTheSetting(t as object)
+        for each movesUp in [true, false]
+            state = PlayerKeysTests.playing({ channelUpMovesUpList: movesUp })
+            label = "channelUpMovesUpList " + movesUp.ToStr()
+            t.assertEqual(PlayerKeysTests.act("up", state), { type: "zap", step: -1 }, label)
+            t.assertEqual(PlayerKeysTests.act("down", state), { type: "zap", step: 1 }, label)
+        end for
+    end sub
+
+    sub test_channelUpZapsUpTheListByDefault(t as object)
+        state = PlayerKeysTests.playing({})
+        t.assertEqual(PlayerKeysTests.act("channelup", state), { type: "zap", step: -1 })
+        t.assertEqual(PlayerKeysTests.act("channeldown", state), { type: "zap", step: 1 })
+        state.channelUpMovesUpList = true
+        t.assertEqual(PlayerKeysTests.act("channelup", state), { type: "zap", step: -1 })
+    end sub
+
+    sub test_channelUpCanMeanTheHigherNumber(t as object)
+        state = PlayerKeysTests.playing({ channelUpMovesUpList: false })
+        t.assertEqual(PlayerKeysTests.act("channelup", state), { type: "zap", step: 1 })
+        t.assertEqual(PlayerKeysTests.act("channeldown", state), { type: "zap", step: -1 })
+    end sub
+
+    ' MMTVL's seeks, as the user decided for the Roku (L4): Rewind/Fast Forward skip 10 s.
+    sub test_seeks(t as object)
+        state = PlayerKeysTests.playing({})
+        seconds = []
+        for each key in ["rewind", "fastforward"]
+            result = PlayerKeysTests.act(key, state)
+            t.assertEqual(result.type, "seek", key)
+            t.assertTrue(result.showTimeshiftBar, key)
+            seconds.Push(result.seconds)
+        end for
+        t.assertEqual(seconds, [-10, 10])
+        t.assertEqual(PlayerKeys.skipSeconds, 10)
+    end sub
+
+    ' Left and Right do nothing in the player, and stay handled (the user's decision, 2026-11-18).
+    sub test_leftAndRightDoNothing(t as object)
+        for each fields in [{}, { overlaysShown: true }, { errorShown: true }, { paused: true }]
+            state = PlayerKeysTests.playing(fields)
+            for each key in ["left", "right"]
+                result = PlayerKeys.handle(key, true, state)
+                t.assertTrue(result.handled, key)
+                t.assertEqual(result.action, { type: "none" }, key)
+            end for
+        end for
+    end sub
+
+    sub test_playPauseToggles(t as object)
+        t.assertEqual(PlayerKeysTests.act("play", PlayerKeysTests.playing({})), { type: "pause", showTimeshiftBar: true })
+        t.assertEqual(PlayerKeysTests.act("play", PlayerKeysTests.playing({ paused: true })), { type: "resume", showTimeshiftBar: true })
+    end sub
+
+    ' M7c L11: OK shows the banner and the timeshift bar; a second OK hides them.
+    sub test_okShowsThenHidesTheBanner(t as object)
+        t.assertEqual(PlayerKeysTests.act("OK", PlayerKeysTests.playing({})), { type: "showOverlays" })
+        t.assertEqual(PlayerKeysTests.act("OK", PlayerKeysTests.playing({ overlaysShown: true })), { type: "hideOverlays" })
+        ' Paused: OK hides the paused bar too (M7m L15), the same action.
+        t.assertEqual(PlayerKeysTests.act("OK", PlayerKeysTests.playing({ overlaysShown: true, paused: true })), { type: "hideOverlays" })
+    end sub
+
+    ' The error panel: OK plays the channel again, whatever else shows.
+    sub test_okOnTheErrorPanelRetries(t as object)
+        t.assertEqual(PlayerKeysTests.act("OK", PlayerKeysTests.playing({ errorShown: true })), { type: "retry" })
+        t.assertEqual(PlayerKeysTests.act("OK", PlayerKeysTests.playing({ errorShown: true, overlaysShown: true })), { type: "retry" })
+    end sub
+
+    ' M7c L11, M7m L2: Back hides the overlays, else opens the guide.
+    sub test_backHidesOverlaysThenOpensTheGuide(t as object)
+        t.assertEqual(PlayerKeysTests.act("back", PlayerKeysTests.playing({ overlaysShown: true })), { type: "hideOverlays" })
+        t.assertEqual(PlayerKeysTests.act("back", PlayerKeysTests.playing({})), { type: "openGuide" })
+        ' The error panel isn't an overlay: Back opens the guide.
+        t.assertEqual(PlayerKeysTests.act("back", PlayerKeysTests.playing({ errorShown: true })), { type: "openGuide" })
+    end sub
+
+    ' D49: with nothing playing, Back (and every other key) does nothing, and is still handled: Back never leaves.
+    sub test_nothingPlayingDoesNothingButKeepsBack(t as object)
+        for each key in ["up", "down", "left", "right", "OK", "back", "options", "replay", "play", "rewind", "fastforward", "channelup", "channeldown"]
+            result = PlayerKeys.handle(key, true, { hasChannel: false, overlaysShown: true, previousChannelID: "id:a" })
+            t.assertTrue(result.handled, key)
+            t.assertEqual(result.action, { type: "none" }, key)
+        end for
+        t.assertTrue(PlayerKeys.handle("back", true, invalid).handled, "no state at all")
+    end sub
+
+    sub test_optionsOpensTheChannelMenu(t as object)
+        t.assertEqual(PlayerKeysTests.act("options", PlayerKeysTests.playing({})), { type: "openChannelMenu" })
+    end sub
+
+    ' L4: Replay goes to the previous channel, when there is one.
+    sub test_replayGoesToThePreviousChannel(t as object)
+        t.assertEqual(PlayerKeysTests.act("replay", PlayerKeysTests.playing({ previousChannelID: "id:nbatv.us" })), { type: "previousChannel", channelID: "id:nbatv.us" })
+        t.assertEqual(PlayerKeysTests.act("replay", PlayerKeysTests.playing({})), { type: "none" })
+        t.assertEqual(PlayerKeysTests.act("replay", PlayerKeysTests.playing({ previousChannelID: "" })), { type: "none" })
+    end sub
+
+    ' A release does nothing but stays handled; keys the player doesn't use bubble up.
+    sub test_releasesAndOtherKeys(t as object)
+        state = PlayerKeysTests.playing({})
+        for each key in ["back", "OK", "up"]
+            result = PlayerKeys.handle(key, false, state)
+            t.assertTrue(result.handled, key)
+            t.assertEqual(result.action, { type: "none" }, key)
+        end for
+        t.assertFalse(PlayerKeys.handle("home", true, state).handled, "home")
+        t.assertFalse(PlayerKeys.handle("ok", true, state).handled, "keys compare case-sensitively, as Roku sends them")
+        t.assertFalse(PlayerKeys.handle(invalid, true, state).handled, "no key")
+    end sub
+
+    ' A mistyped field reads as its default.
+    sub test_mistypedStateReadsAsDefaults(t as object)
+        state = { hasChannel: true, overlaysShown: "yes", channelUpMovesUpList: "false", previousChannelID: 5 }
+        t.assertEqual(PlayerKeysTests.act("OK", state), { type: "showOverlays" })
+        t.assertEqual(PlayerKeysTests.act("channelup", state), { type: "zap", step: -1 })
+        t.assertEqual(PlayerKeysTests.act("replay", state), { type: "none" })
+    end sub
+
+    ' MARK: zapping (MMTVL's zap and zapList, M6b L11)
+
+    sub test_upDownZapWithinTheRememberedGroupAndWrap(t as object)
+        built = Lineup.build(LineupTests.channels(), {})
+        current = PlayerKeysTests.channel(built, "id:lakers @ celtics")
+        list = PlayerKeys.zapList(built, "NBA Games", current)
+        nextChannel = PlayerKeys.zapTarget(list, current.id, 1)
+        t.assertEqual(nextChannel.name, "Knicks @ Heat")
+        nextChannel = PlayerKeys.zapTarget(list, nextChannel.id, 1)
+        t.assertEqual(nextChannel.name, "Lakers @ Celtics", "wraps")
+        nextChannel = PlayerKeys.zapTarget(list, nextChannel.id, -1)
+        t.assertEqual(nextChannel.name, "Knicks @ Heat", "wraps up")
+    end sub
+
+    sub test_zapUsesTheChannelsOwnGroupWhenTheRememberedOneLacksIt(t as object)
+        built = Lineup.build(LineupTests.channels(), {})
+        current = PlayerKeysTests.channel(built, LineupTests.nfl())
+        list = PlayerKeys.zapList(built, "NBA Games", current)
+        t.assertEqual(PlayerKeys.zapTarget(list, current.id, -1).name, "Red Zone")
+    end sub
+
+    sub test_zapSkipsAHiddenChannel(t as object)
+        built = Lineup.build(LineupTests.channels(), { hiddenChannels: [LineupTests.nba()] })
+        current = PlayerKeysTests.channel(built, LineupTests.nfl())
+        list = PlayerKeys.zapList(built, "", current)
+        t.assertEqual(PlayerKeys.zapTarget(list, current.id, 1).name, "Red Zone")
+    end sub
+
+    sub test_zapInFavoritesWraps(t as object)
+        built = Lineup.build(LineupTests.channels(), { favorites: ["id:knicks @ heat", LineupTests.redZone()] })
+        current = PlayerKeysTests.channel(built, LineupTests.redZone())
+        list = PlayerKeys.zapList(built, "Favorites", current)
+        nextChannel = PlayerKeys.zapTarget(list, current.id, 1)
+        t.assertEqual(nextChannel.name, "Knicks @ Heat")
+        t.assertEqual(PlayerKeys.zapTarget(list, nextChannel.id, -1).name, "Red Zone")
+    end sub
+
+    ' A channel hidden while it plays: Down plays the first of its list, Up the last.
+    sub test_zapFromAChannelHiddenWhilePlaying(t as object)
+        playingChannel = PlayerKeysTests.channel(Lineup.build(LineupTests.channels(), {}), LineupTests.nfl())
+        built = Lineup.build(LineupTests.channels(), { hiddenChannels: [LineupTests.nfl()] })
+        list = PlayerKeys.zapList(built, "", playingChannel)
+        t.assertEqual(PlayerKeys.zapTarget(list, playingChannel.id, 1).name, "NBA TV")
+        t.assertEqual(PlayerKeys.zapTarget(list, playingChannel.id, -1).name, "Red Zone")
+    end sub
+
+    ' Channel Up (by default -1) from NBA TV in its own group, as MMTVL's channelUp tests.
+    sub test_channelKeysZapInTheChannelsOwnGroup(t as object)
+        built = Lineup.build(LineupTests.channels(), {})
+        current = PlayerKeysTests.channel(built, LineupTests.nba())
+        list = PlayerKeys.zapList(built, "", current)
+        upStep = PlayerKeysTests.act("channelup", PlayerKeysTests.playing({})).step
+        t.assertEqual(PlayerKeys.zapTarget(list, current.id, upStep).name, "NFL Network")
+        upStep = PlayerKeysTests.act("channelup", PlayerKeysTests.playing({ channelUpMovesUpList: false })).step
+        t.assertEqual(PlayerKeys.zapTarget(list, current.id, upStep).name, "Red Zone")
+    end sub
+
+    sub test_aOneChannelListAndAnEmptyOneStay(t as object)
+        built = Lineup.build(LineupTests.channels(), {})
+        current = PlayerKeysTests.channel(built, LineupTests.nfl())
+        t.assertInvalid(PlayerKeys.zapTarget([current], current.id, 1), "one channel")
+        t.assertInvalid(PlayerKeys.zapTarget([], current.id, 1), "none")
+    end sub
+
+    ' MARK: recents and Replay (IPTVLibrary.rememberChannel, M7 L13)
+
+    sub test_rememberedPutsTheChannelFirstOnce(t as object)
+        t.assertEqual(PlayerKeys.remembered([], "a"), ["a"])
+        t.assertEqual(PlayerKeys.remembered(["b", "a", "c"], "a"), ["a", "b", "c"])
+        t.assertEqual(PlayerKeys.remembered(["a", "b"], "a"), ["a", "b"], "already first: unchanged")
+        t.assertEqual(PlayerKeys.remembered(invalid, "a"), ["a"])
+    end sub
+
+    sub test_rememberedKeepsTen(t as object)
+        recents = ["c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9", "c10"]
+        t.assertEqual(PlayerKeys.remembered(recents, "new"), ["new", "c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9"])
+        t.assertEqual(PlayerKeys.remembered(recents, "c10"), ["c10", "c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9"])
+        t.assertEqual(PlayerKeys.maximumRecents, SettingsStore.maximumRecents)
+    end sub
+
+    sub test_previousChannelIsTheMostRecentOtherOne(t as object)
+        t.assertEqual(PlayerKeys.previousChannelID(["a", "b", "c"], "a"), "b")
+        t.assertEqual(PlayerKeys.previousChannelID(["a"], "a"), "", "nothing before it")
+        t.assertEqual(PlayerKeys.previousChannelID([], "a"), "")
+        t.assertEqual(PlayerKeys.previousChannelID(["b", "a"], "x"), "b", "the current one isn't in the recents")
+        t.assertEqual(PlayerKeys.previousChannelID(invalid, "a"), "")
+        ' Back and forth: A, B, then Replay to A; recents become [A, B], so Replay goes to B again.
+        recents = PlayerKeys.remembered(PlayerKeys.remembered([], "A"), "B")
+        t.assertEqual(PlayerKeys.previousChannelID(recents, "B"), "A")
+        recents = PlayerKeys.remembered(recents, "A")
+        t.assertEqual(PlayerKeys.previousChannelID(recents, "A"), "B")
+    end sub
+
+    ' MARK: the skip clamp (L4: at least 30 s from the live edge, inside the pause buffer)
+
+    sub test_aSkipInsideTheWindowMovesByItsSeconds(t as object)
+        t.assertEqual(PlayerKeys.seekTarget(100, -10, 0, 200), 90)
+        t.assertEqual(PlayerKeys.seekTarget(100, 10, 0, 200), 110)
+    end sub
+
+    sub test_aSkipAheadStopsThirtySecondsFromTheLiveEdge(t as object)
+        t.assertEqual(PlayerKeys.seekTarget(160, 30, 0, 200), 170, "bufferEnd stands for the live edge")
+        t.assertEqual(PlayerKeys.seekTarget(160, 30, 0, 300, 180), 160, "already 20 s from a given edge: stays")
+        t.assertEqual(PlayerKeys.seekTarget(100, 30, 0, 300, 180), 130)
+        t.assertEqual(PlayerKeys.seekTarget(100, 30, 0, 120, 400), 120, "and never past the buffer's end")
+        t.assertEqual(PlayerKeys.seekTarget(175, 10, 0, 200), 175, "past the margin already: a skip ahead never goes back")
+    end sub
+
+    sub test_aSkipBackStopsAtTheBufferStart(t as object)
+        t.assertEqual(PlayerKeys.seekTarget(105, -30, 100, 200), 100)
+        t.assertEqual(PlayerKeys.seekTarget(100, -10, 100, 200), 100)
+        t.assertEqual(PlayerKeys.seekTarget(90, -10, 100, 200), 90, "before the buffer already: a skip back never goes ahead")
+        t.assertEqual(PlayerKeys.seekTarget(10.5, -10, 0.25, 60.75), 0.5, "floats")
+    end sub
+
+    ' QA minor: a skip of 0 s never moves, even from past the margin.
+    sub test_aZeroSkipLeavesThePosition(t as object)
+        t.assertEqual(PlayerKeys.seekTarget(100, 0, 0, 110, 110), 100)
+        t.assertEqual(PlayerKeys.seekTarget(50, 0, 60, 200), 50, "before the buffer")
+        t.assertEqual(PlayerKeys.seekTarget(100, 0, 0, 200), 100, "inside the window")
+    end sub
+
+    sub test_unknownNumbersLeaveThePosition(t as object)
+        t.assertEqual(PlayerKeys.seekTarget(100, -10, invalid, 200), 100)
+        t.assertEqual(PlayerKeys.seekTarget(100, -10, 0, "200"), 100)
+        t.assertInvalid(PlayerKeys.seekTarget(invalid, -10, 0, 200))
+    end sub
+
+    ' MARK: helpers
+
+    function playing(fields as object) as object
+        state = { hasChannel: true }
+        state.Append(fields)
+        return state
+    end function
+
+    function act(key as string, state as object) as object
+        result = PlayerKeys.handle(key, true, state)
+        if not result.handled then return { type: "unhandled" }
+        return result.action
+    end function
+
+    function channel(built as object, id as string) as dynamic
+        for each candidate in built.visibleChannels
+            if candidate.id = id then return candidate
+        end for
+        for each candidate in LineupTests.channels()
+            if candidate.id = id then return candidate
+        end for
+        return invalid
+    end function
+
+end namespace
