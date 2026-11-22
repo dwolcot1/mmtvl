@@ -10,8 +10,8 @@
 ## Next session starts here
 
 - **Phase 0 (PR #1)** and **phase 1 (PR #2, stacked on PR #1)** are done off-device. Steps 1, 4 and every device check wait for the remote tester's Roku. The probe build is `cd roku && npm run build` → `roku/out/mmtvl-live-tv.zip`. **Ask the user before sending it.**
-- **Phase 2 (UI) is done off-device.** Branches stack: `m12-phase2` (steps 10, 11, 11b) → `m12-step12` (pushed, 6d2bc94) → **`m12-step13`** (worktree `.claude/worktrees/step9`; not pushed yet). There's no PR for phase 2 yet; it will stack on PR #2. Done and QA-passed: steps 10, 11, 11b, 12 (guide) and **13 (Settings)**. `test:local`: 497 passed at 44c1810. Every "with a device" check is collected for step 15 in the *Deviations* entries.
-- **Next: step 14 (export script and import, phase 3)**, `[implementer][security]`: L2 end to end. The Settings page "Import from MMTVL" is text only today; step 14 adds ImportTask and the confirm screen (frame NgJ0S, exported PNG: ask the orchestrator to export it again, since the scratchpad isn't durable). Pencil: to read frames, use `execute` with the file's `uri`, read-only. Pen may have another project in front, so never save from this session unless the user has it open.
+- **Phase 2 (UI) is done off-device.** Branches stack: `m12-phase2` (steps 10, 11, 11b) → `m12-step12` (pushed) → `m12-step13` (pushed, c21185d) → **`m12-step14`** (worktree `.claude/worktrees/step9`; not pushed yet). There's no PR for phase 2 yet; it will stack on PR #2. Done and QA-passed: steps 10, 11, 11b, 12 (guide), 13 (Settings) and **14 (export script and import; security review: no open findings)**. `test:local`: 525 passed, script tests 40 at b6827bd. Every "with a device" check is collected for step 15 in the *Deviations* entries.
+- **Next: step 15 (device build A) is `[human]`** and waits for a Roku on the user's own network. The next off-device work is **phase 4, step 16 (teams data)**, `[implementer]`. Pencil: to read frames, use `execute` with the file's `uri`, read-only. Pen may have another project in front, so never save from this session unless the user has it open.
 - Gates for every Roku step: `cd roku && npm run build && npm run lint && npm run test:local` (264 passed at the end of phase 1), plus `npm run build:release`. No simulator runs with network access. Use a separate git worktree for parallel steps (`git worktree add -b m12-stepN .claude/worktrees/stepN <commit>`); the built-in isolation started from the wrong commit.
 
 ## Goal
@@ -365,7 +365,7 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
 
 ### Phase 3 — migration
 
-- [ ] **14. Export script and import** `[implementer][security]`, files: `scripts/roku-export-settings.py`, `scripts/test_roku_export_settings.py`, `roku/components/tasks/ImportTask.*`, `roku/components/import/**`, `roku/source/main.bs`
+- [x] **14. Export script and import** `[implementer][security]`, files: `scripts/roku-export-settings.py`, `scripts/test_roku_export_settings.py`, `roku/components/tasks/ImportTask.*`, `roku/components/import/**`, `roku/source/main.bs`
   - L2 end to end.
   - **The script:**
     - `--dry-run` prints the bundle's summary (counts and hosts only).
@@ -703,3 +703,22 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
       - Groups and Hidden Channels with hundreds of rows (built eagerly);
       - `Lineup.build` on the render thread when an edit lands during a playlist load.
     - **Device page:** `GetModelDisplayName` and the OS text on a Low and a High Roku.
+- **2026-11-21, step 14 (built; QA PASS; security review: no open findings after two fix rounds).** New: `scripts/roku-export-settings.py` and its tests (40), `ImportBundle.bs` (pure: contentId, file cap, validation, summary), `ImportTask`, `ImportConfirmView` (frame NgJ0S), and the import route in `MainScene` and `main.bs` (`roInput` now in every build). `test:local`: 525 passed.
+  - **Decisions:**
+    - The secret is 32 **lowercase** hex (`secrets.token_hex`); the Roku refuses uppercase.
+    - L2's limits: the **Roku rejects** a bundle that breaks any limit, or has a missing or unknown field; the **script trims** to the same limits first and prints what it left out, so a normal export always passes.
+    - The legacy Keychain account `iptv-guide-url` is read when `iptv-guide-urls` is missing (`IPTVSourceStore.swift:39-40`).
+    - The one-shot server answers **only the chosen Roku's address** (refused at accept, before any byte is read); stricter than L2.
+    - Loading ("Getting the settings from the Mac…", Cancel) and failure (a message, OK) are drawn in the confirm panel; the frame shows only the confirm state. Back is Cancel, or OK when that's the only button. Replace Settings is focused first, as drawn.
+    - Replace stops the playing channel and re-runs the launch target with the new playlist. A cold-launch import holds the launch target until it closes. A second import while one is open is ignored.
+  - **Security fixes:**
+    - **M-1:** a fake Roku could answer SSDP with the real one's name (and serial) and collect the bundle. The script now tells the user to check the **IP address** against Roku Settings → Network → About (a fake can't show the real address: LOCATION must equal the SSDP source, and the TCP connections go there), shows each serial's last 4, and warns when two entries share a serial or an NFKC/casefolded name.
+    - **L-1:** a slow client held the single-threaded server past 10 minutes. Now `ThreadingHTTPServer`, other addresses refused at accept, an absolute deadline per connection, and `claim()`/`outcome()` under one lock (no double serve; expiry and a claim can't both win).
+    - **L-2:** a malformed reply crashed the script with raw terminal escapes. `ecp_launch` maps `HTTPException` to a host-only error; `device_info` is a raw socket with one 5 s deadline and a strict status line; names and serials pass `clean_name`.
+  - **Accepted (Low):** L-3, any LAN host with ECP can open the confirm screen with its own bundle and press Select (ECP can already type the same URLs into Settings; a bundle can set nothing typed Settings can't). L-4, the 64 KB cap is polled every 250 ms, so a hostile server can write ~0.25 s of data to `tmp:` before the cancel (deleted on every path). Also: a connection flood from a refused address could delay the Roku's connect (default backlog 5); a picked host can stall the script by trickling its ECP reply; many fake SSDP answers slow the listing.
+  - **Unverified:**
+    - Whether `roUrlTransfer` follows redirects (Roku's ifUrlTransfer doc returned 403; roku-types lists no setting). The defence is `GetTargetIpAddress` = the Mac's address; an empty address is accepted.
+    - Whether a cancelled `AsyncGetToFile` can write once more after `tmp:/mmtvl-import.json` is deleted.
+    - `ParseJson` key case on a device; `roInput` deep links in release builds (probe i covered DEBUG).
+  - **Device checks (step 15):** discovery and the list (names, serial suffixes, addresses against Settings → Network → About; device-info has `serial-number`); the confirm screen at 1080p and 720p (wrapped question and footnote, truncated values); Replace (favorites, hidden channels and groups, last channel and guides as on MMTVL; Channel Logos and the low-memory notice state kept); Cancel changes nothing; import on a cold launch and while running; Back never leaves; a second run while the screen is up is ignored; expiry after 10 minutes shows "Couldn't get the settings"; the ECP 403 hint ("Control by mobile apps"); the `[MMTVL][Import]` lines, and a test server that answers 302.
+  - **QA note:** QA's first local run didn't stub the device-name lookup and sent one read-only `GET /query/device-info` to a LAN address before it was stopped.
