@@ -534,3 +534,70 @@ Each entry has:
   - D5's one-line upcoming game cell.
 - **Why:** Each needs a device to judge (fades cost render time on a stick), and neither affects memory.
 - **To reverse:** Revisit after step 23's look at 1080p and 720p.
+
+### D56. A tuner's JSON is checked for nesting before ParseJson, with the import's check shared
+- **Step:** 24 (security N-3). **Decision (Recommended):**
+  - The import's byte loop (`ImportBundle.depthOf`, step 14) moves to a small shared lib, `source/lib/JsonDepth.bs` (`ofBytes`, `ofText`, `fits`; about 1 KB compiled). `ImportBundle.depthOf` calls it with its limit of 3, unchanged.
+  - `HDHomeRun.decodeJSON` runs `JsonDepth.fits(text, HDHomeRun.maximumJSONDepth)` before `ParseJson` for `discover.json`, `lineup.json`, `status.json` and `lineup_status.json`. The limit is **8**: these files nest 1 or 2 deep, so this leaves room for firmware differences. A deeper answer reads as no answer: `discover.json` then gives "notTuner".
+  - `JsonDepth.bs` is loaded where `ImportBundle.bs` or `HDHomeRun.bs` is (MainScene, ImportConfirmView, ImportTask, AntennaTask, GuideTask). No other lib moves.
+  - The function is `decodeJSON`, not `parseJSON`. BrighterScript resolves a call inside a namespace to that namespace's own function first, ignoring case, so a `parseJSON` would have turned its own `ParseJson(text)` call into a call to itself. `test:local` caught it (a stack overflow).
+- **Why:** The tuner is a LAN device the app trusts only after checks. A hostile device on the LAN could answer with deep nesting to make `ParseJson` recurse. One loop for both callers means one set of tests.
+- **Explained:** Before reading a tuner's answer, the app counts how deeply its brackets nest. More than 8 levels, and the answer is ignored.
+- **Pros:** The same check as the import's, tested once (`JsonDepthTests`), and it stops counting as soon as the limit is passed.
+- **Cons:**
+  - The scan is a BrightScript loop over every byte, on AntennaTask's or GuideTask's thread. A normal `lineup.json` is tens of KB; one near the 1 MB cap would take longer (**unverified** on a stick).
+  - About 1 KB more code on the render thread (MainScene and ImportConfirmView load ImportBundle).
+- **To reverse:** Call `ParseJson` directly in `HDHomeRun.decodeJSON`, and put the loop back in `ImportBundle.depthOf`.
+
+### D57. A logo needs a playlist, and a removed or changed source empties LogoTask's queue
+- **Step:** 24 (security N-1). **Decision (Recommended):**
+  - `URLPolicy.allowsLogo(url, playlistURL)`: with no playlist (`""`), every logo is refused (reason `noPlaylist`); otherwise it is `allows(url, playlistURL)`, as before. LogoTask's `fetch` checks it before it makes a transfer, and logs "not allowed".
+  - A refusal for want of a playlist isn't remembered as failed, so the same logo loads once a playlist names it again. Other refusals and failures are still remembered for the run.
+  - MainScene's `dropWaitingLogos()` sends `{ clear: true, reason: "source" }` (step 22's clear) on Remove Live TV Source, on a changed playlist (`changePlaylist`) and on an import's Replace. It is sent before the new `playlistURL`, so a logo LogoTask starts in between is judged against the playlist that named it. LogoTask logs "Live TV source changed: N waiting logos dropped" when it dropped any.
+- **Why:** Logos come only from a playlist's entries. `allows(url, "")` means "typed by the user", which allows any host, LAN and loopback included.
+- **Explained:** When the Live TV source is removed or changed, logos that were still waiting to download are no longer fetched.
+- **Pros:** Closes the gap without changing how logos load while a playlist is set.
+- **Cons:** On an import, the queue is cleared twice: once in `applyImportedSettings` and once in `changePlaylist`. The second clear finds nothing and logs nothing.
+- **To reverse:** Use `URLPolicy.allows` in `LogoTask.fetch` again, and remove `dropWaitingLogos()`.
+
+### D58. gitleaks: allowlists checked against each finding, a DeviceAuth rule, and redaction that hides the whole match
+- **Step:** 24 (security N-4). **Decision (Recommended):** In `scripts/gitleaks.toml` (gitleaks 8.30.1):
+  - **The `.example` allowlist** is now a finding-level `[[allowlists]]` with `regexTarget = "match"`, anchored with `^`, so a finding is allowed only when its own match starts with a `.example` URL. Until now it was a whole-line allowlist, so a real URL on the same line as a `.example` one was hidden too. RE2 has no lookahead, so "every URL on the line is `.example`" can't be written as a line regex.
+  - **`credential-query`** now takes in the URL its query belongs to, when the URL is written right before it (`(?:https?://[^\s"'<>]*?)?` in front), so the anchored allowlist can judge that URL. A query with no URL before it is still found.
+  - **New rule `hdhomerun-deviceauth`:** `(?i)DeviceAuth=[A-Za-z0-9+/=_%-]{8,}`. Its allowlist is also checked against the match: the whole value must be made of the tests' made-up DeviceAuths, as written or percent-decoded (gitleaks also scans percent-decoded text). The old line entries for those values are removed, so a real DeviceAuth on a fixture's line is found.
+  - **Redaction:** the rules' key groups are now non-capturing. gitleaks takes a rule's first capture group as the secret, so `--redact` hid only `get.php`, `m3u8` or the query's key name and printed the rest, tokens included. Each finding's secret is now its whole match. This wasn't one of the review's findings: it came up while checking N-4, and it changes only what a scan prints.
+- **Checked:**
+  - With the old config's `.example` line removed, there were 22 findings on the branch's commits and 24 across the four folders, all from `iptv-playlist-url` and `credential-query` on `.example` fixtures.
+  - With the new config, the branch, `roku`, `scripts`, `MMTVLTests`, `docs` and the whole history (207 commits) have none.
+  - A scratch file (not committed) with a made-up provider-style URL, a credential query and DeviceAuths, each next to a `.example` URL or a made-up value on its line, gives 5 findings, each redacted in full. The old config gave 1.
+- **Explained:** The leak scan no longer skips a real address just because a test address is on the same line. It now finds HDHomeRun keys, and hides everything it finds when asked to.
+- **Pros:** Each finding is judged by its own text, and `--redact` output is safe to paste.
+- **Cons:**
+  - Fingerprints of past findings change (the secret is now the whole match). The repo has no `.gitleaksignore`.
+  - A real URL inside a `.example` URL's own query (`https://a.example/r?u=https://real/...`) is still allowed, since the match starts at the `.example` URL.
+- **To reverse:** Restore the file as it was before step 24.
+
+### D59. `npm audit fix` kept: 33 high to 0, dev tools only
+- **Step:** 24 (security N-6). **Decision (Recommended):** `npm audit fix` (never `--force`) in `roku/` is kept.
+  - **Before:** `npm audit` said "31 high severity vulnerabilities" (its JSON metadata: high 33, total 33). **After:** "found 0 vulnerabilities" (metadata: total 0).
+  - Only `package-lock.json` and `node_modules` changed, all from `registry.npmjs.org`. The direct devDependencies (`package.json` and `npm ls --depth=0`) are unchanged: bslint 0.8.47, brighterscript 0.73.8, brs-node 2.7.0, roku-deploy 3.18.4, rooibos-roku 5.17.0.
+  - **Transitive changes:** `jimp` and every `@jimp/*` 1.6.1 → 1.7.0, `bmp-ts` 1.0.9 → 1.1.0, `zod` 3.25.76 → 4.6.7 (jimp 1.7.0's), `decode-uri-component` removed, `source-map-resolve` 0.5.3 → 0.5.0 (deprecated; npm's choice).
+  - All four gates pass after it.
+- **Why:** The plan's step 24 asked for `npm audit`, and step 2 accepted 43 high as dev-only. The fix needed no direct version change.
+- **Explained:** The build tools' own dependencies were updated to versions without the known problems. Nothing from npm ships in the Roku app.
+- **Pros:** A clean audit, so a new advisory stands out.
+- **Cons:**
+  - `zod` is a major version newer under brs-node's jimp. Only brs-node's image handling uses jimp, and no local test exercises it.
+  - `source-map-resolve` moved to an older, deprecated release.
+- **To reverse:** Restore `roku/package-lock.json` from before step 24, then `npm ci` in `roku/`.
+
+### D60. The import's confirm screen says where the bundle came from
+- **Step:** 24 (security N-8). **Decision (Recommended):** `ImportBundle.summaryRows(bundle, lastChannelLabel, fromHost)` begins with a **From** row: the IPv4 address the import asked (`checkRequest`'s host, kept as `m.importHost` in the scene; "?" if empty). The script prints that address ("serving the settings from <address>"), so the user can compare the two. The frame (NgJ0S) has no such row; it uses the same row style. The panel grows by one row (57 px at 1080p; about 910 px tall in all, estimated from the Theme tokens with a two-line question and footnote).
+- **Why:** Any LAN host with ECP can open the confirm screen with its own bundle (step 14's accepted L-3). With its address on screen, a bundle from another host reads as one.
+- **Plan check:** the plan forbids showing a **tuner's** address (L6, D29), URLs (only hosts) and the migration secret. Nothing forbids the import's own source address, and step 14 already has the user compare IP addresses (its M-1).
+- **Explained:** Before replacing settings, the Roku shows which computer on the network sent them.
+- **Pros:** The user can spot an import they didn't start.
+- **Cons:**
+  - A LAN IPv4 address on screen (and in photos of it).
+  - **Unverified:** the 8-row panel at 720p (step 23).
+- **To reverse:** Drop the first row in `summaryRows` and its third argument.
