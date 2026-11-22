@@ -173,7 +173,8 @@ async function buildRelease() {
     };
     collect(staging, '');
     // The team catalogs (step 16): pro-teams.json from roku/data, college-teams.json copied from MMTVL at build.
-    const missing = ['data/pro-teams.json', 'data/college-teams.json'].filter((file) => !files.includes(file));
+    // Step 25 (D61, D62): bslib's MIT notice, since bsc ships source/bslib.brs in every build.
+    const missing = ['data/pro-teams.json', 'data/college-teams.json', 'licenses/bslib.txt'].filter((file) => !files.includes(file));
     if (missing.length > 0) {
         fail(`build:release: missing from the release build: ${missing.join(', ')}`);
     }

@@ -7,6 +7,7 @@
     "!components/probes/**/*",
     "images/**/*",
     "data/**/*",
+    "licenses/**/*",
     {
       "src": "../MMTVL/IPTV/Teams/college-teams.json",
       "dest": "data/college-teams.json"
