@@ -1,0 +1,26 @@
+' Sample Rooibos suite (M12 step 2): Log.host keeps only the host (L6).
+namespace tests
+
+    @suite("Log")
+    class LogTests extends rooibos.BaseTestSuite
+
+        @describe("Log.host")
+
+        @it("keeps only the host of a URL with user info, port, path and query")
+        sub _()
+            m.assertEqual(Log.host("http://user:secret@IPTV.example:8080/get.php?token=abc#x"), "iptv.example")
+        end sub
+
+        @it("keeps an IPv6 host without its brackets or port")
+        sub _()
+            m.assertEqual(Log.host("http://[fd00::1]:5004/auto/v5.1"), "fd00::1")
+        end sub
+
+        @it("returns an empty host for an empty string")
+        sub _()
+            m.assertEqual(Log.host(""), "")
+        end sub
+
+    end class
+
+end namespace

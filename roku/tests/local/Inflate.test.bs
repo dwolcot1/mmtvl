@@ -1,0 +1,209 @@
+' Inflate.gunzip (M12 step 3): every block type, gzip header flags, several members, input split at any byte,
+' and corrupt input failing with an error instead of a crash. Fixtures: support/InflateFixtures.bs.
+namespace InflateTests
+
+    sub test_inflatesStoredBlocks(t as object)
+        InflateTests.checkAllChunkSizes(t, InflateFixtures.stored())
+    end sub
+
+    sub test_inflatesAFixedHuffmanBlock(t as object)
+        InflateTests.checkAllChunkSizes(t, InflateFixtures.fixed())
+    end sub
+
+    sub test_inflatesADynamicHuffmanBlockWithCodesLongerThanTheFastTable(t as object)
+        fixture = InflateFixtures.dynamic()
+        InflateTests.checkAllChunkSizes(t, fixture)
+        result = InflateTests.inflate(fixture.hex, 4096)
+        t.assertTrue(result.result.slowCodes > 0, "slow codes used")
+    end sub
+
+    sub test_inflatesSeveralMembersWithEveryHeaderFlag(t as object)
+        fixture = InflateFixtures.multi()
+        InflateTests.checkAllChunkSizes(t, fixture)
+        t.assertEqual(InflateTests.inflate(fixture.hex, 64).result.members, 2)
+    end sub
+
+    ' Q4: 256 KB of output whose copies reach 20–28 KB back, across four 64 KB output pieces.
+    sub test_inflatesALargeStreamWithLongDistanceCopiesAcrossPieces(t as object)
+        fixture = InflateFixtures.large()
+        for each chunkBytes in [7, 1000, 65536]
+            label = "chunks of " + chunkBytes.ToStr()
+            r = InflateTests.inflate(fixture.hex, chunkBytes)
+            t.assertTrue(r.result.ok, label + " ok (" + r.result.error + ")")
+            t.assertEqual(r.output.Count(), 262144, label + " size")
+            t.assertEqual(r.output.Count(), fixture.size, label + " fixture size")
+            t.assertEqual(r.output.GetCRC32(), fixture.crc, label + " crc")
+            ' A piece is handed on after the symbol that reaches 64 KB, so it holds 64 KB plus at most one copy (258).
+            t.assertEqual(r.pieces.Count(), 4, label + " pieces")
+            for each piece in r.pieces
+                t.assertTrue(piece >= 65536 and piece <= 65536 + 258 or piece = r.pieces[3], label + " piece size " + piece.ToStr())
+            end for
+        end for
+    end sub
+
+    ' Q3: a code-length repeat (18) whose 7 extra bits are missing is truncation, not 10 zero lengths.
+    sub test_failsWhenARepeatCodesExtraBitsAreMissing(t as object)
+        result = InflateTests.inflate(InflateFixtures.truncated18().hex, 1).result
+        t.assertFalse(result.ok, "ok")
+        t.assertEqual(result.error, "Truncated")
+    end sub
+
+    sub test_reportsInputAndOutputBytes(t as object)
+        fixture = InflateFixtures.dynamic()
+        r = InflateTests.inflate(fixture.hex, 100)
+        t.assertEqual(r.result.inputBytes, Len(fixture.hex) / 2)
+        t.assertEqual(r.result.outputBytes, fixture.size)
+    end sub
+
+    sub test_handsOutputOnInPiecesOfAboutSixtyFourKilobytes(t as object)
+        ' 40 copies of the stored member: 40 × 2,040 bytes of output, more than one 64 KB piece.
+        hex = ""
+        for i = 1 to 40
+            hex += InflateFixtures.stored().hex
+        end for
+        r = InflateTests.inflate(hex, 1000)
+        t.assertTrue(r.result.ok, "ok")
+        t.assertEqual(r.result.members, 40)
+        t.assertEqual(r.pieces.Count(), 2, "pieces")
+        t.assertEqual(r.pieces[0], 65536, "first piece")
+    end sub
+
+    sub test_stopsWhenTheObserverSaysSo(t as object)
+        hex = ""
+        for i = 1 to 40
+            hex += InflateFixtures.stored().hex
+        end for
+        source = InflateTests.hexSource(hex, 500)
+        sink = InflateTests.collector()
+        observer = { ticks: 0, tick: function(_outputBytes as integer) as boolean
+                m.ticks++
+                return false
+            end function }
+        result = Inflate.gunzip(source, sink, observer)
+        t.assertFalse(result.ok, "ok")
+        t.assertTrue(result.stopped, "stopped")
+        t.assertEqual(result.error, "")
+        t.assertEqual(observer.ticks, 1)
+    end sub
+
+    sub test_failsOnATruncatedStream(t as object)
+        hex = InflateFixtures.dynamic().hex
+        result = InflateTests.inflate(Left(hex, Len(hex) - 400), 7).result
+        t.assertFalse(result.ok, "ok")
+        t.assertEqual(result.error, "Truncated")
+    end sub
+
+    sub test_failsOnAnInvalidBlockType(t as object)
+        bytes = CreateObject("roByteArray")
+        bytes.FromHexString(InflateFixtures.fixed().hex)
+        bytes[10] = bytes[10] or 6 ' BTYPE 11
+        result = InflateTests.inflate(bytes.ToHexString(), 3).result
+        t.assertFalse(result.ok, "ok")
+        t.assertEqual(result.error, "Invalid block type")
+    end sub
+
+    sub test_failsWhenTheLengthDoesNotMatch(t as object)
+        bytes = CreateObject("roByteArray")
+        bytes.FromHexString(InflateFixtures.fixed().hex)
+        last = bytes.Count() - 4
+        bytes[last] = (bytes[last] + 1) and 255
+        result = InflateTests.inflate(bytes.ToHexString(), 5).result
+        t.assertFalse(result.ok, "ok")
+        t.assertEqual(result.error, "Length doesn't match")
+    end sub
+
+    sub test_failsOnGarbageInsideTheCompressedData(t as object)
+        bytes = CreateObject("roByteArray")
+        bytes.FromHexString(InflateFixtures.dynamic().hex)
+        for i = 30 to 60
+            bytes[i] = 255
+        end for
+        result = InflateTests.inflate(bytes.ToHexString(), 11).result
+        t.assertFalse(result.ok, "ok")
+        t.assertTrue(result.error <> "", "has an error")
+    end sub
+
+    sub test_refusesInputThatIsNotGzip(t as object)
+        bytes = CreateObject("roByteArray")
+        bytes.FromAsciiString("<?xml version=" + Chr(34) + "1.0" + Chr(34) + "?><tv></tv>")
+        result = InflateTests.inflate(bytes.ToHexString(), 64).result
+        t.assertFalse(result.ok, "ok")
+        t.assertEqual(result.error, "Not gzip")
+        t.assertEqual(InflateTests.inflate("", 64).result.error, "Empty input")
+    end sub
+
+    sub test_refusesDataAfterTheLastMember(t as object)
+        result = InflateTests.inflate(InflateFixtures.fixed().hex + "abcdef", 64).result
+        t.assertFalse(result.ok, "ok")
+        t.assertEqual(result.error, "Data after the end")
+        t.assertTrue(InflateTests.inflate(InflateFixtures.fixed().hex + "000000", 64).result.ok, "zero padding is fine")
+    end sub
+
+    sub test_readsAndWritesFilesAPieceAtATime(t as object)
+        bytes = CreateObject("roByteArray")
+        bytes.FromHexString(InflateFixtures.multi().hex)
+        bytes.WriteFile("tmp:/inflate-in.gz")
+        result = Inflate.gunzip(Inflate.fileSource("tmp:/inflate-in.gz", 37), Inflate.fileSink("tmp:/inflate-out.txt"))
+        t.assertTrue(result.ok, "ok")
+        written = CreateObject("roByteArray")
+        written.ReadFile("tmp:/inflate-out.txt")
+        t.assertEqual(written.Count(), InflateFixtures.multi().size)
+        t.assertEqual(written.GetCRC32(), InflateFixtures.multi().crc)
+    end sub
+
+    ' --- Helpers ---
+
+    sub checkAllChunkSizes(t as object, fixture as object)
+        for each chunkBytes in [1, 2, 3, 7, 64, 4096]
+            label = "chunks of " + chunkBytes.ToStr()
+            r = InflateTests.inflate(fixture.hex, chunkBytes)
+            t.assertTrue(r.result.ok, label + " ok (" + r.result.error + ")")
+            t.assertEqual(r.output.Count(), fixture.size, label + " size")
+            t.assertEqual(r.output.GetCRC32(), fixture.crc, label + " crc")
+            head = CreateObject("roByteArray")
+            for i = 0 to 11
+                head.Push(r.output[i])
+            end for
+            t.assertEqual(head.ToAsciiString(), fixture.head, label + " head")
+        end for
+    end sub
+
+    function inflate(hex as string, chunkBytes as integer) as object
+        sink = InflateTests.collector()
+        result = Inflate.gunzip(InflateTests.hexSource(hex, chunkBytes), sink)
+        return { result: result, output: sink.output, pieces: sink.pieces }
+    end function
+
+    function hexSource(hex as string, chunkBytes as integer) as object
+        all = CreateObject("roByteArray")
+        all.FromHexString(hex)
+        return {
+            all: all,
+            offset: 0,
+            chunk: chunkBytes,
+            next: function() as dynamic
+                if m.offset >= m.all.Count() then return invalid
+                piece = CreateObject("roByteArray")
+                last = m.offset + m.chunk - 1
+                if last > m.all.Count() - 1 then last = m.all.Count() - 1
+                for i = m.offset to last
+                    piece.Push(m.all[i])
+                end for
+                m.offset = last + 1
+                return piece
+            end function
+        }
+    end function
+
+    function collector() as object
+        return {
+            output: CreateObject("roByteArray"),
+            pieces: [],
+            write: sub(bytes as object)
+                m.pieces.Push(bytes.Count())
+                m.output.Append(bytes)
+            end sub
+        }
+    end function
+
+end namespace

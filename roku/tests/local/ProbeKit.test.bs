@@ -1,0 +1,81 @@
+' ProbeKit's pure parts (M12 step 3, probe build only): the guide a playlist's header names (used by probes d and
+' e when no guide is typed), the minimal M3U read, the LAN check, and text made safe to show.
+namespace ProbeKitTests
+
+    sub test_picksTheFirstHttpGuideFromUrlTvgThenXTvgUrl(t as object)
+        q = Chr(34)
+        t.assertEqual(ProbeKit.headerGuide("#EXTM3U url-tvg=" + q + "ftp://a.example/g.xml, https://guide.example/a.xml.gz,http://guide.example/b.xml" + q), "https://guide.example/a.xml.gz")
+        t.assertEqual(ProbeKit.headerGuide("#EXTM3U x-tvg-url=" + q + "http://guide.example/x.xml" + q + " URL-TVG=" + q + "http://guide.example/u.xml" + q), "http://guide.example/u.xml", "url-tvg first, keys ignore case")
+        t.assertEqual(ProbeKit.headerGuide("#EXTM3U url-tvg=" + q + q + " x-tvg-url=" + q + " http://guide.example/x.xml " + q), "http://guide.example/x.xml", "empty url-tvg falls back")
+        t.assertEqual(ProbeKit.headerGuide("#EXTM3U my-url-tvg=" + q + "http://guide.example/no.xml" + q), "", "only whole attribute names")
+        t.assertEqual(ProbeKit.headerGuide("#EXTM3U"), "")
+    end sub
+
+    sub test_readsTheGuideAndTheFirstLiveEntriesFromAPlaylist(t as object)
+        q = Chr(34)
+        lines = [
+            Chr(65279) + "#EXTM3U url-tvg=" + q + "http://guide.example/epg.xml.gz" + q,
+            "#EXTINF:-1 tvg-id=" + q + "a.example" + q + ",Chan A",
+            "http://iptv.example/live/1.m3u8",
+            "#EXTINF:-1,Movie",
+            "http://iptv.example/movie/x.mp4",
+            "#EXTINF:-1,Series",
+            "https://iptv.example/series/1/2.ts",
+            "#EXTINF:-1,Chan B",
+            "rtmp://iptv.example/live/2",
+            "#EXTINF:-1,Chan C",
+            "https://iptv.example/live/3.ts?token=x.mp4",
+            ""
+        ]
+        read = ProbeKit.m3uEntries(lines.Join(Chr(13) + Chr(10)), 3)
+        t.assertTrue(read.isPlaylist, "is a playlist")
+        t.assertEqual(read.guideURL, "http://guide.example/epg.xml.gz")
+        t.assertTrue(read.namesGuide, "names a guide")
+        t.assertEqual(read.entries, 5)
+        t.assertEqual(read.live, 2)
+        t.assertEqual(read.urls, ["http://iptv.example/live/1.m3u8", "https://iptv.example/live/3.ts?token=x.mp4"])
+        none = ProbeKit.m3uEntries("#EXTM3U" + Chr(10) + "#EXTINF:-1,A" + Chr(10) + "http://iptv.example/1" + Chr(10), 3)
+        t.assertEqual(none.guideURL, "")
+        t.assertFalse(none.namesGuide, "names no guide")
+        t.assertFalse(ProbeKit.m3uEntries("<html></html>", 3).isPlaylist, "not a playlist")
+    end sub
+
+    sub test_acceptsOnlyLanTunerAddresses(t as object)
+        t.assertEqual(ProbeKit.tunerHost("http://10.1.2.3/"), "10.1.2.3")
+        t.assertEqual(ProbeKit.tunerHost("HDHomeRun.local"), "hdhomerun.local")
+        t.assertEqual(ProbeKit.tunerHost("172.16.0.9:80"), "172.16.0.9")
+        t.assertEqual(ProbeKit.tunerHost("8.8.8.8"), "")
+        t.assertEqual(ProbeKit.tunerHost("tuner.example"), "")
+        t.assertEqual(ProbeKit.tunerHost("127.0.0.1"), "")
+    end sub
+
+    sub test_dropsAddressesFromTextShownOnScreen(t as object)
+        t.assertEqual(ProbeKit.safeText("connect ECONNREFUSED 10.0.0.2:8080 at http://iptv.example/x"), "connect ECONNREFUSED … at …")
+        t.assertEqual(ProbeKit.safeText("Malformed data in stream.example now"), "Malformed data in … now")
+        t.assertEqual(ProbeKit.safeText("abcdefghij", 5), "abcd…")
+    end sub
+
+    ' QA Q1: raw memory-call results keep their value and type, whatever the shape.
+    sub test_showsRawValuesWithTheirTypes(t as object)
+        t.assertEqual(ProbeKit.rawValue(524288), "524288i")
+        t.assertEqual(ProbeKit.rawValue(3000000000&), "3000000000L")
+        t.assertEqual(ProbeKit.rawValue(invalid), "inv")
+        t.assertEqual(ProbeKit.rawValue("12 MB"), "s:12 MB")
+        t.assertEqual(ProbeKit.rawValue({ maxRokuManagedHeapMemory: 7, maxForegroundMemory: 524288, maxBackgroundMemory: 1, somethingNewer: 2 }), "{bg=1i,fg=524288i,heap=7i,somethin=2i}")
+    end sub
+
+    ' Security L-3 and L-4: the observer stops past maxBytes ("size") and when its node is cancelled ("cancel").
+    sub test_observerStopsPastItsSizeLimitAndWhenCancelled(t as object)
+        node = { cancel: false, progress: "" }
+        sized = ProbeKit.observer(0, false, node, "x", 1000)
+        t.assertTrue(sized.tick(1000), "at the limit")
+        t.assertFalse(sized.tick(1001), "past the limit")
+        t.assertEqual(sized.reason, "size")
+        cancelled = ProbeKit.observer(0, false, node, "x")
+        t.assertTrue(cancelled.tick(5), "running")
+        node.cancel = true
+        t.assertFalse(cancelled.tick(6), "cancelled")
+        t.assertEqual(cancelled.reason, "cancel")
+    end sub
+
+end namespace

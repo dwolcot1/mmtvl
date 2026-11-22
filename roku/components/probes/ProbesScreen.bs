@@ -1,0 +1,1208 @@
+' The Probes screen (M12 step 3, DEBUG builds only; L8 as changed on 2026-11-18). Lists probes a–i with Run,
+' their status and result; "Run all" runs a–h one at a time (i needs a computer on the Roku's network). Each
+' probe is isolated: a crash or a timeout marks it and the next one runs. Results go to the table, the summary
+' code and the console as "[PROBE] <id> <status> <code>". Typed URLs and the tuner address are kept in the
+' registry section mmtvl-probe, shown only as "entered (N characters)", and never logged.
+
+sub init()
+    m.names = {
+        a: "HLS start", b: "Antenna", c: "Multiview", d: "Inflate", e: "Guide scan",
+        f: "Tuner discovery", g: "Registry", h: "Device limits", i: "ECP launch"
+    }
+    m.ids = ["a", "b", "c", "d", "e", "f", "g", "h", "i"]
+    m.runAllOrder = ["h", "g", "f", "a", "c", "b", "d", "e"]
+    m.watchdogSeconds = { a: 240, b: 900, c: 180, d: 2400, e: 7200, f: 30, h: 30 }
+    m.results = {}
+    m.queue = []
+    m.running = ""
+    m.task = invalid
+    m.taskPurpose = ""
+    m.vp = invalid
+    m.attempt = invalid
+    m.question = invalid
+    m.entries = invalid
+    m.foundTuner = ""
+    m.ownReady = false
+    m.ownSource = ""
+    m.ownPath = ""
+    m.runCounter = 0
+    m.runAllActive = false
+    m.dialog = invalid
+    m.dialogKind = ""
+
+    m.video = m.top.findNode("video")
+    m.video2 = invalid
+    m.panel = m.top.findNode("panel")
+    m.menu = m.top.findNode("menu")
+    m.status = m.top.findNode("status")
+    m.code = m.top.findNode("code")
+    m.overlay = m.top.findNode("overlay")
+    m.overlayText = m.top.findNode("overlayText")
+    m.watchdog = m.top.findNode("watchdog")
+    m.stepTimer = m.top.findNode("stepTimer")
+    m.attemptTimer = m.top.findNode("attemptTimer")
+    m.watchdog.observeField("fire", "onWatchdog")
+    m.stepTimer.observeField("fire", "onStepTimer")
+    m.attemptTimer.observeField("fire", "onAttemptTimeout")
+
+    m.section = CreateObject("roRegistrySection", "mmtvl-probe")
+    m.inputs = {}
+    for each key in ["playlist", "guide", "tuner"]
+        if m.section.Exists(key) then m.inputs[key] = m.section.Read(key)
+    end for
+    m.build = readBuildStamp()
+    m.registryOutcome = checkRegistry()
+
+    ' The main page has one line per probe; the details page has each probe's result (up to 3 lines).
+    m.details = m.top.findNode("details")
+    m.showingDetails = false
+    m.rowLabels = {}
+    m.detailLabels = {}
+    rows = m.top.findNode("rows")
+    detailRows = m.top.findNode("detailRows")
+    for index = 0 to m.ids.Count() - 1
+        label = CreateObject("roSGNode", "Label")
+        label.font = "font:SmallestSystemFont"
+        label.color = "0xFFFFFFFF"
+        label.width = 1180
+        label.translation = [0, index * 44]
+        rows.appendChild(label)
+        m.rowLabels[m.ids[index]] = label
+        detail = CreateObject("roSGNode", "Label")
+        detail.font = "font:SmallestSystemFont"
+        detail.color = "0xFFFFFFFF"
+        detail.width = 1800
+        detail.height = 100
+        detail.wrap = true
+        detail.maxLines = 3
+        detail.translation = [0, index * 104]
+        detailRows.appendChild(detail)
+        m.detailLabels[m.ids[index]] = detail
+        m.results[m.ids[index]] = { status: "not run", text: "", code: "" }
+    end for
+    m.results.i.status = "needs a computer on the Roku's network"
+
+    info = CreateObject("roAppInfo")
+    m.top.findNode("subtitle").text = "Version " + info.GetValue("major_version") + "." + info.GetValue("minor_version") + " Build " + info.GetValue("build_version") + " · probe build " + m.build + " · Run all: up to an hour, Back stops it · Typed entries are erased when you leave this screen"
+    if m.global.hasField("probeLaunch") then m.global.observeField("probeLaunch", "onProbeLaunch")
+    onProbeLaunch()
+    refreshMenu()
+    m.menu.observeField("itemSelected", "onMenuSelected")
+    refreshRows()
+    m.top.observeField("focusedChild", "onFocusChanged")
+end sub
+
+' --- Focus and keys ------------------------------------------------------------------------------------
+
+sub onFocusChangedBody()
+    ' MainScene focuses this screen; hand focus to the menu unless a video probe needs the keys here.
+    if m.top.hasFocus() and m.vp = invalid and m.dialog = invalid and not m.showingDetails then m.menu.setFocus(true)
+end sub
+
+function onKeyEventBody(key as string, press as boolean) as boolean
+    if not press then return false
+    if m.question <> invalid
+        answer = ""
+        if key = "up"
+            answer = "y"
+        else if key = "down"
+            answer = "n"
+        else if key = "OK"
+            answer = "?"
+        end if
+        if answer <> "" then answerQuestion(answer)
+        return true
+    end if
+    if m.showingDetails
+        if key = "back" then showDetails(false)
+        return true
+    end if
+    if key = "back"
+        if m.running <> ""
+            stopRunning()
+        else
+            eraseStoredInputs()
+            m.top.closed = true
+        end if
+        return true
+    end if
+    if m.vp <> invalid then return true
+    return false
+end function
+
+' --- Menu ----------------------------------------------------------------------------------------------
+
+sub refreshMenu()
+    focused = m.menu.itemFocused
+    content = CreateObject("roSGNode", "ContentNode")
+    titles = [
+        "Run all (a–h)",
+        "Playlist URL: " + mask("playlist"),
+        "Guide URL (optional): " + mask("guide"),
+        "Tuner address (optional): " + mask("tuner"),
+        "Clear typed entries"
+    ]
+    for each id in ["a", "b", "c", "d", "e", "f", "g", "h"]
+        titles.Push("Run " + id + " · " + m.names[id])
+    end for
+    titles.Push("i · ECP launch (no Run: see its row)")
+    titles.Push("Show details (photograph them too)")
+    for each title in titles
+        item = content.createChild("ContentNode")
+        item.title = title
+    end for
+    m.menu.content = content
+    if focused > 0 then m.menu.jumpToItem = focused
+end sub
+
+function mask(key as string) as string
+    value = m.inputs[key]
+    if value = invalid or value = "" then return "not entered"
+    return "entered (" + Len(value).ToStr() + " characters)"
+end function
+
+sub onMenuSelectedBody()
+    index = m.menu.itemSelected
+    if m.running <> "" and index <> 14
+        setStatus("A probe is running. Back stops it.")
+        return
+    end if
+    if index = 0
+        m.runAllActive = true
+        runProbes(m.runAllOrder)
+    else if index = 1
+        askFor("playlist")
+    else if index = 2
+        askFor("guide")
+    else if index = 3
+        askFor("tuner")
+    else if index = 4
+        for each key in ["playlist", "guide", "tuner"]
+            m.section.Delete(key)
+        end for
+        m.section.Flush()
+        m.inputs = {}
+        m.entries = invalid
+        m.ownReady = false
+        refreshMenu()
+        setStatus("Typed entries cleared.")
+    else if index >= 5 and index <= 12
+        runProbes([["a", "b", "c", "d", "e", "f", "g", "h"][index - 5]])
+    else if index = 13
+        onProbeLaunch()
+        setStatus("i only runs when a computer on the Roku's network launches the app with a contentId.")
+    else
+        showDetails(true)
+    end if
+end sub
+
+sub showDetails(show as boolean)
+    m.showingDetails = show
+    m.details.visible = show
+    m.panel.visible = not show
+    if show then m.top.setFocus(true) else m.menu.setFocus(true)
+end sub
+
+' --- Typed inputs --------------------------------------------------------------------------------------
+
+sub askFor(kind as string)
+    dialog = CreateObject("roSGNode", "StandardKeyboardDialog")
+    if dialog = invalid then dialog = CreateObject("roSGNode", "KeyboardDialog")
+    if kind = "playlist"
+        dialog.title = "Playlist URL"
+        message = "Type the playlist's address, starting with http:// or https://. It stays on this Roku and is never shown."
+    else if kind = "guide"
+        dialog.title = "Guide URL (optional)"
+        message = "Type one guide (XMLTV) address, .xml or .xml.gz, starting with http:// or https://. It stays on this Roku and is never shown."
+    else
+        dialog.title = "Tuner address (optional)"
+        message = "Type the HDHomeRun's address on your network, like 192.168.x.x, only if probe f doesn't find it."
+    end if
+    if dialog.hasField("message")
+        if dialog.subtype() = "StandardKeyboardDialog" then dialog.message = [message] else dialog.message = message
+    end if
+    dialog.buttons = ["OK", "Cancel"]
+    dialog.text = ""
+    dialog.observeField("buttonSelected", "onDialogButton")
+    if dialog.hasField("wasClosed") then dialog.observeField("wasClosed", "onDialogClosed")
+    m.dialog = dialog
+    m.dialogKind = kind
+    m.top.getScene().dialog = dialog
+end sub
+
+sub onDialogButtonBody()
+    dialog = m.dialog
+    if dialog = invalid then return
+    if dialog.buttonSelected = 0 then saveInput(m.dialogKind, dialog.text)
+    closeDialog()
+end sub
+
+sub onDialogClosedBody()
+    closeDialog()
+end sub
+
+sub closeDialog()
+    if m.dialog = invalid then return
+    dialog = m.dialog
+    m.dialog = invalid
+    dialog.unobserveField("buttonSelected")
+    if dialog.hasField("wasClosed") then dialog.unobserveField("wasClosed")
+    dialog.close = true
+    m.menu.setFocus(true)
+end sub
+
+' Security M-1: typed URLs carry account tokens, so they leave the registry when Run all ends and when the screen
+' closes; this session keeps them in memory for single probe runs.
+sub eraseStoredInputs()
+    for each key in ["playlist", "guide", "tuner"]
+        m.section.Delete(key)
+    end for
+    m.section.Flush()
+end sub
+
+sub saveInput(kind as string, text as dynamic)
+    value = ProbeKit.toText(text).Trim()
+    if kind = "tuner"
+        value = ProbeKit.tunerHost(value)
+        if value = ""
+            setStatus("That isn't an address on your home network (like 192.168.x.x or a .local name). Nothing saved.")
+            return
+        end if
+    else if not ProbeKit.isHttpURL(value)
+        setStatus("That doesn't start with http:// or https://. Nothing saved.")
+        return
+    end if
+    m.inputs[kind] = value
+    m.section.Write(kind, value)
+    m.section.Flush()
+    if kind = "playlist" then m.entries = invalid
+    if kind = "guide" or kind = "playlist" then m.ownReady = false
+    refreshMenu()
+    setStatus("Saved (" + Len(value).ToStr() + " characters).")
+end sub
+
+' --- Running probes ------------------------------------------------------------------------------------
+
+sub runProbes(ids as object)
+    if ids.Count() = 0 then return
+    m.queue = []
+    for each id in ids
+        m.queue.Push(id)
+    end for
+    runNext()
+end sub
+
+sub runNext()
+    if m.queue.Count() = 0
+        m.running = ""
+        if m.runAllActive
+            m.runAllActive = false
+            eraseStoredInputs()
+            setStatus("Finished. Photograph this screen. Typed entries are now erased from the Roku's storage (kept until you leave this screen).")
+        else
+            setStatus("Finished. Photograph this screen.")
+        end if
+        refreshRows()
+        return
+    end if
+    id = m.queue.Shift()
+    m.running = id
+    m.results[id] = { status: "running", text: "", code: "" }
+    refreshRows()
+    setStatus("Running " + id + " · " + m.names[id] + " …")
+    seconds = m.watchdogSeconds[id]
+    if seconds <> invalid
+        m.watchdog.control = "stop"
+        m.watchdog.duration = seconds
+        m.watchdog.control = "start"
+    end if
+    try
+        startProbe(id)
+    catch e
+        finishProbe(id, "failed", ProbeKit.crashText(e), id + " crash")
+    end try
+end sub
+
+sub startProbe(id as string)
+    if id = "h" or id = "f"
+        startTask(id, {}, id)
+    else if id = "g"
+        finishProbe("g", "done", m.registryOutcome.text, m.registryOutcome.code)
+    else if id = "a"
+        if m.inputs.playlist = invalid
+            finishProbe("a", "skipped", "No playlist entered", "a -")
+        else
+            startTask("playlist", { playlist: m.inputs.playlist }, "a-playlist")
+        end if
+    else if id = "c"
+        if m.entries <> invalid
+            startMultiview()
+        else if m.inputs.playlist <> invalid
+            startTask("playlist", { playlist: m.inputs.playlist }, "c-playlist")
+        else
+            startMultiview()
+        end if
+    else if id = "b"
+        startAntenna()
+    else if id = "d"
+        startTask("d", { guide: m.inputs.guide, playlist: m.inputs.playlist }, "d")
+    else if id = "e"
+        startTask("e", { guide: m.inputs.guide, playlist: m.inputs.playlist, ownReady: m.ownReady, ownSource: m.ownSource, ownPath: m.ownPath }, "e")
+    else
+        finishProbe(id, "skipped", "Not a probe that runs from here", id + " -")
+    end if
+end sub
+
+' Records a result and moves to the next probe. Ignored when id isn't the one running (a late callback).
+sub finishProbe(id as string, status as string, text as string, code as string)
+    if m.running <> id then return
+    m.watchdog.control = "stop"
+    m.stepTimer.control = "stop"
+    m.attemptTimer.control = "stop"
+    endVideo()
+    endTask()
+    m.results[id] = { status: status, text: text, code: code }
+    print "[PROBE] " + id + " " + status + " " + code
+    print "[PROBE] " + id + " " + text
+    m.running = ""
+    refreshRows()
+    runNext()
+end sub
+
+sub stopRunning()
+    id = m.running
+    m.queue = []
+    if m.runAllActive
+        m.runAllActive = false
+        eraseStoredInputs()
+    end if
+    if m.question <> invalid then m.question = invalid
+    finishProbe(id, "stopped", "Stopped with Back", id + " stop")
+end sub
+
+sub onWatchdogBody()
+    id = m.running
+    if id = "" then return
+    finishProbe(id, "timed out", "Took longer than " + (m.watchdogSeconds[id] \ 60).ToStr() + " minutes; stopped", id + " timeout")
+end sub
+
+' --- Tasks ---------------------------------------------------------------------------------------------
+
+sub startTask(name as string, input as object, purpose as string)
+    endTask()
+    task = CreateObject("roSGNode", "ProbeTask")
+    ' Each run gets its own id, so its files never collide with a task given up on earlier (security L-4).
+    m.runCounter++
+    input.runId = m.runCounter.ToStr()
+    task.input = input
+    task.probe = name
+    task.observeField("result", "onTaskResult")
+    task.observeField("progress", "onTaskProgress")
+    m.task = task
+    m.taskPurpose = purpose
+    task.control = "run"
+end sub
+
+sub endTask()
+    if m.task = invalid then return
+    m.task.unobserveField("result")
+    m.task.unobserveField("progress")
+    m.task.cancel = true
+    m.task.control = "stop"
+    m.task = invalid
+end sub
+
+sub onTaskProgressBody()
+    if m.task <> invalid then setStatus(m.task.progress)
+end sub
+
+sub onTaskResult()
+    if m.task = invalid then return
+    result = m.task.result
+    purpose = m.taskPurpose
+    m.task.unobserveField("result")
+    m.task.unobserveField("progress")
+    m.task = invalid
+    try
+        handleTaskResult(purpose, result)
+    catch e
+        if m.running <> "" then finishProbe(m.running, "failed", ProbeKit.crashText(e), m.running + " crash")
+    end try
+end sub
+
+sub handleTaskResult(purpose as string, result as object)
+    data = result.data
+    if data = invalid then data = {}
+    if purpose = "h" or purpose = "f" or purpose = "d" or purpose = "e"
+        if purpose = "f" and data.tuner <> invalid then m.foundTuner = data.tuner
+        if purpose = "d"
+            m.ownReady = ProbeKit.isTrue(data.ownReady)
+            m.ownSource = ProbeKit.toText(data.guideSource)
+            m.ownPath = ProbeKit.toText(data.ownPath)
+        end if
+        if purpose = "e" then m.ownReady = false
+        finishProbe(purpose, result.status, result.text, result.code)
+    else if purpose = "a-playlist" or purpose = "c-playlist"
+        probe = Left(purpose, 1)
+        m.playlistInfo = { text: result.text, code: result.code }
+        urls = data.urls
+        if result.status = "done" and urls <> invalid and urls.Count() > 0 then m.entries = urls
+        if probe = "a"
+            if m.entries = invalid
+                finishProbe("a", result.status, result.text, "a " + result.code)
+            else
+                startHls()
+            end if
+        else
+            startMultiview()
+        end if
+    else if purpose = "b-lineup"
+        m.lineupInfo = { status: result.status, text: result.text, code: result.code }
+        if result.status = "done"
+            startAntennaPlayback(data)
+        else
+            finishAntenna()
+        end if
+    else if purpose = "c-md"
+        m.vp.data.mdTask = result.code
+        m.vp.data.mdTaskText = result.text
+        nextAction()
+    end if
+end sub
+
+' --- Video probes: a list of actions run one after another ---------------------------------------------
+' play:<i>:<format>:<mode>[:zap|:second]  plays url i (format "u": streamFormat not set); mode "plain" or
+'                                         "prebuffer"; "second" plays on a second Video, only if the last play worked
+' hold:<ms>  waits (skipped when the last play failed)     check:<i>  redirect check for url i
+' stop:sync:<i> / stop:async:<i>                          ask:<i>    the combing question (antenna)
+' first, stopall, md                                       (multiview)
+
+sub runActions(probe as string, urls as object, actions as object, overlay as string)
+    m.vp = { probe: probe, urls: urls, actions: actions, index: -1, data: {}, last: invalid, stopping: false, zapTimer: invalid }
+    m.panel.visible = false
+    m.video.visible = true
+    m.overlay.visible = true
+    m.overlayText.text = overlay
+    m.top.setFocus(true)
+    nextAction()
+end sub
+
+sub nextAction()
+    vp = m.vp
+    if vp = invalid then return
+    vp.index++
+    if vp.index >= vp.actions.Count()
+        finishVideoProbe()
+        return
+    end if
+    parts = vp.actions[vp.index].Split(":")
+    try
+        doAction(parts)
+    catch e
+        finishProbe(vp.probe, "failed", ProbeKit.crashText(e), vp.probe + " crash")
+    end try
+end sub
+
+sub doAction(parts as object)
+    vp = m.vp
+    kind = parts[0]
+    if kind = "play"
+        index = Val(parts[1], 10)
+        video = m.video
+        timeout = 20
+        if vp.probe = "b" then timeout = 15
+        options = ""
+        if parts.Count() > 4 then options = parts[4]
+        if options = "second"
+            if vp.last = invalid or not vp.last.ok
+                nextAction()
+                return
+            end if
+            video = secondVideo()
+        end if
+        format = parts[2]
+        if format = "u" then format = ""
+        m.overlayText.text = overlayFor(vp.probe, index, format)
+        startAttempt(video, vp.urls[index], format, parts[3] = "prebuffer", options, attemptKey(index, format), timeout)
+    else if kind = "hold"
+        if vp.last <> invalid and vp.last.ok
+            holdFor(Val(parts[1], 10) / 1000)
+        else
+            nextAction()
+        end if
+    else if kind = "check"
+        index = Val(parts[1], 10)
+        vp.data["r" + parts[1]] = redirectCheck(vp.urls[index])
+        nextAction()
+    else if kind = "stop"
+        if parts[1] = "async"
+            stopAsync()
+        else
+            timer = CreateObject("roTimespan")
+            m.video.control = "stop"
+            vp.data["s" + parts[2]] = timer.TotalMilliseconds()
+            nextAction()
+        end if
+    else if kind = "ask"
+        askCombing(Val(parts[1], 10))
+    else if kind = "first"
+        vp.data.firstState = m.video.state
+        nextAction()
+    else if kind = "stopall"
+        if m.video2 <> invalid then m.video2.control = "stop"
+        m.video.control = "stop"
+        nextAction()
+    else if kind = "md"
+        decoder = invalid
+        try
+            decoder = CreateObject(multiDecodeName())
+        catch e
+            decoder = invalid
+        end try
+        if decoder = invalid then vp.data.mdRender = "n" else vp.data.mdRender = "y"
+        startTask("multidecode", {}, "c-md")
+    else
+        nextAction()
+    end if
+end sub
+
+function attemptKey(index as integer, format as string) as string
+    if format = "" then format = "u"
+    return "p" + index.ToStr() + "." + format
+end function
+
+function overlayFor(probe as string, index as integer, format as string) as string
+    if probe = "a" then return "Probe a: playing test channel " + (index + 1).ToStr() + " of 3. Back stops."
+    if probe = "c" and index = 1 then return "Probe c: starting a second video while the first plays. Back stops."
+    if probe = "c" then return "Probe c: playing the first video. Back stops."
+    if format = "" then format = "not set"
+    return "Probe b: antenna channel " + (index + 1).ToStr() + ", stream format " + format + ". Back stops."
+end function
+
+sub holdFor(seconds as float)
+    m.stepTimer.control = "stop"
+    m.stepTimer.duration = seconds
+    m.stepTimer.control = "start"
+end sub
+
+sub onStepTimerBody()
+    if m.vp = invalid then return
+    if m.question <> invalid
+        answerQuestion("-")
+        return
+    end if
+    if m.attempt <> invalid and m.attempt.phase = "prebuffer"
+        playNow()
+        return
+    end if
+    if m.vp.stopping
+        m.vp.stopping = false
+        m.video.unobserveField("state")
+        nextAction()
+        return
+    end if
+    nextAction()
+end sub
+
+function secondVideo() as object
+    if m.video2 = invalid
+        m.video2 = CreateObject("roSGNode", "Video")
+        m.video2.width = 640
+        m.video2.height = 360
+        m.video2.translation = [1240, 660]
+        m.video2.enableUI = false
+        m.top.insertChild(m.video2, 2)
+    end if
+    m.video2.visible = true
+    return m.video2
+end function
+
+' One play: content, optional prebuffer (up to 8 s, until prebufferDone), then play; done at "playing", an
+' error, or the timeout. The result goes to m.vp.data[key] and m.vp.last.
+sub startAttempt(video as object, url as string, format as string, prebuffer as boolean, options as string, key as string, timeoutSeconds as integer)
+    m.attempt = { video: video, key: key, phase: "prebuffer", timer: CreateObject("roTimespan"), playAt: -1, prebufferMs: -1, zap: options = "zap", url: url }
+    content = CreateObject("roSGNode", "ContentNode")
+    content.url = url
+    content.live = true
+    if format <> "" then content.streamFormat = format
+    video.content = content
+    video.observeField("state", "onAttemptState")
+    m.attemptTimer.control = "stop"
+    m.attemptTimer.duration = timeoutSeconds
+    m.attemptTimer.control = "start"
+    if prebuffer
+        video.observeField("bufferingStatus", "onAttemptBuffering")
+        video.control = "prebuffer"
+        holdFor(8)
+    else
+        playNow()
+    end if
+end sub
+
+sub playNow()
+    attempt = m.attempt
+    if attempt = invalid or attempt.phase = "play" then return
+    m.stepTimer.control = "stop"
+    attempt.phase = "play"
+    attempt.video.unobserveField("bufferingStatus")
+    attempt.playAt = attempt.timer.TotalMilliseconds()
+    attempt.video.control = "play"
+    if attempt.video.state = "playing" then attemptDone(attemptResult({ ok: true, ms: 0 }))
+end sub
+
+sub onAttemptBufferingBody()
+    attempt = m.attempt
+    if attempt = invalid or attempt.phase <> "prebuffer" then return
+    status = attempt.video.bufferingStatus
+    if status <> invalid and ProbeKit.isTrue(status.prebufferDone)
+        attempt.prebufferMs = attempt.timer.TotalMilliseconds()
+        playNow()
+    end if
+end sub
+
+sub onAttemptStateBody()
+    attempt = m.attempt
+    if attempt = invalid then return
+    state = attempt.video.state
+    if state = "playing" and attempt.phase = "play"
+        attemptDone(attemptResult({ ok: true, ms: attempt.timer.TotalMilliseconds() - attempt.playAt }))
+    else if state = "error"
+        video = attempt.video
+        errcode = invalid
+        category = ""
+        if video.errorInfo <> invalid
+            errcode = video.errorInfo.errcode
+            category = ProbeKit.toText(video.errorInfo.category)
+        end if
+        attemptDone(attemptResult({ error: video.errorCode, errcode: errcode, category: ProbeKit.safeText(category, 20), message: ProbeKit.safeText(video.errorMsg, 50) }))
+    else if state = "finished"
+        attemptDone(attemptResult({ ended: true }))
+    end if
+end sub
+
+sub onAttemptTimeoutBody()
+    if m.attempt <> invalid then attemptDone(attemptResult({ timeout: true }))
+end sub
+
+' Every key present, so comparisons never meet invalid.
+function attemptResult(values as object) as object
+    result = { ok: false, ms: 0, timeout: false, ended: false, error: invalid, errcode: invalid, category: "", message: "", prebufferMs: -1, zapMs: invalid }
+    result.Append(values)
+    return result
+end function
+
+sub attemptDone(result as object)
+    attempt = m.attempt
+    if attempt = invalid then return
+    m.attempt = invalid
+    m.attemptTimer.control = "stop"
+    m.stepTimer.control = "stop"
+    attempt.video.unobserveField("state")
+    attempt.video.unobserveField("bufferingStatus")
+    result.prebufferMs = attempt.prebufferMs
+    if attempt.zap and result.ok and m.vp.zapTimer <> invalid then result.zapMs = m.vp.zapTimer.TotalMilliseconds()
+    if not result.ok then attempt.video.control = "stop"
+    m.vp.data[attempt.key] = result
+    m.vp.last = result
+    nextAction()
+end sub
+
+' After a stop with asyncStopSemantics (OS 12.5+), waits for "stopped" (at most 5 s) before the next play,
+' as Roku's docs require. Without the field, a normal stop.
+sub stopAsync()
+    vp = m.vp
+    vp.zapTimer = CreateObject("roTimespan")
+    if m.video.hasField("asyncStopSemantics")
+        vp.data.async = "y"
+        m.video.asyncStopSemantics = true
+        vp.stopping = true
+        m.video.observeField("state", "onAsyncStopState")
+        m.video.control = "stop"
+        holdFor(5)
+    else
+        vp.data.async = "n"
+        m.video.control = "stop"
+        nextAction()
+    end if
+end sub
+
+sub onAsyncStopStateBody()
+    if m.vp = invalid or not m.vp.stopping then return
+    if m.video.state = "stopped"
+        m.vp.stopping = false
+        m.stepTimer.control = "stop"
+        m.video.unobserveField("state")
+        nextAction()
+    end if
+end sub
+
+' "y" when what plays comes from a different host than the playlist's URL (a redirect was followed), "n" when
+' it's the same host, "?" when the Video node doesn't say. Hosts are compared here and never kept or shown.
+function redirectCheck(url as string) as string
+    entryHost = Log.host(url)
+    seen = []
+    info = m.video.streamInfo
+    if info <> invalid and info.streamUrl <> invalid then seen.Push(Log.host(ProbeKit.toText(info.streamUrl)))
+    segment = m.video.streamingSegment
+    if segment <> invalid and segment.segUrl <> invalid then seen.Push(Log.host(ProbeKit.toText(segment.segUrl)))
+    if seen.Count() = 0 then return "?"
+    for each host in seen
+        if host <> "" and host <> entryHost then return "y"
+    end for
+    return "n"
+end function
+
+sub askCombing(index as integer)
+    vp = m.vp
+    key = "asked" + index.ToStr()
+    if vp.last = invalid or not vp.last.ok or ProbeKit.isTrue(vp.data[key])
+        nextAction()
+        return
+    end if
+    vp.data[key] = true
+    m.question = { index: index }
+    m.overlayText.text = "Look at moving edges (text, scoreboards, people). Do you see comb-like jagged lines?   Up = Yes · Down = No · OK = Can't tell"
+    holdFor(90)
+end sub
+
+sub answerQuestion(answer as string)
+    question = m.question
+    m.question = invalid
+    m.stepTimer.control = "stop"
+    m.vp.data["comb" + question.index.ToStr()] = answer
+    nextAction()
+end sub
+
+sub endVideo()
+    m.attempt = invalid
+    m.question = invalid
+    if m.vp = invalid then return
+    m.vp = invalid
+    m.video.unobserveField("state")
+    m.video.unobserveField("bufferingStatus")
+    m.video.control = "stop"
+    if m.video.hasField("asyncStopSemantics") then m.video.asyncStopSemantics = false
+    m.video.visible = false
+    if m.video2 <> invalid
+        m.video2.unobserveField("state")
+        m.video2.control = "stop"
+        m.top.removeChild(m.video2)
+        m.video2 = invalid
+    end if
+    m.overlay.visible = false
+    m.panel.visible = true
+    m.menu.setFocus(true)
+end sub
+
+sub finishVideoProbe()
+    vp = m.vp
+    if vp.probe = "a"
+        finishHls(vp.data)
+    else if vp.probe = "b"
+        finishAntenna()
+    else
+        finishMultiview(vp.data)
+    end if
+end sub
+
+' "P1.8" playing after 1.8 s, "E-3/16" error code and Roku's errcode, "T" timeout, "F" stream ended, "-" not run.
+function attemptCode(result as dynamic) as string
+    if result = invalid then return "-"
+    if result.ok then return "P" + ProbeKit.seconds(result.ms)
+    if result.timeout then return "T"
+    if result.ended then return "F"
+    code = "E" + ProbeKit.toText(result.error)
+    if result.errcode <> invalid then code += "/" + ProbeKit.toText(result.errcode)
+    return code
+end function
+
+function attemptText(result as dynamic) as string
+    if result = invalid then return "not tried"
+    if result.ok then return "playing after " + ProbeKit.seconds(result.ms) + " s"
+    if result.timeout then return "no picture within the time limit"
+    if result.ended then return "the stream ended"
+    text = "error " + ProbeKit.toText(result.error)
+    if result.errcode <> invalid then text += " (" + ProbeKit.toText(result.errcode) + ")"
+    if result.category <> "" then text += " " + result.category
+    if result.message <> "" then text += ": " + result.message
+    return text
+end function
+
+' --- a: HLS start ---------------------------------------------------------------------------------------
+
+sub startHls()
+    urls = m.entries
+    actions = ["play:0:hls:plain", "hold:3000", "check:0", "stop:sync:0"]
+    if urls.Count() >= 2 then actions.Append(["play:1:hls:prebuffer", "hold:3000", "check:1"])
+    if urls.Count() >= 3
+        actions.Append(["stop:async:1", "play:2:hls:prebuffer:zap", "hold:3000", "check:2", "stop:sync:2"])
+    else if urls.Count() = 2
+        actions.Push("stop:sync:1")
+    end if
+    runActions("a", urls, actions, "Probe a: playing test channels.")
+end sub
+
+sub finishHls(data as object)
+    texts = [m.playlistInfo.text]
+    codes = ["a " + m.playlistInfo.code]
+    labels = ["plain play", "prebuffered", "prebuffered after an async stop"]
+    redirects = []
+    for i = 0 to 2
+        result = data["p" + i.ToStr() + ".hls"]
+        if result <> invalid
+            text = "Channel " + (i + 1).ToStr() + " (" + labels[i] + "): " + attemptText(result)
+            code = (i + 1).ToStr() + "=" + attemptCode(result)
+            if result.prebufferMs <> invalid and result.prebufferMs >= 0
+                text += ", prebuffer ready after " + ProbeKit.seconds(result.prebufferMs) + " s"
+                code += "/pb" + ProbeKit.seconds(result.prebufferMs)
+            end if
+            if result.zapMs <> invalid
+                text += ", " + ProbeKit.seconds(result.zapMs) + " s from stop to playing"
+                code += "/z" + ProbeKit.seconds(result.zapMs)
+            end if
+            if data["s" + i.ToStr()] <> invalid then text += ", stop took " + ProbeKit.seconds(data["s" + i.ToStr()]) + " s"
+            texts.Push(text)
+            codes.Push(code)
+        end if
+        if data["r" + i.ToStr()] <> invalid then redirects.Push(data["r" + i.ToStr()])
+    end for
+    redirect = "?"
+    for each value in redirects
+        if value = "y" then redirect = "y"
+        if value = "n" and redirect = "?" then redirect = "n"
+    end for
+    if data.async <> invalid then codes.Push("as=" + data.async)
+    codes.Push("r=" + redirect)
+    redirectText = "unknown"
+    if redirect = "y" then redirectText = "yes (served from another host)"
+    if redirect = "n" then redirectText = "no (same host)"
+    texts.Push("redirect followed: " + redirectText)
+    finishProbe("a", "done", texts.Join(" · "), codes.Join(" "))
+end sub
+
+' --- b: antenna -----------------------------------------------------------------------------------------
+
+sub startAntenna()
+    info = CreateObject("roDeviceInfo")
+    yes = function(value as dynamic) as string
+        if value <> invalid and ProbeKit.isTrue(value.result) then return "y"
+        return "n"
+    end function
+    m.decoders = {
+        h264: yes(info.CanDecodeVideo({ codec: "mpeg4 avc" })),
+        mpeg2: yes(info.CanDecodeVideo({ codec: "mpeg2" })),
+        ac3: yes(info.CanDecodeAudio({ codec: "ac3" })),
+        eac3: yes(info.CanDecodeAudio({ codec: "eac3" }))
+    }
+    m.lineupInfo = invalid
+    m.antennaData = invalid
+    tuner = m.inputs.tuner
+    if tuner = invalid or tuner = "" then tuner = m.foundTuner
+    if tuner = "" or not ProbeKit.isLanHost(tuner)
+        finishAntenna()
+        return
+    end if
+    startTask("lineup", { tuner: tuner }, "b-lineup")
+end sub
+
+sub startAntennaPlayback(lineup as object)
+    urls = [ProbeKit.toText(lineup.h264), ProbeKit.toText(lineup.mpeg2), ""]
+    if urls[0] = "" and urls[1] = "" then urls[2] = ProbeKit.toText(lineup.other)
+    actions = []
+    for i = 0 to 2
+        if urls[i] <> ""
+            for each format in ["hls", "mp4", "mkv", "u"]
+                actions.Append(["play:" + i.ToStr() + ":" + format + ":plain", "ask:" + i.ToStr(), "hold:2000", "stop:sync:" + i.ToStr()])
+            end for
+        end if
+    end for
+    if actions.Count() = 0
+        finishAntenna()
+        return
+    end if
+    runActions("b", urls, actions, "Probe b: playing antenna channels.")
+end sub
+
+sub finishAntenna()
+    d = m.decoders
+    texts = ["Decoders: H.264 " + d.h264 + ", MPEG-2 " + d.mpeg2 + ", AC-3 " + d.ac3 + ", E-AC-3 " + d.eac3]
+    codes = ["b dec=264:" + d.h264 + ",mp2:" + d.mpeg2 + ",ac3:" + d.ac3 + ",eac3:" + d.eac3]
+    if m.lineupInfo = invalid
+        texts.Push("No tuner found or typed: playback not tried")
+        codes.Push("t=-")
+    else
+        texts.Push(m.lineupInfo.text)
+        codes.Push(m.lineupInfo.code)
+        if m.vp <> invalid
+            data = m.vp.data
+            kinds = ["H.264", "MPEG-2", "codec not listed"]
+            keys = ["264", "mp2", "unk"]
+            for i = 0 to 2
+                if data[attemptKey(i, "hls")] <> invalid
+                    parts = []
+                    codeParts = [keys[i] + ":"]
+                    for each format in ["hls", "mp4", "mkv", ""]
+                        result = data[attemptKey(i, format)]
+                        name = format
+                        if name = "" then name = "unset"
+                        parts.Push(name + " " + attemptText(result))
+                        codeParts.Push(Left(name, 1) + "=" + attemptCode(result))
+                    end for
+                    comb = data["comb" + i.ToStr()]
+                    if comb = invalid then comb = "-"
+                    combText = "not answered"
+                    if comb = "y" then combText = "yes"
+                    if comb = "n" then combText = "no"
+                    if comb = "?" then combText = "can't tell"
+                    texts.Push(kinds[i] + ": " + parts.Join(", ") + "; combing: " + combText)
+                    codeParts.Push("cmb=" + comb)
+                    codes.Push(codeParts.Join(" "))
+                end if
+            end for
+        end if
+    end if
+    finishProbe("b", "done", texts.Join(" · "), codes.Join(" "))
+end sub
+
+' --- c: multiview -----------------------------------------------------------------------------------------
+
+sub startMultiview()
+    urls = m.entries
+    if urls = invalid or urls.Count() < 2
+        runActions("c", [], ["md"], "Probe c: checking roMultiDecode (no playlist with two channels).")
+        return
+    end if
+    runActions("c", urls, ["play:0:hls:plain", "play:1:hls:plain:second", "hold:2000", "first", "stopall", "md"], "Probe c: multiview.")
+end sub
+
+sub finishMultiview(data as object)
+    texts = []
+    codes = ["c"]
+    first = data[attemptKey(0, "hls")]
+    if first = invalid
+        texts.Push("No playlist with two channels: only roMultiDecode was checked")
+        codes.Push("2nd=-")
+    else
+        second = data[attemptKey(1, "hls")]
+        texts.Push("First video: " + attemptText(first))
+        texts.Push("Second video while the first played: " + attemptText(second))
+        firstState = ProbeKit.toText(data.firstState)
+        if firstState = "" then firstState = "-"
+        texts.Push("First video afterwards: " + firstState)
+        states = { playing: "P", stopped: "S", error: "E", buffering: "B", paused: "Z", finished: "F" }
+        stateCode = states[firstState]
+        if stateCode = invalid then stateCode = "-"
+        codes.Push("1=" + attemptCode(first) + " 2nd=" + attemptCode(second) + " 1st=" + stateCode)
+    end if
+    render = ProbeKit.toText(data.mdRender)
+    if render = "" then render = "-"
+    taskCode = ProbeKit.toText(data.mdTask)
+    if taskCode = "" then taskCode = "md=-"
+    texts.Push("roMultiDecode on the render thread: " + render + "; " + ProbeKit.toText(data.mdTaskText))
+    codes.Push(taskCode + " mdr=" + render)
+    finishProbe("c", "done", texts.Join(" · "), codes.Join(" "))
+end sub
+
+' --- g: registry ----------------------------------------------------------------------------------------
+
+' Read once when the screen opens: was the registry entry from an earlier build still there?
+function checkRegistry() as object
+    stamp = m.build
+    outcome = "new"
+    if m.section.Exists("stamp")
+        if m.section.Read("stamp") = stamp then outcome = "same" else outcome = "kept"
+    end if
+    typed = "n"
+    if m.inputs.Count() > 0 then typed = "y"
+    m.section.Write("stamp", stamp)
+    m.section.Flush()
+    space = CreateObject("roRegistry").GetSpaceAvailable()
+    if outcome = "new"
+        text = "Nothing from an earlier probe build (first run, or the registry was cleared). Sideload a newer probe build and run g again to test Q33."
+    else if outcome = "kept"
+        text = "An earlier probe build's entry survived installing this build (Q33: the registry is kept)."
+    else
+        text = "Same build as the last run (the app was reopened, not reinstalled)."
+    end if
+    text += " Typed entries there at launch: " + typed + ". Registry space left: " + space.ToStr() + " bytes."
+    return { text: text, code: "g " + outcome + " typed=" + typed + " sp=" + space.ToStr() }
+end function
+
+function readBuildStamp() as string
+    json = ParseJson(ReadAsciiFile("pkg:/probes/build.json"))
+    if json = invalid or json.built = invalid then return "unknown"
+    built = ProbeKit.toText(json.built)
+    ' "2026-11-18T01:23:45.678Z" → "2026-11-18 01:23:45 UTC"
+    if Len(built) >= 19 then return Left(built, 10) + " " + Mid(built, 12, 8) + " UTC"
+    return built
+end function
+
+' --- i: ECP launch --------------------------------------------------------------------------------------
+
+sub onProbeLaunchBody()
+    launch = invalid
+    if m.global.hasField("probeLaunch") then launch = m.global.probeLaunch
+    mainText = "no contentId"
+    inputText = "nothing yet"
+    mainCode = "n"
+    inputCode = "n"
+    if launch <> invalid
+        if launch.mainLength <> invalid and launch.mainLength >= 0
+            mainText = "got a contentId (" + launch.mainLength.ToStr() + " characters)"
+            mainCode = launch.mainLength.ToStr()
+        end if
+        if launch.inputLength <> invalid and launch.inputLength >= 0
+            inputText = "got a contentId (" + launch.inputLength.ToStr() + " characters)"
+            inputCode = launch.inputLength.ToStr()
+        end if
+    end if
+    status = "needs a computer on the Roku's network"
+    if mainCode <> "n" or inputCode <> "n" then status = "received"
+    m.results.i = { status: status, text: "Main(args): " + mainText + " · roInput: " + inputText, code: "i main=" + mainCode + " in=" + inputCode }
+    if m.rowLabels <> invalid then refreshRows()
+end sub
+
+' --- Table and summary code ---------------------------------------------------------------------------
+
+sub refreshRows()
+    lines = ["P1 " + Left(m.build, 16).Replace(" ", "_")]
+    for each id in m.ids
+        result = m.results[id]
+        text = result.text
+        if text <> "" then text = ": " + text
+        m.rowLabels[id].text = id + "  " + m.names[id] + " — " + result.status + text
+        m.detailLabels[id].text = id + "  " + m.names[id] + " — " + result.status + text
+        if id <> "i" or result.status = "received"
+            code = result.code
+            if code = "" then code = id + " -"
+            lines.Push(code)
+        end if
+    end for
+    m.code.text = lines.Join(Chr(10))
+end sub
+
+sub setStatus(text as string)
+    m.status.text = text
+end sub
+
+' --- Observers (security L-1): each one runs its body inside try/catch, so an error is reported on screen
+' (made safe to show) instead of stopping in the debugger with a URL in a local.
+
+sub onFocusChanged()
+    try
+        onFocusChangedBody()
+    catch e
+        observerFailed(e)
+    end try
+end sub
+
+sub onMenuSelected()
+    try
+        onMenuSelectedBody()
+    catch e
+        observerFailed(e)
+    end try
+end sub
+
+sub onDialogButton()
+    try
+        onDialogButtonBody()
+    catch e
+        observerFailed(e)
+    end try
+end sub
+
+sub onDialogClosed()
+    try
+        onDialogClosedBody()
+    catch e
+        observerFailed(e)
+    end try
+end sub
+
+sub onWatchdog()
+    try
+        onWatchdogBody()
+    catch e
+        observerFailed(e)
+    end try
+end sub
+
+sub onTaskProgress()
+    try
+        onTaskProgressBody()
+    catch e
+        observerFailed(e)
+    end try
+end sub
+
+sub onStepTimer()
+    try
+        onStepTimerBody()
+    catch e
+        observerFailed(e)
+    end try
+end sub
+
+sub onAttemptBuffering()
+    try
+        onAttemptBufferingBody()
+    catch e
+        observerFailed(e)
+    end try
+end sub
+
+sub onAttemptState()
+    try
+        onAttemptStateBody()
+    catch e
+        observerFailed(e)
+    end try
+end sub
+
+sub onAttemptTimeout()
+    try
+        onAttemptTimeoutBody()
+    catch e
+        observerFailed(e)
+    end try
+end sub
+
+sub onAsyncStopState()
+    try
+        onAsyncStopStateBody()
+    catch e
+        observerFailed(e)
+    end try
+end sub
+
+sub onProbeLaunch()
+    try
+        onProbeLaunchBody()
+    catch e
+        observerFailed(e)
+    end try
+end sub
+
+function onKeyEvent(key as string, press as boolean) as boolean
+    handled = true
+    try
+        handled = onKeyEventBody(key, press)
+    catch e
+        observerFailed(e)
+    end try
+    return handled
+end function
+
+sub observerFailed(e as dynamic)
+    text = ProbeKit.crashText(e)
+    try
+        if m.running <> ""
+            finishProbe(m.running, "failed", text, m.running + " crash")
+        else
+            setStatus(text)
+        end if
+    catch inner
+        setStatus(text)
+    end try
+end sub
