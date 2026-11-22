@@ -36,7 +36,12 @@ regex = '''(?i)(X-Plex-Token|plex-token|accessToken)["'=:\s]+[A-Za-z0-9_-]{16,}'
 description = "MMTVL test fixtures and placeholders"
 regexTarget = "line"
 regexes = [
-  '''(?i)https?://[a-z0-9.-]*\.example([/:?"]|$)''',
+  '''(?i)https?://([a-z0-9._-]+(:[a-z0-9._-]*)?@)?[a-z0-9.-]*\.example([/:?"]|$)''',
+  # M12 Roku tests: made-up import secrets and a made-up DeviceAuth.
+  '''"(0123456789abcdef0123456789abcdef|fedcba9876543210fedcba9876543210)"''',
+  '''DeviceAuth=abcdef0123456789"''',
+  # pen.dev's file identifier in design/*.pen (file metadata, not a credential; user, 2026-11-22).
+  '''^\s*"fileToken":\s*"[A-Za-z0-9_-]+",?\s*$''',
   '''(AAAAbbbb1111|CCCCdddd2222|ab_cd-ef12345|ab%5Fcd%2Def12345)''',
   '''user:secret@meet\.google\.com/home\?calling=1&token=abc''',
   '''user:secret@IPTV\.example:8080/get\.php\?token=abc#x''',
