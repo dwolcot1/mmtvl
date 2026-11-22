@@ -10,7 +10,8 @@
 ## Next session starts here
 
 - **Phase 0 (PR #1)** and **phase 1 (PR #2, stacked on PR #1)** are done off-device. Steps 1, 4 and every device check wait for the remote tester's Roku. The probe build is `cd roku && npm run build` → `roku/out/mmtvl-live-tv.zip`. **Ask the user before sending it.**
-- **Phase 2 (UI) in progress** on branch `m12-step12` (worktree `.claude/worktrees/step9`, cut from `m12-phase2`; not pushed yet; the phase's PR will stack on PR #2). Done and QA-passed: **step 10** (frames in `design/roku-live-tv.pen`), **step 11** (player, Banner A, error panel, low-memory notice), **step 11b** (timeshift bar) and **step 12** (guide, channel menu, logos, idle return; `test:local` 427 passed at 307d275). The parked `m12-step12-wip` branch (local and origin) is superseded by 307d275 and can be deleted. **Next: step 13 (Settings)**, built to the approved Settings frames (2026-11-21 step 10 entry), replacing MainScene's `settingsPlaceholder`; see the step 9 entry's "For step 13" note. Pencil: open `design/roku-live-tv.pen` in Pen first (Pencil writes only to the document in front; the project-local MCP points at Pen desktop).
+- **Phase 2 (UI) is done off-device.** Branches stack: `m12-phase2` (steps 10, 11, 11b) → `m12-step12` (pushed, 6d2bc94) → **`m12-step13`** (worktree `.claude/worktrees/step9`; not pushed yet). There's no PR for phase 2 yet; it will stack on PR #2. Done and QA-passed: steps 10, 11, 11b, 12 (guide) and **13 (Settings)**. `test:local`: 497 passed at 44c1810. Every "with a device" check is collected for step 15 in the *Deviations* entries.
+- **Next: step 14 (export script and import, phase 3)**, `[implementer][security]`: L2 end to end. The Settings page "Import from MMTVL" is text only today; step 14 adds ImportTask and the confirm screen (frame NgJ0S, exported PNG: ask the orchestrator to export it again, since the scratchpad isn't durable). Pencil: to read frames, use `execute` with the file's `uri`, read-only. Pen may have another project in front, so never save from this session unless the user has it open.
 - Gates for every Roku step: `cd roku && npm run build && npm run lint && npm run test:local` (264 passed at the end of phase 1), plus `npm run build:release`. No simulator runs with network access. Use a separate git worktree for parallel steps (`git worktree add -b m12-stepN .claude/worktrees/stepN <commit>`); the built-in isolation started from the wrong commit.
 
 ## Goal
@@ -348,7 +349,7 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
   - Remember `lastGroup`.
   - The guide returns to the playing channel after 3 minutes without a press (D51).
   - Done when: `GuideKeyTests` (the GuideModelTests cases that apply: group looping, Search above the groups, Back states, paging by 6) pass, and with a device, the guide opens in under 2 s with the guide loaded.
-- [ ] **13. Settings** `[implementer]`, files: `roku/components/settings/**`
+- [x] **13. Settings** `[implementer]`, files: `roku/components/settings/**`
   - Pages:
     - **Live TV Source:** shows the playlist's host only; Change… opens the keyboard.
     - **Guides:** up to 6, add/remove/reorder, status per guide, Use the Playlist's Guide.
@@ -660,3 +661,45 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
       - the Video in the preview place;
       - `callFunc` with no arguments;
       - the `‹`, `…` and `·` glyphs.
+- **2026-11-21, step 13 (built; QA PASS after two fix rounds).** Settings is built to the approved frames (LQwUy, wjg72, DEDBc, B94oz), with MMTVL's wording where the frames don't say. New: `SettingsScreen`, and pure `SettingsPages`, `SettingsStatus`, `SettingsNav`, `SettingsEdits` and `GuideRuns`; `SettingsStore.saveMany` (all or nothing); `GuideFetch.statusRows` gains a per-guide `programmes` count; `Capabilities.modelName` (`GetModelDisplayName`). `test:local`: 497 passed.
+  - **Orchestrator decisions:**
+    - **Opening Settings:** `*` in the guide's group column, or in a guide with no rows (so a first launch without a playlist can reach it). This contradicts MMTVL's `menuInTheGroupsColumnDoesNothing` (GuideModelTests.swift:327), deliberately: the Roku has no home screen with a Settings tile. Back from the root returns to where Settings opened.
+    - **The Channels footer** reads "To favorite or hide one channel: in the guide, press * on it." until step 20, which restores the frame's "favorite, hide or match". The frame's Antenna and My Teams rows come with steps 21 and 18.
+    - **"Add Playlist URL…"** when no playlist is set. Typed-URL errors are new text. Refresh Now forces every guide to download again.
+    - **Animation:** only the track slides (outCubic, 0.4 s). Rows are clipped at the track's edges rather than faded, and the title, band and dimming change at once. Step 22 may revisit.
+    - **Probes** (L8) open with three Replays on About, in DEBUG builds only; the guide's Replay route is gone.
+    - **Device:** Compressed Guides follows `GuideSources.inflateEnabled`. A Roku that is Low only for its 720p UI reads "Low (720p UI)". The L5 low-space warning is the This Roku section's footer.
+    - Left as is: a playing channel's sound continues under Settings; a refused-save message stays in the band until the page changes.
+  - **QA fixes:**
+    - The first playlist answer no longer pulls Settings away: the launch channel waits until Back (`PlayerSession.launchRoute`, `returnFromSettings`).
+    - A guide run asked for during another run (a playlist change, Remove then Add, Add Guide, Refresh Now) runs right after it, with a pending delete first (`GuideRuns`).
+    - The watchdog path keeps those requests.
+    - Groups and Hidden Channels edits made during a playlist load survive it (a prefs revision).
+    - Remove Live TV Source saves both addresses at once.
+  - **Accepted (QA minor):** after the 2× watchdog give-up, the delete of `cachefs:/guides` can run while the abandoned task is still alive, and a late write can leave a guide file for the removed source until the next prune. It's the same accepted risk as step 9's security M-3; the files hold XMLTV data under SHA-1 names, no URL or token.
+  - **Security L-3 tally:** the keyboard dialog's `text` holds a typed URL while typing; the scene reads it once and clears it, and clears it on close. Guide cache ids (unsalted SHA-1, L-8) now also appear in `SettingsScreen.model` and row ids. No new interface field holds a URL.
+  - **Reference:** `StandardKeyboardDialog` fields were checked against roku-types (bundled with BrighterScript), not the live doc.
+  - **Device checks (step 15):**
+    - **The keyboard dialog:** typing; pasting from the Roku mobile app; focus back on Settings after OK, Cancel and Back.
+    - **Keys:**
+      - Back never exits;
+      - `*` from the column and from an empty guide;
+      - Replay ×3 on About (DEBUG);
+      - whether held keys repeat without a release.
+    - **Layout:**
+      - `clippingRect`;
+      - the slide at 1080p and 720p (frame E2Hjc4);
+      - `blendColor` on the parent's selected row;
+      - `boundingRect` widths and wrapped footers in the system font;
+      - the `›` and `·` glyphs.
+    - **Saving and reloads:**
+      - each page's save survives a relaunch (the step's done-when);
+      - Channel Logos off and on redraws the guide and the banner;
+      - a new playlist loads and its guide match reruns;
+      - Refresh Now re-downloads the guides;
+      - Remove stops playback and empties `cachefs:/guides`, also during a guide run;
+      - Settings opened during the launch load stays, and Back plays the last channel or opens the guide.
+    - **Speed:**
+      - Groups and Hidden Channels with hundreds of rows (built eagerly);
+      - `Lineup.build` on the render thread when an edit lands during a playlist load.
+    - **Device page:** `GetModelDisplayName` and the OS text on a Low and a High Roku.
