@@ -18,6 +18,7 @@ sub init()
         disclosure: Theme.font(fonts.settingsDisclosure)
     }
     m.nav = SettingsNav.open()
+    m.teamCatalog = invalid
     m.model = emptyModel()
     m.messages = noMessages()
     m.columns = []
@@ -97,6 +98,17 @@ sub onModel()
     if type(model) <> "roAssociativeArray" then return
     if type(model.guides) <> "roArray" or type(model.playlist) <> "roAssociativeArray" or type(model.device) <> "roAssociativeArray" then return
     m.model = model
+    m.model.teamCatalog = m.teamCatalog
+    render(false)
+end sub
+
+' Step 18: read once; every model after it carries it (onModel).
+' {} while it loads, { failed: true } when it couldn't be made (SettingsPages says so).
+sub onTeamCatalog()
+    catalog = m.top.teamCatalog
+    if type(catalog) <> "roAssociativeArray" then return
+    m.teamCatalog = catalog
+    m.model.teamCatalog = catalog
     render(false)
 end sub
 

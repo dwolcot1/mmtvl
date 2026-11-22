@@ -1,0 +1,141 @@
+' Choose Teams' look and keys (fields in ChooseTeamsView.xml). m.state is TeamPicker's; m.catalog and m.picked the
+' fields' values, read once per change.
+
+sub init()
+    m.theme = Theme.make()
+    colors = m.theme.colors
+    fonts = m.theme.fonts
+    layout = m.theme.layout
+    canvas = m.theme.canvas
+    shade = m.top.findNode("dim")
+    shade.color = colors.searchDim
+    shade.width = canvas.width
+    shade.height = canvas.height
+    firstColumn = layout.chooseTeamsColumns[0]
+    heading = styleLabel("title", fonts.searchTitle, colors.primaryText)
+    heading.text = TeamPicker.title
+    heading.translation = [firstColumn.x, layout.searchTitleTop]
+    pathLabel = styleLabel("path", fonts.searchRowDetail, colors.secondaryText)
+    pathLabel.translation = [firstColumn.x, layout.chooseTeamsPathTop]
+    styleLabel("loading", fonts.searchRowTitle, colors.secondaryText)
+    styleLabel("hint", fonts.settingsHint, colors.secondaryText)
+    m.columns = []
+    for i = 0 to 2
+        column = m.top.findNode("column" + i.ToStr())
+        column.visibleRows = layout.chooseTeamsVisibleRows
+        column.rowHeight = layout.liveMenuRowHeight
+        column.textInset = layout.menuRowPadding
+        column.fontSpec = fonts.searchRowTitle
+        m.columns.Push(column)
+    end for
+    m.state = TeamPicker.open()
+    m.catalog = invalid
+    m.catalogFailed = false
+    m.picked = []
+    render()
+end sub
+
+function styleLabel(id as string, spec as object, color as string) as object
+    label = m.top.findNode(id)
+    label.font = Theme.font(spec)
+    label.color = color
+    label.height = Theme.lineHeight(spec)
+    label.vertAlign = "center"
+    label.wrap = false
+    return label
+end function
+
+function open() as boolean
+    m.state = TeamPicker.open()
+    render()
+    return true
+end function
+
+sub onCatalog()
+    catalog = m.top.catalog
+    m.catalog = invalid
+    m.catalogFailed = false
+    if type(catalog) = "roAssociativeArray"
+        if type(catalog.leagues) = "roArray"
+            m.catalog = catalog
+        else
+            m.catalogFailed = TeamPicker.isFailedCatalog(catalog)
+        end if
+    end if
+    render()
+end sub
+
+sub onPicked()
+    picked = m.top.picked
+    if type(picked) <> "roArray" then picked = []
+    m.picked = picked
+    render()
+end sub
+
+' The levels of the path, left to right; a pro league's teams take the second column at the teams column's width.
+sub render()
+    layout = m.theme.layout
+    slots = layout.chooseTeamsColumns
+    path = m.state.path
+    top = path.Count() - 1
+    loading = m.top.findNode("loading")
+    loading.visible = false
+    for i = 0 to 2
+        column = m.columns[i]
+        if i > top
+            column.visible = false
+        else
+            level = path[i]
+            rows = TeamPicker.items(level, m.catalog, m.picked)
+            slot = slots[i]
+            width = slot.width
+            if i = 1 and level.kind = "league" and not TeamCatalog.isCollege(level.league) then width = slots[2].width
+            isFocused = i = top
+            titles = []
+            values = []
+            checks = []
+            for each item in rows
+                titles.Push(item.title)
+                if isFocused then values.Push(item.value) else values.Push("")
+                checks.Push(item.checked)
+            end for
+            column.translation = [slot.x, layout.chooseTeamsListTop]
+            column.rowWidth = width
+            column.opacity = 1
+            if not isFocused then column.opacity = layout.settingsDimmedColumnOpacity
+            column.showFocus = isFocused
+            column.selectedIndex = -1
+            if not isFocused then column.selectedIndex = level.focus
+            column.values = values
+            column.checks = checks
+            column.items = titles
+            column.firstVisible = level.first
+            column.focusedIndex = level.focus
+            column.visible = true
+            if isFocused and rows.Count() = 0 and m.catalog = invalid
+                loading.text = TeamPicker.catalogNote(m.catalogFailed)
+                loading.translation = [slot.x + layout.menuRowPadding, layout.chooseTeamsListTop + Int((layout.liveMenuRowHeight - loading.height) / 6) * 3]
+                loading.visible = true
+            end if
+        end if
+    end for
+    m.top.findNode("path").text = TeamPicker.pathText(m.state)
+    hint = m.top.findNode("hint")
+    hint.text = TeamPicker.hint(m.state)
+    topSlot = slots[top]
+    hint.translation = [topSlot.x, layout.chooseTeamsHintTop]
+end sub
+
+function onKeyEvent(key as string, press as boolean) as boolean
+    if press then m.top.input = true
+    result = TeamPicker.handle(m.state, key, press, m.catalog, m.picked, m.theme.layout.chooseTeamsVisibleRows)
+    m.state = result.state
+    if result.outcome = "toggle"
+        m.top.toggle = { teamID: result.teamID }
+    else if result.outcome = "close"
+        m.top.closed = true
+        return true
+    end if
+    if press then render()
+    return true
+end function

@@ -206,6 +206,18 @@ namespace Theme
             "searchKeyboardOrigin": { "x": 120, "y": 201 },
             "searchResultsRect": { "x": 801, "y": 201, "width": 999, "height": 780 },
             "searchRowHeight": 84,
+            ' Roku-only (step 18, frame P9pORE): Choose Teams over the guide, on searchDim. The title at searchTitleTop,
+            ' the path (searchRowDetail) at chooseTeamsPathTop, then up to three lists from chooseTeamsListTop: the
+            ' leagues, a college league's conferences and the teams, each in its column (x, width); the open ones
+            ' dimmed to settingsDimmedColumnOpacity with the opened row in settingsSelectedRowFill. Rows are
+            ' liveMenuRowHeight high (chooseTeamsVisibleRows of them), text menuRowPadding in, a picked team's check
+            ' (chooseTeamsCheckSize) menuRowPadding from the right; the key hint's top at chooseTeamsHintTop.
+            "chooseTeamsPathTop": 144,
+            "chooseTeamsListTop": 219,
+            "chooseTeamsColumns": [{ "x": 120, "width": 441 }, { "x": 600, "width": 480 }, { "x": 1119, "width": 681 }],
+            "chooseTeamsVisibleRows": 10,
+            "chooseTeamsCheckSize": 33,
+            "chooseTeamsHintTop": 999,
             ' Settings (Theme.swift settings*, M7g): two 840-wide columns on a sliding track.
             "settingsColumnWidth": 840,
             "settingsColumnGap": 78, ' 81 + 840 + 78 + 840 + 81 = 1920 (Theme.swift 80 + 840 + 80 + 840 + 80)
@@ -270,6 +282,7 @@ namespace Theme
             ' Icons (roku/tools/gen-icons.py): white glyphs on transparent, tinted with Poster blendColor.
             "iconWarning": "pkg:/images/icon_warning.png", ' the error panel's symbol (errorPanelSymbolSize, secondaryText)
             "iconPause": "pkg:/images/icon_pause.png", ' the timeshift bar's paused symbol (timeshiftPauseSymbolSize)
+            "iconCheck": "pkg:/images/icon_check.png", ' Choose Teams: a picked team (chooseTeamsCheckSize)
             "behindLiveBadge": "pkg:/images/badge_banner.9.png" ' the behind-live badge's capsule (banner role)
         }
     end function

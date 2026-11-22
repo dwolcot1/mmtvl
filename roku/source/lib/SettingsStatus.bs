@@ -76,6 +76,10 @@ namespace SettingsStatus
             usePlaylistGuide: SettingsStatus.isTrue(settings.usePlaylistGuide),
             channelUpMovesUpList: SettingsStatus.isTrue(settings.channelUpMovesUpList),
             channelLogos: SettingsStatus.isTrue(settings.channelLogos),
+            ' Step 18: My Teams (the picked ids; the catalog is SettingsScreen's own field, set once) and its Matching.
+            teams: SettingsStatus.textItems(store.prefs.teams),
+            teamMatchInitials: SettingsStatus.isTrue(settings.teamMatchInitials),
+            teamMatchNicknames: SettingsStatus.isTrue(settings.teamMatchNicknames),
             lowSpace: SettingsStatus.isTrue(store.lowSpace),
             spaceLeft: store.spaceLeft
         }
@@ -243,6 +247,16 @@ namespace SettingsStatus
         if type(value) <> "roArray" then return result
         for each item in value
             if SettingsStatus.isText(item) then result[item] = true
+        end for
+        return result
+    end function
+
+    ' The strings of a list ([] when it isn't one).
+    function textItems(value as dynamic) as object
+        result = []
+        if type(value) <> "roArray" then return result
+        for each item in value
+            if SettingsStatus.isText(item) then result.Push(item)
         end for
         return result
     end function

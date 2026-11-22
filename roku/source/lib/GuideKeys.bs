@@ -10,7 +10,8 @@
 '     Antenna, else Antenna, else the first (M7l 8c, M7j L3). When the focused channel isn't in that group, All
 '     Channels if there is one, else the channel's own group. The focused channel's row, else row 0.
 '   rowsOf(lineup, group) -> the group's rows: { kind: "channel", channelID } per channel; My Teams starts with
-'     { kind: "chooseTeams", channelID: "" }. (My Teams' upcoming games, kind "upcoming", come with step 18.)
+'     { kind: "chooseTeams", channelID: "" } and ends with its upcoming games (step 18, M7l 8c): { kind: "upcoming",
+'     channelID, start, game } per lineup.upcomingTeamGames entry (game: its index there).
 '   setLineup(state, lineup) -> state after a playlist refresh or a favorites or hiding change (GuideModel.setLineup,
 '     GuideModel.swift:183-207): the same group (by name; else the default group), the focused row by its id, else
 '     the focused channel's row, else the same row index clamped; a focused group-column row keeps its group by
@@ -131,6 +132,12 @@ namespace GuideKeys
         for each channel in Lineup.channelsIn(built, group)
             rows.Push({ kind: "channel", channelID: channel.id })
         end for
+        if group = Lineup.teamsGroup and type(built.upcomingTeamGames) = "roArray"
+            games = built.upcomingTeamGames
+            for i = 0 to games.Count() - 1
+                rows.Push({ kind: "upcoming", channelID: games[i].channel.id, start: games[i].programme.start, game: i })
+            end for
+        end if
         return rows
     end function
 
@@ -201,7 +208,7 @@ namespace GuideKeys
         end if
     end sub
 
-    ' M7l 8c: My Teams' Choose Teams (and, from step 18, upcoming game) rows, focused as a whole.
+    ' M7l 8c: My Teams' Choose Teams and upcoming game rows, focused as a whole.
     sub handleActionRow(key as string, rowHere as object, result as object)
         current = result.state
         if key = "up" or key = "down"
@@ -338,10 +345,15 @@ namespace GuideKeys
         return start
     end function
 
-    ' A row's id, as GuideModel.Row.id: "channel.<id>", "chooseTeams" (step 18 adds "upcoming.…"); "" for none.
+    ' A row's id, as GuideModel.Row.id: "channel.<id>", "chooseTeams", "upcoming.<channel id>.<start>"; "" for none.
     function rowID(row as dynamic) as string
         if row = invalid then return ""
         if row.kind = "channel" then return "channel." + row.channelID
+        if row.kind = "upcoming"
+            start = ""
+            if row.start <> invalid then start = row.start.ToStr()
+            return "upcoming." + row.channelID + "." + start
+        end if
         return row.kind
     end function
 
@@ -442,7 +454,7 @@ namespace GuideKeys
     function copyState(state as dynamic) as object
         result = {
             focus: "grid",
-            lineup: { groups: [], visibleChannels: [], favoritesGroupChannels: [], teams: [] },
+            lineup: { groups: [], visibleChannels: [], favoritesGroupChannels: [], teams: [], upcomingTeamGames: [] },
             groups: [],
             groupIndex: 0,
             groupFocus: 0,

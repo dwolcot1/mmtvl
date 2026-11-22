@@ -10,6 +10,8 @@ to its size on the 1920 x 1080 canvas. A Poster tints it with blendColor (Theme.
   icon_pause     24 x 24 (Theme.bs layout timeshiftPauseSymbolSize): the timeshift bar's paused symbol, MMTVL's
                  SF Symbol pause.fill (two filled, slightly rounded bars); tinted primaryText (frame "Timeshift:
                  paused")
+  icon_check     33 x 33 (Theme.bs layout chooseTeamsCheckSize): a picked team's check mark in Choose Teams (frame
+                 "Choose Teams", P9pORE); tinted primaryText, or focusedRowText on the focused row
 """
 import math
 import os
@@ -81,6 +83,13 @@ def pause(units_x, units_y):
             or rounded_rect(units_x, units_y, 14.0, 4.0, 18.0, 20.0, 1.0))
 
 
+def check(units_x, units_y):
+    """True where the 24-unit point is inked: a check mark, stroke 2 with round ends, from (5, 12.5) down to
+    (10, 17.5) and up to (19, 7)."""
+    return (segment_distance(units_x, units_y, 5.0, 12.5, 10.0, 17.5) <= 1.0
+            or segment_distance(units_x, units_y, 10.0, 17.5, 19.0, 7.0) <= 1.0)
+
+
 def icon(name, size, shape):
     rows = []
     scale = 24.0 / size
@@ -99,7 +108,7 @@ def icon(name, size, shape):
 
 def main():
     images = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "images")
-    for name, w, h, rows in [icon("icon_warning", 72, warning), icon("icon_pause", 24, pause)]:
+    for name, w, h, rows in [icon("icon_warning", 72, warning), icon("icon_pause", 24, pause), icon("icon_check", 33, check)]:
         path = os.path.join(images, name + ".png")
         png(path, w, h, rows)
         print(f"{name}.png {w}x{h} {os.path.getsize(path)} bytes")

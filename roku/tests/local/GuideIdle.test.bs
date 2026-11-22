@@ -15,18 +15,26 @@ namespace GuideIdleTests
 
     sub test_theGuideReturnsToThePlayingChannel(t as object)
         result = GuideIdle.outcome({ screen: "guide", menuOpen: false, isPlaying: true })
-        t.assertEqual(result, { closeMenu: false, returnToChannel: true, changed: true })
+        t.assertEqual(result, { closeMenu: false, closePicker: false, returnToChannel: true, changed: true })
         withMenu = GuideIdle.outcome({ screen: "guide", menuOpen: true, isPlaying: true })
-        t.assertEqual(withMenu, { closeMenu: true, returnToChannel: true, changed: true })
+        t.assertEqual(withMenu, { closeMenu: true, closePicker: false, returnToChannel: true, changed: true })
     end sub
 
     sub test_aMenuOverThePlayerCloses(t as object)
-        t.assertEqual(GuideIdle.outcome({ screen: "player", menuOpen: true, isPlaying: true }), { closeMenu: true, returnToChannel: false, changed: true })
-        t.assertEqual(GuideIdle.outcome({ screen: "player", menuOpen: false, isPlaying: true }), { closeMenu: false, returnToChannel: false, changed: false }, "full screen already: nothing")
+        t.assertEqual(GuideIdle.outcome({ screen: "player", menuOpen: true, isPlaying: true }), { closeMenu: true, closePicker: false, returnToChannel: false, changed: true })
+        t.assertEqual(GuideIdle.outcome({ screen: "player", menuOpen: false, isPlaying: true }), { closeMenu: false, closePicker: false, returnToChannel: false, changed: false }, "full screen already: nothing")
+    end sub
+
+    ' Step 18: Choose Teams over the guide closes like the menus (MMTVL's returnToVideo closes the team picker).
+    sub test_chooseTeamsClosesAndTheGuideReturns(t as object)
+        result = GuideIdle.outcome({ screen: "guide", menuOpen: false, pickerOpen: true, isPlaying: true })
+        t.assertEqual(result, { closeMenu: false, closePicker: true, returnToChannel: true, changed: true })
+        stays = GuideIdle.outcome({ screen: "guide", menuOpen: false, pickerOpen: true, isPlaying: false })
+        t.assertEqual(stays, { closeMenu: false, closePicker: false, returnToChannel: false, changed: false }, "nothing playing: the picker stays")
     end sub
 
     sub test_nothingWithoutAPlayingChannelOrOutsideLiveTV(t as object)
-        none = { closeMenu: false, returnToChannel: false, changed: false }
+        none = { closeMenu: false, closePicker: false, returnToChannel: false, changed: false }
         t.assertEqual(GuideIdle.outcome({ screen: "guide", menuOpen: true, isPlaying: false }), none, "a failed or no channel: never starts a play")
         t.assertEqual(GuideIdle.outcome({ screen: "settings", menuOpen: false, isPlaying: true }), none)
         t.assertEqual(GuideIdle.outcome({ screen: "guide", menuOpen: false }), none, "isPlaying missing")

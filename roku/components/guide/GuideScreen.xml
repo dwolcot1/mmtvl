@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<!-- The guide (M12 step 12, L3, L4, D49, D51; frames "Guide A" LMTqH, "group column open" lB8XX, 720p vNN1n). The
+<!-- The guide (M12 step 12, L3, L4, D49, D51; frames "Guide A" LMTqH, "group column open" lB8XX, 720p vNN1n). Step 18:
+     My Teams' rows: Choose Teams… (OK opens the picker), the live games, then the upcoming games (the channel's cell,
+     then one cell across the window: "Sun 1:00 PM · <game>"; OK tunes the channel). The
      focused programme's info top left; the playing channel's video top right (the player's Video, moved there by the
      scene: PlayerScreen.preview, drawn under this screen, which has no background of its own); the group name above
      the channel column; Roku's TimeGrid with GuideChannelCell rows; the key hint. Left from a channel cell opens the
@@ -8,7 +10,8 @@
      Fast Forward with ignoreTrickPlayKeys, Left from a channel cell, and whatever it doesn't use at its edges) goes
      to GuideKeys with the focus TimeGrid reports, and so do its OK selections. The column is this screen's own and
      takes its keys from GuideKeys directly. The screen tells the scene what to do through action.
-     The guide data: this screen is the only reader of the scene's guideHolder (GuideReader, once per guideRevision);
+     The guide data: this screen is the reader of the scene's guideHolder that keeps it (GuideReader, once per
+     guideRevision; step 18's TeamsTask reads it too, for each match, and lets it go);
      the scene gets one channel's programmes for the player's banner and the channel menu with programmesFor.
      Programmes are put into TimeGrid only for the rows around the focused one (GuideReader.fillRange); unmatched
      channels show "No guide". Logos come from LogoTask (cachefs:), only for those rows too. -->
@@ -47,6 +50,10 @@
     <script type="text/brighterscript" uri="pkg:/source/lib/GuideReader.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/BannerText.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/LogoCache.bs" />
+    <!-- Step 18: My Teams' rows (the upcoming games' text). -->
+    <script type="text/brighterscript" uri="pkg:/source/lib/TeamCatalog.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/TeamPicker.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/MyTeams.bs" />
     <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
     <children>
         <Group id="info">

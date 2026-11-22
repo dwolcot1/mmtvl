@@ -156,7 +156,7 @@ namespace SettingsEdits
 
     function settingToggled(settings as object, name as string) as object
         result = SettingsEdits.copied(settings)
-        if name <> "channelUpMovesUpList" and name <> "usePlaylistGuide" and name <> "channelLogos" then return result
+        if name <> "channelUpMovesUpList" and name <> "usePlaylistGuide" and name <> "channelLogos" and name <> "teamMatchInitials" and name <> "teamMatchNicknames" then return result
         result[name] = not SettingsStatus.isTrue(settings[name])
         return result
     end function

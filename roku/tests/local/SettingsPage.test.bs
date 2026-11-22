@@ -62,7 +62,7 @@ namespace SettingsPageTests
         input.guideLoading = true
         model = SettingsStatus.make(input)
         list = SettingsPages.sections("liveTV", model)
-        t.assertEqual(SettingsPages.focusableIDs(list), ["playlist.edit", "guide." + ids[0], "guide." + ids[1], "guide.add", "groups", "hiddenChannels", "refresh", "removeSource"])
+        t.assertEqual(SettingsPages.focusableIDs(list), ["playlist.edit", "guide." + ids[0], "guide." + ids[1], "guide.add", "groups", "hiddenChannels", "teams", "refresh", "removeSource"])
         t.assertEqual(SettingsPageTests.sectionTitles(list), ["Playlist", "Guides", "Channels", ""], "MMTVL's sections; Manage has no title")
         info = SettingsPages.rowWithID(list, "playlist.info")
         t.assertEqual(info.title, "iptv.example")
@@ -157,7 +157,7 @@ namespace SettingsPageTests
         input.store.guides = []
         input.playlistGuideURLs = ["https://guide.example/epg.xml"]
         list = SettingsPages.sections("liveTV", SettingsStatus.make(input))
-        t.assertEqual(SettingsPages.focusableIDs(list), ["playlist.edit", "guide.add", "groups", "hiddenChannels", "refresh", "removeSource"])
+        t.assertEqual(SettingsPages.focusableIDs(list), ["playlist.edit", "guide.add", "groups", "hiddenChannels", "teams", "refresh", "removeSource"])
         row = SettingsPages.rowWithID(list, "guide." + GuideSources.cacheID("https://guide.example/epg.xml"))
         t.assertEqual(row.value, "From Playlist")
         t.assertEqual(row.detail, "Not loaded yet")

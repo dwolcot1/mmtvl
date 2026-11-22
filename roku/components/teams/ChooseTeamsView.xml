@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Choose Teams (M12 step 18; MMTVL's TeamPicker over the guide, M7l L12; frame "Choose Teams", P9pORE): searchDim
+     over the guide, the title, the path ("College Football › Big Ten"), then the levels side by side: the leagues, a
+     college league's conferences, the teams. The open levels are dimmed (settingsDimmedColumnOpacity) with their
+     opened row marked; the focused level is bright, with the white focus row; a picked team has the check mark
+     (MMTVL's "In My Teams"; the frame draws a check). Levels the frame doesn't draw, MMTVL's way: the leagues alone at
+     level 1 and a college league's conferences show their "N On" counts; a pro league's teams open in the second
+     column, as wide as the teams column. Keys go through TeamPicker.handle (LiveMenu's: Up/Down clamp, Rewind/Fast
+     Forward page, OK opens or toggles, Back and * go up, from the leagues close); it takes every key (D49). Before
+     the catalog arrives, a level that needs it shows "Loading teams…", or "Teams couldn't be loaded" if it failed. -->
+<component name="ChooseTeamsView" extends="Group">
+    <interface>
+        <!-- In: TeamsTask's slim catalog (TeamPicker.slimCatalog); {} while it loads; { failed: true } when it
+             couldn't be made ("Teams couldn't be loaded"; the scene asks again at the next open). -->
+        <field id="catalog" type="assocarray" onChange="onCatalog" />
+        <!-- In: the picked team ids (prefs.teams). A change after a toggle keeps the level and the focus. -->
+        <field id="picked" type="array" onChange="onPicked" />
+        <!-- Out: { teamID }: OK on a team (the scene adds or removes it and sets picked). -->
+        <field id="toggle" type="assocarray" alwaysNotify="true" />
+        <!-- Out: Back or * on the leagues. -->
+        <field id="closed" type="boolean" alwaysNotify="true" />
+        <!-- Out: set on every key press (the scene's idle return, D51). -->
+        <field id="input" type="boolean" alwaysNotify="true" />
+        <!-- open(): back to the leagues, focus on the first. -->
+        <function name="open" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/TeamCatalog.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/TeamPicker.bs" />
+    <children>
+        <Rectangle id="dim" />
+        <Label id="title" />
+        <Label id="path" />
+        <MenuListView id="column0" />
+        <MenuListView id="column1" />
+        <MenuListView id="column2" />
+        <Label id="loading" visible="false" />
+        <Label id="hint" />
+    </children>
+</component>

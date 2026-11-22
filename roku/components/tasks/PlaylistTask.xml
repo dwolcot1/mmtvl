@@ -4,12 +4,16 @@
      status is the text to show ("Couldn't load the playlist (<host>)", or without "(<host>)" when the URL shows no host). On failure the scene keeps the channels it
      has. Step 9 (security L-5): the result also has matchFields (GuideSources.matchFields of the channels: what the
      guide task matches with) and channelsKey (GuideSources.channelsKey of those), made here, off the render
-     thread. channels are M3U.makeChannels'; lineup is Lineup.build(channels, prefs, []); guideURLs are the playlist's
-     url-tvg guides that URLPolicy allows with the playlist as the referrer. Logs show the host only (L6). -->
+     thread. channels are M3U.makeChannels'; lineup is Lineup.build(channels, prefs, teamIDs, upcomingGames); guideURLs
+     are the playlist's url-tvg guides that URLPolicy allows with the playlist as the referrer. Step 18: also
+     teamFields, the channels as TeamsTask reads them ([{ id, name, group }]: no URL). Logs show the host only (L6). -->
 <component name="PlaylistTask" extends="Task">
     <interface>
         <field id="playlistURL" type="string" />
         <field id="prefs" type="assocarray" />
+        <!-- Step 18: My Teams' last results (TeamsTask's liveIDs and upcoming), for the lineup. -->
+        <field id="teamIDs" type="array" />
+        <field id="upcomingGames" type="array" />
         <field id="result" type="assocarray" />
     </interface>
     <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />

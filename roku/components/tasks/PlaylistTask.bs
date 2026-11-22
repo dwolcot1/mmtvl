@@ -47,11 +47,20 @@ sub loadPlaylistFrom(url as string, host as string)
     end if
     channels = M3U.makeChannels(playlist.entries)
     guideURLs = allowedGuideURLs(playlist.guideURLs, url)
-    sorted = Lineup.build(channels, m.top.prefs, [])
+    teamIDs = m.top.teamIDs
+    if type(teamIDs) <> "roArray" then teamIDs = []
+    upcomingGames = m.top.upcomingGames
+    if type(upcomingGames) <> "roArray" then upcomingGames = []
+    sorted = Lineup.build(channels, m.top.prefs, teamIDs, upcomingGames)
     Log.info("IPTV", "Loaded " + channels.Count().ToStr() + " channels from " + host)
     ' Step 9 (security L-5): the guide's channel fields and their key, here rather than on the render thread.
     fields = GuideSources.matchFields(channels)
-    m.top.result = { ok: true, host: host, channels: channels, lineup: sorted, guideURLs: guideURLs, matchFields: fields, channelsKey: GuideSources.channelsKey(fields) }
+    ' Step 18: what TeamsTask matches (no URL).
+    teamFields = []
+    for each channel in channels
+        teamFields.Push({ id: channel.id, name: channel.name, group: channel.group })
+    end for
+    m.top.result = { ok: true, host: host, channels: channels, lineup: sorted, guideURLs: guideURLs, matchFields: fields, channelsKey: GuideSources.channelsKey(fields), teamFields: teamFields }
 end sub
 
 function playlistFailure(host as string) as object

@@ -5,11 +5,12 @@
 '
 '   isDue(lastInputAt, now, limitSeconds) -> true when at least limitSeconds have passed since lastInputAt (both
 '     UpTime seconds); false when either isn't a number (no input noted yet: nothing is due).
-'   outcome(context) -> { closeMenu, returnToChannel, changed }
-'     context { screen ("player", "guide", or another screen), menuOpen, isPlaying }
+'   outcome(context) -> { closeMenu, closePicker, returnToChannel, changed }
+'     context { screen ("player", "guide", or another screen), menuOpen, pickerOpen, isPlaying }
 '     MMTVL's returnToVideo: only in Live TV (the player or the guide) and only while a channel plays (paused counts;
 '     a failed or stopped one doesn't: it never starts a play, and still screens are the idle dimmer's). Then an
-'     open channel menu closes, and the guide goes back to the playing channel full screen, without a reconnect.
+'     open channel menu and Choose Teams (step 18, over the guide) close, and the guide goes back to the playing
+'     channel full screen, without a reconnect.
 '     changed: something happened (MMTVL logs only then).
 namespace GuideIdle
 
@@ -19,15 +20,16 @@ namespace GuideIdle
     end function
 
     function outcome(context as dynamic) as object
-        result = { closeMenu: false, returnToChannel: false, changed: false }
+        result = { closeMenu: false, closePicker: false, returnToChannel: false, changed: false }
         if LCase(type(context)) <> "roassociativearray" then return result
         screen = context.screen
         if not GuideIdle.isText(screen) then return result
         if screen <> "player" and screen <> "guide" then return result
         if not GuideIdle.isTrue(context.isPlaying) then return result
         result.closeMenu = GuideIdle.isTrue(context.menuOpen)
+        result.closePicker = GuideIdle.isTrue(context.pickerOpen)
         result.returnToChannel = screen = "guide"
-        result.changed = result.closeMenu or result.returnToChannel
+        result.changed = result.closeMenu or result.closePicker or result.returnToChannel
         return result
     end function
 
