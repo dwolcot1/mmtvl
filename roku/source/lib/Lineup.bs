@@ -4,12 +4,13 @@
 ' can build it again when the preferences change. Linear in the number of channels.
 '
 ' Shapes:
-'   Lineup.build(channels, prefs, liveTeamGames = []) -> lineup
+'   Lineup.build(channels, prefs, liveTeamGames = [], upcomingGames = []) -> lineup
 '     channels       M3U.makeChannels' channels, playlist order; from step 21 also antenna channels, marked
 '                    source: "antenna" and with guideNumber ("5.1"). Others have no source.
 '     prefs          SettingsStore's prefs { favorites, hiddenChannels, hiddenGroups, teams }; a missing field or
 '                    one that isn't a list reads as [] (ChannelPreferences' tolerant decoding).
-'     liveTeamGames  channel ids of the picked teams' live games, in TeamMatcher's order (step 18; [] until then).
+'     liveTeamGames  channel ids of the picked teams' live games, in TeamMatcher's order (TeamsTask, step 18).
+'     upcomingGames  TeamsTask's upcoming games, soonest first: [{ channelID, programme, label }] (step 18).
 '   lineup: plain data (safe in a node field):
 '     groups                  "Favorites" when its list isn't empty, "My Teams" whenever a channel is visible,
 '                             then guideGroups(visibleChannels): "Antenna", "All Channels", the playlist's groups.
@@ -18,7 +19,9 @@
 '     favoritesGroupChannels  the guide's Favorites group: teams first, then favorites not already listed.
 '     movableFavorites        favorites without the team games (Move Up/Down steps among these).
 '     teams                   liveTeamGames, visible only, first of each id: My Teams' live channels.
-'   My Teams' upcoming games (MMTVL's 4th argument) come with step 18.
+'     upcomingTeamGames       upcomingGames on visible channels, in order, at most maxUpcomingTeamGames:
+'                             [{ channel, programme, label }]. Only the guide's My Teams rows: never zapped through,
+'                             never in Favorites (M7l 8c). Hidden channels go before the cap, as ChannelLineup.
 '
 ' Ids and group names compare case-sensitively, as in Swift.
 namespace Lineup
@@ -29,8 +32,10 @@ namespace Lineup
     const legacyTeamsGroup = "Teams"
     const allChannelsGroup = "All Channels"
     const antennaGroup = "Antenna"
+    ' M7l 8c: at most this many upcoming games in My Teams (ChannelLineup.maxUpcomingTeamGames).
+    const maxUpcomingTeamGames = 30
 
-    function build(channels as object, prefs as dynamic, liveTeamGames = [] as object) as object
+    function build(channels as object, prefs as dynamic, liveTeamGames = [] as object, upcomingGames = [] as object) as object
         if type(prefs) <> "roAssociativeArray" then prefs = {}
         hiddenChannels = Lineup.textSet(prefs.hiddenChannels)
         hiddenGroups = Lineup.textSet(prefs.hiddenGroups)
@@ -58,6 +63,23 @@ namespace Lineup
         favoritesList.Append(liveGames)
         favoritesList.Append(movable)
 
+        upcoming = []
+        if type(upcomingGames) = "roArray"
+            for each game in upcomingGames
+                if upcoming.Count() >= Lineup.maxUpcomingTeamGames then exit for
+                if type(game) = "roAssociativeArray"
+                    if Lineup.isText(game.channelID) and type(game.programme) = "roAssociativeArray"
+                        channel = byID[game.channelID]
+                        if channel <> invalid
+                            label = game.label
+                            if not Lineup.isText(label) then label = ""
+                            upcoming.Push({ channel: channel, programme: game.programme, label: label })
+                        end if
+                    end if
+                end if
+            end for
+        end if
+
         names = []
         if favoritesList.Count() > 0 then names.Push(Lineup.favoritesGroup)
         if visible.Count() > 0 then names.Push(Lineup.teamsGroup)
@@ -68,7 +90,8 @@ namespace Lineup
             favorites: saved,
             favoritesGroupChannels: favoritesList,
             movableFavorites: movable,
-            teams: liveGames
+            teams: liveGames,
+            upcomingTeamGames: upcoming
         }
     end function
 

@@ -121,9 +121,10 @@ namespace SettingsNavTests
     sub test_trickPlayKeysPageByEightRows(t as object)
         state = SettingsNavTests.press(SettingsNav.open(), ["OK"])
         ids = SettingsPages.focusableIDs(SettingsNavTests.list(state))
-        t.assertEqual(ids.Count(), 8)
+        ' Step 18 added My Teams: 9 rows, so a page of 8 from the first lands on the last.
+        t.assertEqual(ids.Count(), 9)
         state = SettingsNavTests.press(state, ["fastforward"])
-        t.assertEqual(SettingsNavTests.focus(state), ids[7])
+        t.assertEqual(SettingsNavTests.focus(state), ids[8])
         state = SettingsNavTests.press(state, ["rewind"])
         t.assertEqual(SettingsNavTests.focus(state), ids[0])
         state = SettingsNavTests.press(state, ["channeldown", "channelup"])

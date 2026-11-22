@@ -1,0 +1,112 @@
+' My Teams on the scene's side (M12 step 18; MMTVL's LiveTVModel.teamSides and channelMenu's team rows,
+' IPTV/LiveTVModel.swift:931-936,1033-1058; UpcomingTeamGame.dayTime and GuideView's upcoming rows,
+' IPTV/Sources/ChannelPreferences.swift:35-50, IPTV/Guide/GuideView.swift:137-175; Settings' teamCountLabel). Pure
+' functions, no nodes. Uses BannerText (clock). The matching itself runs in TeamsTask (TeamsWork.bs).
+'
+'   menuTeams(sides, picked) -> the channel menu's teams: of TeamsTask's sides ([[{ id, title }]], each side in
+'     catalog order) the first two, each with its picked teams first then the others (a stable split), at most
+'     menuTeamsPerSide a side; then flattened.
+'   menuItems(teams, picked, channelID) -> the menu's rows: { id: "team.<id>", title: "Add <title> to My Teams" or
+'     "Remove <title> from My Teams", action: { type: "toggleTeam", teamID, channelID } }.
+'   dayTime(parts) -> "Sun 1:00 PM" (parts: { weekday 0 = Sunday … 6, hours, minutes }), UpcomingTeamGame.dayTime
+'     in an en-US locale.
+'   upcomingCellTitle(dayTimeText, game) -> an upcoming row's one TimeGrid cell: "Sun 1:00 PM · <label>".
+'   upcomingDetail(channelName, whenText, programme) -> the guide's info line for an upcoming game: the channel, the
+'     day and times, the subtitle and the category, " · " between (GuideView.upcomingInfo).
+'   Requests to TeamsTask carry a serial; only the newest answer of each kind is used (MMTVL: the newest update
+'   decides, an older one finishing late never sets the group):
+'     newRequests() -> { match, menu }: the last serial sent of each kind.
+'     nextSerial(requests, kind) -> the next serial of kind ("match" or "menu"), remembered as the newest.
+'     isNewest(requests, answer) -> whether answer ({ kind, serial }) answers the newest request of its kind.
+namespace MyTeams
+
+    ' MMTVL's LiveTVModel.menuTeamsPerSide (M7m L31).
+    const menuTeamsPerSide = 3
+    const chooseTeamsInfo = "Pick pro and college teams. Their live games show here, then their games in the next 3 days."
+
+    function menuTeams(sides as dynamic, picked as dynamic) as object
+        result = []
+        if type(sides) <> "roArray" then return result
+        set = TeamPicker.pickedSet(picked)
+        for s = 0 to sides.Count() - 1
+            if s >= 2 then exit for
+            side = sides[s]
+            if type(side) = "roArray"
+                ordered = []
+                for each team in side
+                    if set.DoesExist(team.id) then ordered.Push(team)
+                end for
+                for each team in side
+                    if not set.DoesExist(team.id) then ordered.Push(team)
+                end for
+                for k = 0 to ordered.Count() - 1
+                    if k >= MyTeams.menuTeamsPerSide then exit for
+                    result.Push(ordered[k])
+                end for
+            end if
+        end for
+        return result
+    end function
+
+    function menuItems(teams as object, picked as dynamic, channelID as string) as object
+        set = TeamPicker.pickedSet(picked)
+        rows = []
+        for each team in teams
+            if set.DoesExist(team.id)
+                rowTitle = "Remove " + team.title + " from My Teams"
+            else
+                rowTitle = "Add " + team.title + " to My Teams"
+            end if
+            rows.Push({ id: "team." + team.id, title: rowTitle, action: { type: "toggleTeam", teamID: team.id, channelID: channelID } })
+        end for
+        return rows
+    end function
+
+    function dayTime(parts as object) as string
+        names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+        day = ""
+        if parts.weekday >= 0 and parts.weekday <= 6 then day = names[parts.weekday] + " "
+        return day + BannerText.clock(parts)
+    end function
+
+    function upcomingCellTitle(dayTimeText as string, game as object) as string
+        return dayTimeText + " " + Chr(183) + " " + MyTeams.text(game.label)
+    end function
+
+    function upcomingDetail(channelName as string, whenText as string, programme as object) as string
+        pieces = [channelName, whenText]
+        for each value in [programme.subtitle, programme.category]
+            if MyTeams.isText(value)
+                if value <> "" then pieces.Push(value)
+            end if
+        end for
+        return pieces.Join(" " + Chr(183) + " ")
+    end function
+
+    function newRequests() as object
+        return { match: 0, menu: 0 }
+    end function
+
+    function nextSerial(requests as object, kind as string) as integer
+        requests[kind] = requests[kind] + 1
+        return requests[kind]
+    end function
+
+    function isNewest(requests as object, answer as dynamic) as boolean
+        if type(answer) <> "roAssociativeArray" then return false
+        if not MyTeams.isText(answer.kind) or not BannerText.isNumber(answer.serial) then return false
+        if answer.kind <> "match" and answer.kind <> "menu" then return false
+        return answer.serial = requests[answer.kind]
+    end function
+
+    function text(value as dynamic) as string
+        if MyTeams.isText(value) then return value
+        return ""
+    end function
+
+    function isText(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "string" or kind = "rostring"
+    end function
+
+end namespace

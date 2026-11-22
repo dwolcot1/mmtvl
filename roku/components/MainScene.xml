@@ -17,8 +17,12 @@
      from Settings → About (L8). Step 14 (L2): Import from MMTVL: an importRequest (from main) runs ImportTask under
      the confirm screen (ImportConfirmView, over everything); Replace Settings writes the store
      (SettingsStore.replaceAll, the Roku-only fields kept), stops the channel and loads the new playlist and guides,
-     then opens what a launch would. Cancel changes nothing. Back never leaves the app (D49): the scene handles every
-     key that reaches it. -->
+     then opens what a launch would. Cancel changes nothing. Step 18: My Teams. TeamsTask matches the picked teams
+     after each playlist and guide load, a pick (Choose Teams, the channel menu, Settings), a Matching switch and every
+     5 minutes (the newest request wins); its live channel ids and upcoming games go into the lineup (Lineup.build).
+     Choose Teams (ChooseTeamsView) opens over the guide from My Teams' first row; the channel menu asks TeamsTask for
+     the teams of its channel and adds their rows when they come; the slim catalog is asked for when Settings or
+     Choose Teams first opens. Back never leaves the app (D49): the scene handles every key that reaches it. -->
 <component name="MainScene" extends="Scene">
     <interface>
         <!-- Lineup.build's result for the last playlist that loaded (kept when a later load fails). -->
@@ -36,10 +40,11 @@
         <!-- QA-M2 / security M-2 of step 9: the finished GuideTask that holds the programmes in its guideData field
              (GuideFetch.guideData's shape, see GuideFetch.bs: { windowStart, windowEnd, programmeCount, matches,
              guides: [{ programmes, channels }] }; read with GuidePipeline.programmesFor(data, channelID)). The scene
-             never copies or relays them. Step 12: one reader only, the guide screen (GuideReader: one plain field get
-             per guideRevision, kept in its m; never MoveFromField, never per row); the player's banner and the
-             channel menu get one channel's programmes from it (GuideScreen.programmesFor). invalid until a run
-             finishes. -->
+             never copies or relays them. Step 12: the guide screen is the reader that keeps them (GuideReader: one
+             plain field get per guideRevision, kept in its m; never MoveFromField, never per row); the player's banner
+             and the channel menu get one channel's programmes from it (GuideScreen.programmesFor). Step 18: TeamsTask
+             (its guideHolder field) is a second reader, for each My Teams match with teams picked, and lets its copy
+             go when the match ends. invalid until a run finishes. -->
         <field id="guideHolder" type="node" />
         <!-- Goes up by 1 each time guideHolder and guideStatuses are replaced; observe this. -->
         <field id="guideRevision" type="integer" value="0" />
@@ -74,6 +79,10 @@
     <script type="text/brighterscript" uri="pkg:/source/lib/GuideRuns.bs" />
     <!-- Step 14: Import from MMTVL. -->
     <script type="text/brighterscript" uri="pkg:/source/lib/ImportBundle.bs" />
+    <!-- Step 18: My Teams (the menu's team rows, Choose Teams' catalog, request ordering). -->
+    <script type="text/brighterscript" uri="pkg:/source/lib/TeamCatalog.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/TeamPicker.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/MyTeams.bs" />
     <children>
         <!-- The guide's background too: the guide has none, so the player's Video shows through in its preview place. -->
         <Poster id="background" />
@@ -83,6 +92,8 @@
         <!-- Step 13: over the guide and the player (which plays on under it); Back on its root returns to the
              screen it came from. -->
         <SettingsScreen id="settings" visible="false" />
+        <!-- Step 18: Choose Teams, over the guide while open. -->
+        <ChooseTeamsView id="teamPicker" visible="false" />
         <!-- Over the guide or the player while open. -->
         <ChannelMenuView id="channelMenu" visible="false" />
         <!-- Step 14: ImportConfirmView, while an import is open, is appended over everything (and the notice). -->

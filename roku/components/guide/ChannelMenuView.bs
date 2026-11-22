@@ -42,6 +42,12 @@ sub onMenu()
     menu = m.top.menu
     if type(menu) <> "roAssociativeArray" then return
     m.menu = menu
+    layoutMenu()
+end sub
+
+' The panel around m.menu's rows (its height follows the row count).
+sub layoutMenu()
+    menu = m.menu
     layout = m.theme.layout
     fonts = m.theme.fonts
     padding = layout.menuPanelPadding
@@ -86,6 +92,15 @@ sub showRows()
     m.list.firstVisible = m.menu.firstVisible
     m.list.focusedIndex = m.menu.focusedIndex
 end sub
+
+' Step 18: the rows again around the live focus (m.menu, which keys move; the menu field keeps the opening focus).
+function replaceItems(args as dynamic) as boolean
+    if m.menu = invalid or type(args) <> "roAssociativeArray" then return false
+    if type(args.items) <> "roArray" then return false
+    m.menu = ChannelMenu.withItems(m.menu, args.items)
+    layoutMenu()
+    return true
+end function
 
 function onKeyEvent(key as string, press as boolean) as boolean
     if m.menu = invalid then return true

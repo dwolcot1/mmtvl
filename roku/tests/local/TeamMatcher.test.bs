@@ -33,14 +33,14 @@ namespace TeamMatcherTests
             tested[item.test] = true
         end for
         matcherTests = 0
-        myTeams = 0
+        myTeamsCount = 0
         for each entry in golden.coverage
             if Left(entry.test, 17) = "TeamMatcherTests." then matcherTests++
-            if Left(entry.test, 13) = "MyTeamsTests." then myTeams++
+            if Left(entry.test, 13) = "MyTeamsTests." then myTeamsCount++
             t.assertEqual(tested.DoesExist(entry.test), entry.carried <> "no", entry.test)
         end for
         t.assertEqual(matcherTests, 42, "TeamMatcherTests")
-        t.assertEqual(myTeams, 14, "MyTeamsTests")
+        t.assertEqual(myTeamsCount, 14, "MyTeamsTests")
     end sub
 
     ' The golden's playlists give its channels through M3U.bs too (feed names, ids without tvg-id).

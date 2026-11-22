@@ -1,0 +1,180 @@
+' TeamsTask (fields in TeamsTask.xml). m.teams is both catalogs (pro then college) once read, m.slim their
+' TeamPicker.slimCatalog, m.index TeamMatcher's index for the options it was built with, m.queue TeamsWork's queue.
+
+sub init()
+    m.top.functionName = "runTeams"
+end sub
+
+sub runTeams()
+    m.port = CreateObject("roMessagePort")
+    m.top.observeField("request", m.port)
+    m.queue = TeamsWork.newQueue()
+    m.teams = invalid
+    m.slim = invalid
+    m.index = invalid
+    m.lastSummary = ""
+    ' Teams are picked: the catalogs and the index now, before the first match asks (step 18 fix 4).
+    prepare = m.top.prepareIndex
+    if type(prepare) = "roAssociativeArray"
+        if prepare.Count() > 0
+            try
+                ensureIndex(prepare)
+            catch e
+                Log.error("IPTV", "Teams: the team index couldn't be made at launch (error " + errorNumber(e) + ")")
+            end try
+        end if
+    end if
+    while true
+        drain(m.port, m.queue)
+        request = TeamsWork.nextRequest(m.queue)
+        if request = invalid
+            TeamsWork.take(m.queue, messageData(Wait(0, m.port)))
+        else
+            serve(request)
+        end if
+    end while
+end sub
+
+' Every request that has come in goes into the queue (the newest of each kind wins).
+sub drain(port as object, queue as object)
+    msg = port.GetMessage()
+    while msg <> invalid
+        TeamsWork.take(queue, messageData(msg))
+        msg = port.GetMessage()
+    end while
+end sub
+
+function messageData(msg as dynamic) as dynamic
+    if type(msg) <> "roSGNodeEvent" then return invalid
+    return msg.getData()
+end function
+
+sub serve(request as object)
+    try
+        if request.kind = "catalog"
+            publishCatalog()
+        else if request.kind = "menu"
+            answerMenu(request, m.top, ensureIndex(request.options))
+        else if request.kind = "match"
+            answerMatch(request)
+        end if
+    catch e
+        ' Never the exception's text: its number only.
+        Log.error("IPTV", "Teams: the team task stopped a request (error " + errorNumber(e) + ")")
+        if request.kind = "catalog"
+            m.top.catalog = { ok: false }
+        else if request.kind = "menu"
+            m.top.menuAnswer = { kind: "menu", serial: request.serial, ok: false }
+        else
+            m.top.matchAnswer = { kind: "match", serial: request.serial, ok: false }
+        end if
+    end try
+end sub
+
+function errorNumber(e as dynamic) as string
+    if type(e) = "roAssociativeArray"
+        if e.number <> invalid then return e.number.ToStr()
+    end if
+    return "?"
+end function
+
+' Both catalogs, read once (TeamCatalog logs a missing or bad file, and in DEBUG builds the time).
+sub ensureTeams()
+    if m.teams <> invalid then return
+    teams = TeamCatalog.loadPro()
+    teams.Append(TeamCatalog.loadCollege())
+    m.teams = teams
+end sub
+
+' The index for these options, built only when there is none or the options changed (MMTVL keeps one per options;
+' here only the current one: a switch costs a rebuild, step 17's decision).
+function ensureIndex(value as dynamic) as object
+    wanted = TeamsWork.options(value)
+    if m.index <> invalid
+        if TeamsWork.sameOptions(m.index.options, wanted) then return m.index
+        Log.info("IPTV", "Team matching: initials " + onOff(wanted.initials) + ", nicknames alone " + onOff(wanted.nicknames))
+    end if
+    ensureTeams()
+    ' The old index goes first, so two are never held at once.
+    m.index = invalid
+    m.index = TeamMatcher.newIndex(m.teams, wanted)
+    return m.index
+end function
+
+function onOff(value as boolean) as string
+    if value then return "on"
+    return "off"
+end function
+
+sub publishCatalog()
+    ensureTeams()
+    if m.slim = invalid
+        m.slim = TeamPicker.slimCatalog(m.teams)
+        m.slim.ok = true
+    end if
+    m.top.catalog = m.slim
+end sub
+
+' The channel menu's sides for one channel (no m: also called between programmes of a match, from the cancel check).
+sub answerMenu(request as object, top as object, index as object)
+    sides = TeamsWork.menuSides(request.channel, request.programme, index)
+    channelID = ""
+    if type(request.channel) = "roAssociativeArray" then channelID = request.channel.id
+    top.menuAnswer = { kind: "menu", serial: request.serial, ok: true, channelID: channelID, sides: sides }
+end sub
+
+sub answerMatch(request as object)
+    picked = request.picked
+    if type(picked) <> "roArray" then picked = []
+    index = invalid
+    data = invalid
+    if picked.Count() > 0
+        index = ensureIndex(request.options)
+        holder = m.top.guideHolder
+        if holder <> invalid
+            #if DEBUG
+                timer = CreateObject("roTimespan")
+            #end if
+            data = holder.guideData
+            #if DEBUG
+                ' Step 15/18: what the copy of the guide costs (counts and time only).
+                programmeCount = 0
+                if type(data) = "roAssociativeArray"
+                    if data.programmeCount <> invalid then programmeCount = data.programmeCount
+                end if
+                Log.info("IPTV", "Teams: read the guide (" + programmeCount.ToStr() + " programmes) in " + timer.TotalMilliseconds().ToStr() + " ms")
+            #end if
+        end if
+    end if
+    channels = m.top.channels
+    if type(channels) <> "roArray" then channels = []
+    now = CreateObject("roDateTime").AsSeconds()
+    cancel = { port: m.port, queue: m.queue, top: m.top, index: index, isCancelled: isSuperseded }
+    ' The guide data (data) goes when this function returns.
+    result = TeamsWork.match(channels, data, picked, now, index, cancel)
+    if result = invalid then return
+    line = TeamsWork.summary(result)
+    if line <> m.lastSummary
+        m.lastSummary = line
+        Log.info("IPTV", line)
+    end if
+    m.top.matchAnswer = { kind: "match", serial: request.serial, ok: true, liveIDs: result.liveIDs, upcoming: result.upcoming }
+end sub
+
+' The match's cancel check, before each upcoming programme (m is the cancel object above): takes in what came, answers
+' a waiting menu request with the index in use (when its options are this index's), and gives up for a newer match.
+function isSuperseded() as boolean
+    msg = m.port.GetMessage()
+    while msg <> invalid
+        TeamsWork.take(m.queue, messageData(msg))
+        msg = m.port.GetMessage()
+    end while
+    menu = m.queue.menu
+    if menu <> invalid and m.index <> invalid
+        if TeamsWork.sameOptions(menu.options, m.index.options)
+            m.queue.menu = invalid
+            answerMenu(menu, m.top, m.index)
+        end if
+    end if
+    return m.queue.match <> invalid
+end function

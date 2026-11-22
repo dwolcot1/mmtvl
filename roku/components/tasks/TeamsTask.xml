@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- My Teams' matching off the render thread (M12 step 18; MMTVL's IPTVLibrary.updateTeams and applyTeamMatchOptions,
+     step 17's "For step 18"). One task for the app's life, started by the scene. With teams picked it reads the team
+     catalogs and builds the index as it starts (launch; prepareIndex); with none it reads them only when first needed
+     (the college file is 382 KB: a Roku where nobody uses My Teams never reads it). It builds TeamMatcher's index
+     for the current Matching options only (again only when they change), and keeps the catalog and the index in its
+     own m: nothing but ids, team names and game records ever leaves it (setting an index on a field would copy it).
+     Requests (TeamsWork's): the newest match supersedes the one waiting and the one running (checked before each
+     upcoming programme), and a menu request waiting during a match is answered between programmes. The guide data is
+     read from guideHolder's guideData for each match with teams picked, and let go when the match ends.
+     Logs: counts only (TeamsWork.summary, when it changes; the options when they change); DEBUG builds add step 17's
+     timing lines (catalog read, index, matching). -->
+<component name="TeamsTask" extends="Task">
+    <interface>
+        <!-- The playlist's channels as TeamMatcher reads them: [{ id, name, group }] (PlaylistTask's teamFields; no
+             URL). Set by the scene after each playlist load, before the match it asks for. -->
+        <field id="channels" type="array" />
+        <!-- Set before control = "run": { initials, nicknames } when teams are picked (the catalogs and the index are
+             made at once, for these options), else {} (lazy). -->
+        <field id="prepareIndex" type="assocarray" />
+        <!-- The scene's guideHolder (the finished GuideTask), or invalid with no guide. -->
+        <field id="guideHolder" type="node" />
+        <!-- In: TeamsWork's requests ({ kind: "match" | "menu" | "catalog", serial, … }). alwaysNotify: every set is
+             a request. -->
+        <field id="request" type="assocarray" alwaysNotify="true" />
+        <!-- Out, one field per kind so two answers set close together never collapse into one:
+             matchAnswer { kind: "match", serial, ok, liveIDs, upcoming } (TeamsWork.match) and
+             menuAnswer { kind: "menu", serial, ok, channelID, sides } (TeamsWork.menuSides); ok false when the work
+             failed (the scene keeps what it has). -->
+        <field id="matchAnswer" type="assocarray" alwaysNotify="true" />
+        <field id="menuAnswer" type="assocarray" alwaysNotify="true" />
+        <!-- Out: after a catalog request, { ok: true, leagues, count } (TeamPicker.slimCatalog of both catalogs), or
+             { ok: false } when it couldn't be made (the scene asks again at the next open). -->
+        <field id="catalog" type="assocarray" alwaysNotify="true" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Unicode.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/EPGMatcher.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/TeamCatalog.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/TeamMatcher.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/TeamPicker.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/GuideReader.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/TeamsWork.bs" />
+</component>

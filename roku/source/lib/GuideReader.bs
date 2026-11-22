@@ -1,8 +1,9 @@
 ' The guide data, read once and shared (M12 step 12; the 2026-11-21 step 11 decision: the guide and the player share
 ' one copy). The scene keeps the finished GuideTask as guideHolder (MainScene.xml); its guideData field is
-' GuideFetch.guideData's shape. Reading a node field copies the whole value, so exactly one component reads it: the
-' guide screen, with a reader made here, once per guideRevision. The player is given only its channel's programmes
-' (the guide screen's programmesFor, through the scene). Pure functions, no nodes: the holder is anything with a
+' GuideFetch.guideData's shape. Reading a node field copies the whole value, so one component keeps it: the guide
+' screen, with a reader made here, once per guideRevision. The player is given only its channel's programmes (the
+' guide screen's programmesFor, through the scene). Step 18: TeamsTask is a second reader, for each My Teams match
+' with teams picked; its copy lasts only for that match (programmesFor reads its lists there too). Pure functions, no nodes: the holder is anything with a
 ' guideData field (a node on the Roku, an AA in tests). Also the TimeGrid rows' programmes and the guide's info text.
 '
 '   newReader() -> { data, revision, reads }: a reader that has read nothing.

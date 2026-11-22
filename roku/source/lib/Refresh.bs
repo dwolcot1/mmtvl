@@ -8,6 +8,9 @@ namespace Refresh
     const playlistMaxAgeSeconds = 600
     ' The refresh timer's period (IPTVLibrary.autoRefreshInterval).
     const intervalSeconds = 900
+    ' Step 18: My Teams is matched again this often while the app runs (IPTVLibrary.teamsRefreshInterval, 5 min),
+    ' besides after each playlist and guide load, a pick and a Matching switch.
+    const teamsIntervalSeconds = 300
     ' PlaylistTask gives up on a download after this long.
     const playlistTimeoutSeconds = 30
     ' The scene stops waiting for a PlaylistTask after this long (twice its timeout; QA-2, security L-5), so a task

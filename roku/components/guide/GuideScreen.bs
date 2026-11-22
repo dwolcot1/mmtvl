@@ -144,6 +144,7 @@ sub setIfPresent(node as object, field as string, value as dynamic)
 end sub
 
 ' Frame LMTqH's hint; step 13: with the group column open, or with no channels, * opens Settings, and the hint says so.
+' Step 18: My Teams' Choose Teams and upcoming rows have MMTVL's own (GuideView.hint, OK for Select).
 function hintText() as string
     dot = " " + Chr(183) + " "
     if m.column <> invalid
@@ -151,6 +152,11 @@ function hintText() as string
     end if
     if m.state <> invalid
         if m.state.rows.Count() = 0 then return "*: Settings"
+        if m.state.row >= 0 and m.state.row < m.state.rows.Count()
+            kind = m.state.rows[m.state.row].kind
+            if kind = "chooseTeams" then return "OK: choose your teams" + dot + "Left: groups"
+            if kind = "upcoming" then return "OK: watch this channel" + dot + "Left: groups"
+        end if
     end if
     return "OK: watch" + dot + "*: channel menu" + dot + "Left: groups" + dot + "Rewind/Fast Forward: page"
 end function
@@ -293,7 +299,7 @@ sub rebuildGrid()
     m.logoWaits = {}
     for each row in m.state.rows
         node = root.createChild("ContentNode")
-        if row.kind = "channel"
+        if row.kind = "channel" or row.kind = "upcoming"
             channel = m.channelsByID[row.channelID]
             if channel <> invalid
                 node.title = textOf(channel.name)
@@ -339,7 +345,7 @@ end sub
 ' A filled row without its logo and no request out (LogoTask dropped it from its full queue and said so): ask again.
 sub askLogoAgain(r as integer)
     row = m.state.rows[r]
-    if row.kind <> "channel" then return
+    if row.kind <> "channel" and row.kind <> "upcoming" then return
     node = m.rowNodes[r]
     if node.hdSmallIconUrl <> "" then return
     requestLogo(node, m.channelsByID[row.channelID])
@@ -354,9 +360,16 @@ sub fillRow(r as integer)
         cells = GuideReader.gridProgrammes(programmes, m.contentStart, m.windowEnd)
         m.rowProgrammes[r] = programmes
         requestLogo(node, m.channelsByID[row.channelID])
+    else if row.kind = "upcoming"
+        ' M7l 8c: an upcoming game isn't on the timeline: one cell across the window, its day and time, then the game.
+        game = upcomingGame(row)
+        cellTitle = ""
+        if game <> invalid then cellTitle = MyTeams.upcomingCellTitle(MyTeams.dayTime(localParts(game.programme.start)), game)
+        cells = [{ index: -1, start: m.contentStart, duration: m.windowEnd - m.contentStart, title: cellTitle }]
+        requestLogo(node, m.channelsByID[row.channelID])
     else
-        ' My Teams' Choose Teams row (the picker is step 18): one cell across the window.
-        cells = [{ index: -1, start: m.contentStart, duration: m.windowEnd - m.contentStart, title: chooseTeamsText() }]
+        ' My Teams' Choose Teams row: one cell across the window (MMTVL's chooseTeamsRow).
+        cells = [{ index: -1, start: m.contentStart, duration: m.windowEnd - m.contentStart, title: "Add or remove pro and college teams" }]
     end if
     for each cell in cells
         child = node.createChild("ContentNode")
@@ -368,7 +381,16 @@ sub fillRow(r as integer)
 end sub
 
 function chooseTeamsText() as string
-    return "Choose Teams" + Chr(8230)
+    return TeamPicker.title + Chr(8230)
+end function
+
+' An upcoming row's game (lineup.upcomingTeamGames), or invalid.
+function upcomingGame(row as object) as dynamic
+    games = m.lineup.upcomingTeamGames
+    if type(games) <> "roArray" then return invalid
+    if not GuideReader.isNumber(row.game) then return invalid
+    if row.game < 0 or row.game >= games.Count() then return invalid
+    return games[row.game]
 end function
 
 ' --- logos (LogoTask, cachefs:) ---------------------------------------------------------------------------------
@@ -469,6 +491,7 @@ end sub
 sub afterMove()
     if m.state.row >= 0 and m.state.row < m.state.rows.Count() then fillAround(m.state.row)
     showInfo()
+    showHint()
 end sub
 
 ' --- keys ------------------------------------------------------------------------------------------------------
@@ -597,9 +620,11 @@ sub showInfo()
         if rowData.kind = "channel"
             channel = m.channelsByID[rowData.channelID]
             if channel <> invalid then fillChannelInfo(lines, channel, row)
+        else if rowData.kind = "upcoming"
+            fillUpcomingInfo(lines, rowData)
         else
-            lines.title = chooseTeamsText()
-            lines.description = "Pick pro and college teams. Their live games show here, then their games in the next 3 days."
+            lines.title = TeamPicker.title
+            lines.description = MyTeams.chooseTeamsInfo
         end if
     end if
     placeInfo(lines)
@@ -618,6 +643,20 @@ sub fillChannelInfo(lines as object, channel as object, row as integer)
     ends = programme.stop
     if ends < programme.start then ends = programme.start
     lines.time = GuideReader.timeDetail(BannerText.timeRange(localParts(programme.start), localParts(ends)), programme, now)
+    lines.description = textOf(programme.summary)
+end sub
+
+' M7l 8c (GuideView.upcomingInfo): the programme's title, then the channel, "Wed 10:00 PM – 1:00 AM", the subtitle and
+' the category, then the description.
+sub fillUpcomingInfo(lines as object, row as object)
+    game = upcomingGame(row)
+    if game = invalid then return
+    programme = game.programme
+    ends = programme.stop
+    if not GuideReader.isNumber(ends) then ends = programme.start
+    whenText = MyTeams.dayTime(localParts(programme.start)) + " " + Chr(8211) + " " + BannerText.clock(localParts(ends))
+    lines.title = textOf(programme.title)
+    lines.time = MyTeams.upcomingDetail(textOf(game.channel.name), whenText, programme)
     lines.description = textOf(programme.summary)
 end sub
 
@@ -656,7 +695,7 @@ function localParts(seconds as dynamic) as object
     date = CreateObject("roDateTime")
     date.FromSeconds(Int(seconds))
     date.ToLocalTime()
-    return { hours: date.GetHours(), minutes: date.GetMinutes() }
+    return { hours: date.GetHours(), minutes: date.GetMinutes(), weekday: date.GetDayOfWeek() }
 end function
 
 ' true only for a boolean true (comparing invalid with true is a type mismatch on a Roku).

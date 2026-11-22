@@ -5,12 +5,15 @@
 ' Rows (MMTVL's order, without what Roku hasn't got or later steps add):
 '   Watch; Add to Favorites / Remove from Favorites; Move Up and Move Down (only from the guide's Favorites group,
 '   for a saved favorite below the team games, lineup.movableFavorites, and only where there is a neighbour);
-'   Hide Channel. Not here: Add to Multiview (Out of scope), the teams' rows (step 18), Match Guide (step 20).
+'   step 18: Add … to My Teams / Remove … from My Teams (MyTeams.menuItems); Hide Channel. Not here: Add to Multiview
+'   (Out of scope), Match Guide (step 20).
 '
-'   items(context) -> [{ id, title, action }]  context: { channelID, isFavorite, group, movableIDs }
+'   items(context) -> [{ id, title, action }]  context: { channelID, isFavorite, group, movableIDs, teamItems }
 '     group: the guide's selected group, or "" when the menu opens over the player (no Move Up/Down: the guide
-'     isn't open, MMTVL M7 L5). movableIDs: lineup.movableFavorites' ids, in order.
-'     action: { type: "watch" | "toggleFavorite" | "moveFavorite" | "hideChannel", channelID, step (moveFavorite) }
+'     isn't open, MMTVL M7 L5). movableIDs: lineup.movableFavorites' ids, in order. teamItems: MyTeams.menuItems'
+'     rows (missing: none), in place before Hide Channel.
+'     action: { type: "watch" | "toggleFavorite" | "moveFavorite" | "hideChannel" | "toggleTeam", channelID,
+'     step (moveFavorite), teamID (toggleTeam) }
 '   make(title, subtitle, items, focusedIndex, visibleRows) -> menu { title, subtitle, items, focusedIndex,
 '     firstVisible, visibleRows }: the focused index clamped, the window of visibleRows rows (Theme's
 '     liveMenuVisibleRows, the rows ChannelMenuView draws; at least 1) showing it.
@@ -20,10 +23,13 @@
 '     ("none"). The menu takes every key (Back never leaves Live TV, D49).
 '   prefsAfter(prefs, action, movableIDs) -> SettingsStore's prefs after the action (a new object): toggleFavorite
 '     adds the id at the end or removes it; moveFavorite swaps it, in the saved list, with its neighbour step
-'     places away among movableIDs (nothing past either end); hideChannel adds it to hiddenChannels. Other actions
-'     change nothing.
+'     places away among movableIDs (nothing past either end); hideChannel adds it to hiddenChannels; toggleTeam
+'     adds teamID at the end of teams or removes it (IPTVLibrary.setTeamPicked). Other actions change nothing.
 '   focusAfterMove(items, itemID, index) -> where the menu reopens after Move Up/Down: the same row id if it's
 '     still there, else index, clamped (MMTVL M6b L8).
+'   withItems(menu, items) -> menu (a new object) with new rows (step 18: the team rows arriving after the menu
+'     opened), focused on the row it had focused, by id (else its index, clamped), the window moved as little as
+'     possible to keep it in view.
 '   isFavorite(prefs, id) -> boolean.
 namespace ChannelMenu
 
@@ -42,6 +48,8 @@ namespace ChannelMenu
                 if position < movable.Count() - 1 then rows.Push(ChannelMenu.item("moveDown", "Move Down", { type: "moveFavorite", channelID: id, step: 1 }))
             end if
         end if
+        teamRows = context.teamItems
+        if LCase(type(teamRows)) = "roarray" then rows.Append(teamRows)
         rows.Push(ChannelMenu.item("hide", "Hide Channel", { type: "hideChannel", channelID: id }))
         return rows
     end function
@@ -100,9 +108,26 @@ namespace ChannelMenu
     function prefsAfter(prefs as dynamic, chosen as dynamic, movable as dynamic) as object
         result = ChannelMenu.copyPrefs(prefs)
         if LCase(type(chosen)) <> "roassociativearray" then return result
+        kind = chosen.type
+        if not ChannelMenu.isText(kind) then return result
+        if kind = "toggleTeam"
+            if not ChannelMenu.isText(chosen.teamID) then return result
+            if chosen.teamID = "" then return result
+            if ChannelMenu.indexOf(result.teams, chosen.teamID) >= 0
+                kept = []
+                for each team in result.teams
+                    if ChannelMenu.isText(team)
+                        if team <> chosen.teamID then kept.Push(team)
+                    end if
+                end for
+                result.teams = kept
+            else
+                result.teams.Push(chosen.teamID)
+            end if
+            return result
+        end if
         id = chosen.channelID
         if not ChannelMenu.isText(id) then return result
-        kind = chosen.type
         if kind = "toggleFavorite"
             if ChannelMenu.indexOf(result.favorites, id) >= 0
                 kept = []
@@ -139,6 +164,18 @@ namespace ChannelMenu
         if index > list.Count() - 1 then index = list.Count() - 1
         if index < 0 then index = 0
         return index
+    end function
+
+    function withItems(menu as object, list as object) as object
+        focusedID = ""
+        if menu.focusedIndex >= 0 and menu.focusedIndex < menu.items.Count() then focusedID = menu.items[menu.focusedIndex].id
+        focused = ChannelMenu.focusAfterMove(list, focusedID, menu.focusedIndex)
+        updated = {}
+        updated.Append(menu)
+        updated.items = list
+        updated.focusedIndex = focused
+        updated.firstVisible = GuideKeys.visibleStart(menu.firstVisible, focused, list.Count(), menu.visibleRows)
+        return updated
     end function
 
     function isFavorite(prefs as dynamic, id as string) as boolean

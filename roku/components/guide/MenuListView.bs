@@ -1,20 +1,28 @@
-' The rows of MenuListView (fields in MenuListView.xml): visibleRows Labels made on first render, reused after.
+' The rows of MenuListView (fields in MenuListView.xml): visibleRows rows made on first render, reused after; each a
+' title Label, a value Label and a check Poster.
 
 sub init()
     m.theme = Theme.make()
     m.focus = m.top.findNode("focus")
     m.focus.uri = m.theme.images.focusRow
+    m.selected = m.top.findNode("selected")
+    m.selected.uri = m.theme.images.focusRow
     m.rows = m.top.findNode("rows")
     m.labels = []
+    m.valueLabels = []
+    m.checkPosters = []
 end sub
 
 sub makeLabels()
     if m.labels.Count() = m.top.visibleRows then return
     m.rows.removeChildrenIndex(m.rows.getChildCount(), 0)
     m.labels = []
+    m.valueLabels = []
+    m.checkPosters = []
     spec = m.top.fontSpec
     if type(spec) <> "roAssociativeArray" then spec = m.theme.fonts.liveMenuRow
     font = Theme.font(spec)
+    valueFont = Theme.font(m.theme.fonts.liveMenuValue)
     for i = 0 to m.top.visibleRows - 1
         label = CreateObject("roSGNode", "Label")
         label.font = font
@@ -22,6 +30,20 @@ sub makeLabels()
         label.wrap = false
         m.rows.appendChild(label)
         m.labels.Push(label)
+        value = CreateObject("roSGNode", "Label")
+        value.font = valueFont
+        value.vertAlign = "center"
+        value.horizAlign = "right"
+        value.wrap = false
+        m.rows.appendChild(value)
+        m.valueLabels.Push(value)
+        check = CreateObject("roSGNode", "Poster")
+        check.uri = m.theme.images.iconCheck
+        check.width = m.theme.layout.chooseTeamsCheckSize
+        check.height = m.theme.layout.chooseTeamsCheckSize
+        check.visible = false
+        m.rows.appendChild(check)
+        m.checkPosters.Push(check)
     end for
 end sub
 
@@ -29,29 +51,76 @@ sub render()
     makeLabels()
     titles = m.top.items
     if type(titles) <> "roArray" then titles = []
+    values = m.top.values
+    if type(values) <> "roArray" then values = []
+    checks = m.top.checks
+    if type(checks) <> "roArray" then checks = []
     rowHeight = m.top.rowHeight
     inset = m.top.textInset
     first = m.top.firstVisible
     focused = m.top.focusedIndex
     colors = m.theme.colors
+    checkSize = m.theme.layout.chooseTeamsCheckSize
     for i = 0 to m.labels.Count() - 1
         label = m.labels[i]
+        valueLabel = m.valueLabels[i]
+        check = m.checkPosters[i]
         index = first + i
-        if index < titles.Count()
+        shown = index < titles.Count()
+        isFocused = index = focused and m.top.showFocus
+        value = ""
+        checked = false
+        if shown
             label.text = titles[index]
-            label.visible = true
+            if index < values.Count() then value = textOf(values[index])
+            if index < checks.Count() then checked = checks[index] = true
         else
             label.text = ""
-            label.visible = false
+        end if
+        label.visible = shown
+        ' The title stops where the value or the check starts.
+        reserved = 0
+        if checked
+            reserved = checkSize + inset
+        else if value <> ""
+            valueLabel.width = 0
+            valueLabel.text = value
+            reserved = Int(valueLabel.boundingRect().width + 0.5) + inset
         end if
         label.translation = [inset, i * rowHeight]
-        label.width = m.top.rowWidth - 2 * inset
+        label.width = m.top.rowWidth - 2 * inset - reserved
         label.height = rowHeight
-        if index = focused and m.top.showFocus then label.color = colors.focusedRowText else label.color = colors.primaryText
+        valueLabel.text = value
+        valueLabel.visible = shown and value <> "" and not checked
+        valueLabel.translation = [inset, i * rowHeight]
+        valueLabel.width = m.top.rowWidth - 2 * inset
+        valueLabel.height = rowHeight
+        check.visible = shown and checked
+        check.translation = [m.top.rowWidth - inset - checkSize, i * rowHeight + Int((rowHeight - checkSize) / 6) * 3]
+        if isFocused
+            label.color = colors.focusedRowText
+            valueLabel.color = colors.focusedRowSecondaryText
+            check.blendColor = colors.focusedRowText
+        else
+            label.color = colors.primaryText
+            valueLabel.color = colors.secondaryText
+            check.blendColor = colors.primaryText
+        end if
     end for
     slot = focused - first
     m.focus.visible = m.top.showFocus and slot >= 0 and slot < m.labels.Count() and focused < titles.Count()
     m.focus.translation = [0, slot * rowHeight]
     m.focus.width = m.top.rowWidth
     m.focus.height = rowHeight
+    selectedSlot = m.top.selectedIndex - first
+    m.selected.visible = m.top.selectedIndex >= 0 and selectedSlot >= 0 and selectedSlot < m.labels.Count() and m.top.selectedIndex < titles.Count()
+    m.selected.translation = [0, selectedSlot * rowHeight]
+    m.selected.width = m.top.rowWidth
+    m.selected.height = rowHeight
 end sub
+
+function textOf(value as dynamic) as string
+    kind = LCase(type(value))
+    if kind = "string" or kind = "rostring" then return value
+    return ""
+end function
