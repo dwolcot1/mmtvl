@@ -113,3 +113,63 @@ Each entry has:
 - **Pros:** Consistent with the Mac app and with the frames' own hints.
 - **Cons:** Unreviewed by the user; easy to change in `SettingsPages.bs` and `TeamPicker.bs`.
 - **Added in QA fixes:** "Teams couldn't be loaded" shows when the bundled catalog can't be read. MMTVL silently has no college teams in that case. The next open of Choose Teams or Settings tries again.
+
+### D7. Search's programmes use a title index, built once per guide load
+- **Step:** 19. **Decision (Recommended):** A new `SearchTask` (one for the app's life, made when Search first opens) builds a compact title index from the guide the first time Search needs it after each guide load. The guide copy it reads for that is let go at once; every query runs against the index. A new guide drops the index straight away, and the next Search builds it again. DEBUG builds log the build ("Indexed N programmes (T titles) in X ms (guide read Y ms)") and each query ("Found C channels, P programmes in X ms").
+- **Why:** Matching every keystroke against a full guide copy would mean one copy per keystroke, or holding a second full copy. MMTVL asks SQLite; the Roku has no database, so the index stands in for it.
+- **Explained:** The index holds only what search needs: each folded title once (a show that airs 20 times is stored once), and under it, for each airing, the guide channel, the start and the stop. Programmes that have already ended are left out. Titles and subtitles for the 40 results are then fetched from the guide screen, which already keeps the guide, in one call per answer.
+- **Pros:**
+  - The guide is copied once per guide load, and only by people who search.
+  - Queries scan unique titles, not every airing.
+  - Search stays out of TeamsTask's queue, so a long index build never delays My Teams.
+- **Cons:**
+  - The index stays in memory until the next guide load, even after Search closes. Its size is unmeasured (no Roku yet).
+  - The first Search after each guide load waits for the build (the "Searching…" text shows meanwhile).
+- **Fallback if a device shows memory pressure:** drop the index when Search closes, on Low Rokus or everywhere (one request kind in `SearchTask`).
+- **To reverse:** Build the index inside TeamsTask instead, sharing its guide read with the My Teams match.
+- **Orchestrator, on the implementer's question "drop the index when Search closes on Low Rokus?":** No. It's kept until the next guide load, so reopening Search is instant. Step 22's memory alerts (`roAppMemoryNotificationEvent`) drop it together with the logos. That handles the real risk only when the Roku actually runs short, rather than costing a rebuild on every reopen.
+
+### D8. Team results come from TeamsTask, which already holds the catalog
+- **Step:** 19. **Decision (Recommended):** TeamsTask gains a `search` request. It ranks teams with `LiveSearch.teamsMatching` over search entries it makes once from the catalogs it already holds. A search waiting during a My Teams match is answered between programmes, as the channel menu's request is. Opening Search sends an empty search, so the entries are ready by the second letter.
+- **Why:** The college catalog is 382 KB. A second copy in `SearchTask` would double that memory for no gain.
+- **Explained:** One query goes to two Tasks: `SearchTask` answers channels and programmes, TeamsTask answers teams. Each answer carries the query's serial, and an answer to an older text is dropped.
+- **Pros:**
+  - One copy of the catalog.
+  - The team ranking runs off the render thread.
+- **Cons:**
+  - Two answers per query, so the teams and the programmes can arrive a moment apart.
+  - With no team picked, the first Search reads the catalog (as D3).
+
+### D9. The debounce is a Timer in the Search screen; all results come after it
+- **Step:** 19. **Decision (Recommended):** `SearchView` waits 0.3 s (`Theme` timing `searchDebounce`) after the last change to the text, then sends the query to both Tasks. Until the answers arrive, the results already on screen narrow at once (channels by name, teams by their search text, programmes by title). Below two characters everything clears at once.
+- **Why:** In MMTVL, channels and teams come at once and only programmes are debounced. On a Roku, channels and teams would have to be searched on the render thread to come at once. On a stick that could drop key presses, which is what step 19's done-when checks.
+- **Explained:** Typing feels the same as on the Mac: results narrow while you type, and new matches arrive after a short pause.
+- **Pros:**
+  - No search work on the render thread except narrowing at most 60 results.
+- **Cons:**
+  - A newly matching channel or team appears about 0.3 s later than on the Mac.
+
+### D10. Search opens only from the guide's Search row
+- **Step:** 19. **Decision (Recommended):** Search opens from the guide's Search row, as step 19 says, and only there. MMTVL also opens it over the player and Multiview, but only when phone text arrives; the Roku has no phone remote and no Multiview.
+- **Explained:** Back on the keyboard closes Search and returns to the Search row. Back never leaves Live TV. The 3-minute idle return closes Search like the channel menu and Choose Teams.
+- **Pros:** Exactly the plan's scope.
+- **Cons:** No quick way to search from full screen. Typing from the Roku mobile app's keyboard (ECP `Lit_` keys) isn't handled.
+- **To reverse:** A player key (none is free under L4) or ECP text input would open `SearchView` over the player.
+- **Orchestrator, on the implementer's question "also from full screen?":** No. L4 leaves no free player key, and the plan scopes Search to the guide. From full screen it's Back → guide → Left → Search, three presses.
+
+### D11. Search follows the frame's layout, with MMTVL's wording where the frame shows none
+- **Step:** 19. **Decision (Recommended):** Frame rucDX supplies the layout: the keyboard on the left; on the right, section headers CHANNELS, TEAMS and PROGRAMMES, two-line rows and the check mark. The texts come from MMTVL (as D6):
+  - **Channel:** the name, then "<number> · <group>". The frame also shows the programme on now, which would need a guide lookup per row, so it's left out.
+  - **Team:** MMTVL's pick title ("Duke Blue Devils (Basketball)", which the 4 Duke teams need to be told apart), then its conference, or the league for a pro team. A picked team adds " · In My Teams" and the check; the focused team, if not picked, adds " · Add to My Teams", as the frame does.
+  - **Programme:** the title, then "<number> <channel> · On Now | 9:00 PM | Tue 9:00 PM", then the subtitle or episode if there is one. MMTVL puts the time and channel in the title line; the frame puts them in the detail, and says "Now" where MMTVL says "On Now".
+  - **Six rows show at a time** (MMTVL shows eight); with three headers, eight don't fit the frame's results area. Rewind and Fast Forward page by six.
+  - **Texts the frame doesn't draw:** MMTVL's "Type a channel, team or show", "No channels or programmes match" and the keyboard placeholder "Channels, teams, shows". New: "Searching…" while a query runs and nothing is shown yet.
+  - **Hints:** MMTVL's, with OK for Select: "OK: type · Play: delete · Right: results · Back: close search", "OK: watch · Left: keyboard · Back: keyboard", and "OK: add to My Teams · Left: keyboard" or "OK: remove from My Teams · Left: keyboard". The frame's single hint ("OK on a team: add or remove from My Teams · Back: guide") isn't used.
+- **Pros:** The same words as the Mac app, in the Roku design's layout.
+- **Cons:** Unreviewed by the user. All of it is in `LiveSearch.rowText`, `message` and `hint`.
+
+### D12. Programme titles match ignoring accents too
+- **Step:** 19. **Decision (Recommended):** A programme matches when its folded title (case and accents removed, as MMTVL folds channel names) contains every typed word.
+- **Why:** MMTVL's programme query is SQLite `LIKE`, which ignores case for ASCII letters only. "futbol" finds the channel "Telemundo Fútbol" there, but not a programme titled "Fútbol". The Roku's keyboard has no accented letters, so the folded match is the useful one.
+- **Pros:** Accented titles can be found with the Roku keyboard.
+- **Cons:** A few more programme results than the Mac gives for accented titles.
