@@ -14,8 +14,8 @@
   - Every decision taken without the user is in **[M12-decisions-log.md](M12-decisions-log.md)**, with the reason and pros and cons.
   - Git: after QA, each step is committed, scanned with gitleaks and pushed. Each phase gets a PR when it's done, stacked on the one before. Once phase 6's automated steps are done, every gate runs again and the PRs are squash-merged in order (#1, #2, #4, #5, then phases 4–6), each rebased onto `master` first.
   - Device steps (1, 4, 15, 23) stay open for the user.
-- **Branches stack:** `m12-phase0` (PR #1) → `m12-phase1` (#2) → `m12-step13` (#4, phase 2) → `m12-step14` (#5, phase 3) → `m12-step16` → `m12-step17` → `m12-step18` → `m12-step19` → `m12-step20` (#6, phase 4: base `m12-step14`) → `m12-step21` (#7, phase 5: base `m12-step20`) → **`m12-step22`** (phase 6 is steps 22, 24 and 25 on stacked branches; its PR opens after step 25, base `m12-step21`). Worktree `.claude/worktrees/step9`. Done and QA-passed: steps 2, 3, 5–14 and 16–21; step 22 is built and QA-passed, its done-when (a 2-hour stick run under 80 % of `GetChannelMemoryLimit`) waits for step 23. `test:local`: 736 passed; script tests 40; MMTVL full suite 2096.
-- **Next: step 24 (security review)** of the whole `roku/` tree and the script, then step 25 (docs), then the phase 6 PR, the final gates and the squash-merges in order. Steps 21 and 22 are built with every unprobed path gated or guarded (U1, D21–D55); their device checks are in their Deviations entries. Pencil: read frames with `execute` on the file's `uri`, read-only, and never save from this session.
+- **Branches stack:** `m12-phase0` (PR #1) → `m12-phase1` (#2) → `m12-step13` (#4, phase 2) → `m12-step14` (#5, phase 3) → `m12-step16` → `m12-step17` → `m12-step18` → `m12-step19` → `m12-step20` (#6, phase 4: base `m12-step14`) → `m12-step21` (#7, phase 5: base `m12-step20`) → **`m12-step22`** → `m12-step24` (phase 6 is steps 22, 24 and 25 on stacked branches; its PR opens after step 25, base `m12-step21`). Worktree `.claude/worktrees/step9`. Done and QA-passed: steps 2, 3, 5–14 and 16–21; step 24 is done (no findings above low; the lows are in its entry); step 22 is built and QA-passed, its done-when (a 2-hour stick run under 80 % of `GetChannelMemoryLimit`) waits for step 23. `test:local`: 742 passed; script tests 40; MMTVL full suite 2096.
+- **Next: step 25 (docs)**, with the step 24 items handed to it (N-5 bslib's notice and the "nothing from npm ships" wording, N-7 the registry's plain-text URLs and how to wipe them, the .pen provider-name check), then the phase 6 PR, the final gates and the squash-merges in order. Steps 21 and 22 are built with every unprobed path gated or guarded (U1, D21–D55); their device checks are in their Deviations entries. Pencil: read frames with `execute` on the file's `uri`, read-only, and never save from this session.
 - Gates for every Roku step: `cd roku && npm run build && npm run lint && npm run test:local` (264 passed at the end of phase 1), plus `npm run build:release`. No simulator runs with network access. Use a separate git worktree for parallel steps (`git worktree add -b m12-stepN .claude/worktrees/stepN <commit>`); the built-in isolation started from the wrong commit.
 
 ## Goal
@@ -448,8 +448,14 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
   4. Antenna: channels listed, an H.264 channel plays, MPEG-2 per step 4, both tuners busy gives the message (start 2 antenna streams elsewhere).
   5. The stick: an hour of use without a crash, and the Settings → Device texts are right.
   - Done when: each check is ticked or its failure is recorded here.
-- [ ] **24. Security review** `[security]`
+- [x] **24. Security review** `[security]`
   - The whole `roku/` tree and the script: no URL, token, `DeviceAuth` or secret in logs; the import's validation; LAN-only rules for import and antenna; HTTPS certificate use; the registry contents; the npm devDependencies (versions, `npm audit`, nothing shipped); gitleaks (`scripts/gitleaks.toml`) over the branch; no provider name.
+  - gitleaks, from the repo root: the branch's commits, then the files as they are, one directory per run:
+    - `gitleaks git --config scripts/gitleaks.toml --log-opts="origin/master..m12-step24" --redact --no-banner .`
+    - `gitleaks dir --config scripts/gitleaks.toml --redact --no-banner roku`
+    - `gitleaks dir --config scripts/gitleaks.toml --redact --no-banner scripts`
+    - `gitleaks dir --config scripts/gitleaks.toml --redact --no-banner MMTVLTests`
+    - `gitleaks dir --config scripts/gitleaks.toml --redact --no-banner docs`
   - Done when: no open findings above low, and lows are recorded here.
 - [ ] **25. Docs** `[doc]`
   - A **Roku (M12)** section in `CLAUDE.md`:
@@ -922,3 +928,43 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
     6. The logos' `loadWidth`/`loadHeight` are in the XML markup, before any `uri`, and no longer set in `init()` (D49).
     7. A `dropIndex` that arrives during an index build is done right after that request (a waiting query uses the index once), so the index isn't kept (D45).
     - **Counts:** `test:local` 736 passed; release 125 files.
+- **2026-11-22, step 24 (security review: nothing above low; the lows fixed or recorded by the implementer; QA to follow).** Decisions D56–D60 in [M12-decisions-log.md](M12-decisions-log.md).
+  - **Fixed:**
+    - **N-1 (D57):** after Remove Live TV Source set LogoTask's `playlistURL` to `""`, logos still waiting were fetched with `URLPolicy.allows(url, "")`, which allows any host, LAN and loopback included.
+      - Now `URLPolicy.allowsLogo` refuses every logo with no playlist, before LogoTask makes a transfer ("not allowed"; not remembered as failed).
+      - MainScene's `dropWaitingLogos()` sends LogoTask `{ clear: true, reason: "source" }` on Remove Live TV Source, a changed playlist and an import's Replace.
+      - Test: `LogoCacheTests.withNoPlaylistAWaitingLogoIsRefused` (a waiting `http://127.0.0.1/x.png` is refused with `noPlaylist`; the old check allowed it). Task components aren't in the local build, so "no transfer is made" rests on `fetch` checking before `CreateObject("roUrlTransfer")`.
+    - **N-2:** `PlaylistTask.loadPlaylist`'s catch now deletes `tmp:/mmtvl-playlist.m3u`, as ImportTask's does; not after a merge-only run, which never downloads (a stopped task's load may still be using the file). **No test:** PlaylistTask creates its `roUrlTransfer` itself and isn't in the local build, so a throwing fake reader can't reach it without a refactor.
+    - **N-3 (D56):** `HDHomeRun.decodeJSON` checks `JsonDepth.fits(text, 8)` before `ParseJson` for `discover.json`, `lineup.json`, `status.json` and `lineup_status.json`; the loop is the import's, moved to `source/lib/JsonDepth.bs`. Tests:
+      - `HDHomeRunTests.aDeeplyNestedAnswerIsntParsed`: a discover.json that `ParseJson` reads as a good tuner, with one field 9 deep, gives "notTuner"; 8 deep is still a tuner; a 16 KB nested answer gives "notTuner"; the other three files are refused the same way.
+      - `JsonDepthTests` (3).
+    - **N-4 (D58):** `scripts/gitleaks.toml`:
+      - the `.example` allowlist is checked against each finding's match (`regexTarget = "match"`, anchored), and `credential-query` takes in the URL written before its query;
+      - new rule `hdhomerun-deviceauth`, `(?i)DeviceAuth=[A-Za-z0-9+/=_%-]{8,}`, with the made-up test DeviceAuths allowlisted on the match;
+      - the key groups are non-capturing, so `--redact` hides each whole match. Before, it printed tokens next to the redacted group. This wasn't a finding.
+      - Step 24's text above now gives the per-directory commands.
+    - **N-6 (D59):** `npm audit fix` (no `--force`) in `roku/`: "31 high severity vulnerabilities" (JSON metadata: high 33) → "found 0 vulnerabilities". Only `package-lock.json` changed (transitive: jimp 1.7.0, zod 4.6.7, `decode-uri-component` removed, `source-map-resolve` 0.5.0). The direct devDependencies are unchanged, and all four gates pass, so it is kept.
+    - **N-8 (D60):** the import's confirm screen begins with a **From** row, the address the import asked (`checkRequest`'s host), which the script prints as "serving the settings from <address>". The plan forbids showing a tuner's address, not this one. Tests: `ImportTests.theSummaryShowsHostsAndCountsOnly` (updated) and `theSummarySaysWhereTheBundleCameFrom`.
+  - **Recorded, accepted low (with the device check):** **L-6 of step 8**, which this plan didn't word. Where a transfer reports no peer address, the peer check fails open:
+    - `GuideTask.checkPeer` (GuideTask.bs:423-428) and `LogoTask.checkPeer` (LogoTask.bs:131-137 as reviewed, 140-146 now) accept and warn once;
+    - `ImportBundle.peerAllowed` (ImportBundle.bs:132-135 as reviewed, 133-137 now) returns true;
+    - `PlaylistTask` only logs whether one was reported (the playlist is typed by the user).
+    - Whether a Roku always reports `GetTargetIpAddress`, and for which hop, is step 8's device check. If it does, these can fail closed.
+  - **Handed on to step 25 (docs):**
+    - **N-5:** bslib 0.1.1 (MIT) ships in the app as `source/bslib.brs`; the README's licenses need it.
+    - **N-7:** the registry holds the token-bearing playlist and guide URLs in plain text. This is unavoidable on Roku (no keychain); the README should say so, next to the dev-mode console risk.
+    - **The `.pen` check:** the text of `design/roku-live-tv.pen` hasn't been checked for a provider name. It can be read only through the Pencil MCP tools, which the implementer may not use.
+  - **Carried lows, re-assessed; all stand as low:**
+    - **L-3 (step 8):** URL-bearing node fields; it depends on the device's `/query/app-ui` answer (step 15).
+    - **L-7 (step 9):** a crash backtrace on port 8085 shows locals (dev mode only).
+    - **L-8 (step 9):** unsalted SHA-1 of guide URLs in file names, ids and `SettingsScreen.model` (readable only with dev-mode access).
+    - **Step 14 L-3:** any LAN host with ECP can open the confirm screen with its own bundle. N-8's From row now shows which host it was.
+    - **Step 14 L-4:** the 64 KB cap is polled every 250 ms.
+    - **Step 21 L-4:** the tokened SiliconDust URL lives in a local and the transfer while it downloads (dev mode only).
+    - **Step 21 L-5:** the JSON guide has no total cap. It is still gated off (D27 = "xmltv"), and must be fixed before D27 flips. N-3's depth check doesn't cover `AntennaGuide`'s `ParseJson` of that guide either.
+  - **Commands run** (all in the worktree; nothing on a Roku, the LAN or the provider's network):
+    - in `roku/`: `npm audit` (before and after), `npm audit fix`, `npm ls --depth=0`, and the gates `npm run build && npm run lint && npm run test:local && npm run build:release` → "LOCAL TESTS: 742 passed, 0 failed", "Release build: 126 files, no probe code, no DEBUG memory line";
+    - gitleaks 8.30.1 from the root, as in step 24's text above (each "no leaks found"), plus `gitleaks git --config scripts/gitleaks.toml --redact --no-banner .` over the whole history (207 commits, "no leaks found"), and the old config against scratch cases for comparison (D58).
+    - `scripts/roku-export-settings.py` wasn't touched, so its tests weren't run.
+  - **Counts:** `test:local` 742 passed (736 + 6); release 126 files (`JsonDepth.brs`).
+  - **Device checks (step 23):** the From row at 1080p and 720p (8 rows); a tuner's `lineup.json` passing the depth scan in reasonable time on a stick; Remove Live TV Source with logos still loading (the "Live TV source changed: N waiting logos dropped" line, and no logo fetched after it).
