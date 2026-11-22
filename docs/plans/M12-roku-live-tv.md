@@ -14,8 +14,8 @@
   - Every decision taken without the user is in **[M12-decisions-log.md](M12-decisions-log.md)**, with the reason and pros and cons.
   - Git: after QA, each step is committed, scanned with gitleaks and pushed. Each phase gets a PR when it's done, stacked on the one before. Once phase 6's automated steps are done, every gate runs again and the PRs are squash-merged in order (#1, #2, #4, #5, then phases 4–6), each rebased onto `master` first.
   - Device steps (1, 4, 15, 23) stay open for the user.
-- **Branches stack:** `m12-phase0` (PR #1) → `m12-phase1` (#2) → `m12-step13` (#4, phase 2) → `m12-step14` (#5, phase 3) → `m12-step16` → `m12-step17` → `m12-step18` → **`m12-step19`**. Worktree `.claude/worktrees/step9`. Done and QA-passed: steps 2, 3, 5–14 and 16–19. `test:local`: 594 passed; script tests 40; MMTVL full suite 2094.
-- **Next: step 20 (Match Guide)**, `[implementer]`, which closes phase 4 with a PR (head `m12-step20`, base `m12-step14`). Pencil: read frames with `execute` on the file's `uri`, read-only, and never save from this session.
+- **Branches stack:** `m12-phase0` (PR #1) → `m12-phase1` (#2) → `m12-step13` (#4, phase 2) → `m12-step14` (#5, phase 3) → `m12-step16` → `m12-step17` → `m12-step18` → `m12-step19` → **`m12-step20`** (phase 4's PR: head `m12-step20`, base `m12-step14`). Worktree `.claude/worktrees/step9`. Done and QA-passed: steps 2, 3, 5–14 and 16–20. `test:local`: 624 passed; script tests 40; MMTVL full suite 2096.
+- **Next: step 21 (Antenna, phase 5)**, `[implementer][security]`, built with every path gated (user choice U1 in the decisions log). Then step 22 (low-end pass: memory alerts drop logos and the search index; SearchView's render-thread imports, D19), step 24 (security review) and step 25 (docs). Pencil: read frames with `execute` on the file's `uri`, read-only, and never save from this session.
 - Gates for every Roku step: `cd roku && npm run build && npm run lint && npm run test:local` (264 passed at the end of phase 1), plus `npm run build:release`. No simulator runs with network access. Use a separate git worktree for parallel steps (`git worktree add -b m12-stepN .claude/worktrees/stepN <commit>`); the built-in isolation started from the wrong commit.
 
 ## Goal
@@ -415,7 +415,7 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
   - A `DynamicMiniKeyboard`, results from 2 characters: 8 channels (folded substring), 12 teams (MMTVL's ranking; OK adds or removes the team and keeps search open), 40 programmes in the next 24 h (every word in the title).
   - Debounced 300 ms in a Task.
   - Done when: `SearchTests` mirror LiveSearchTests (17), and on a device, results update while typing without dropping key presses on the stick.
-- [ ] **20. Match Guide** `[implementer]`, files: `roku/source/lib/EPGSuggester.bs`, `roku/components/guide/MatchGuide.*`
+- [x] **20. Match Guide** `[implementer]`, files: `roku/source/lib/EPGSuggester.bs`, `roku/components/guide/MatchGuide.*`
   - Channel menu → Match Guide: Automatic, No Guide, then ranked suggestions (an `EPGSuggester.rank` port over the channel names collected in pass 1).
   - A choice writes `overrides` (keyed by the channel name; antenna channels by id) and re-runs matching without downloading.
   - Done when: `EPGSuggesterTests` (5) pass, and on a device a match survives a relaunch.
@@ -799,3 +799,35 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
     - **OK:** on a channel or a programme on now, it plays; on a later programme, it shows that row and start in the guide (TimeGrid `jumpToTime`, if present); on a team, it toggles the team and its check mark, and the change survives a relaunch.
     - **Look:** the palette (`RSGPalette`) and layout at 1080p and 720p.
     - **First search after a guide load:** "Searching…" while the index builds, and the DEBUG "Indexed …" and "Found …" lines (time and memory on a Low Roku).
+- **2026-11-22, step 20 (built; qa-deep PASS with minors, all fixed).**
+  - **New files:**
+    - `EPGSuggester.bs`: the `rank` port, with a double-precision `ln`, because BrightScript's `Log` is single precision and would change ties.
+    - `MatchGuide.bs`: options, menu, `overridesAfter`, labels.
+    - `MatchGuideTask`: ranks off the render thread; the newest request wins.
+    - `suggestions.golden.json`: 42 cases, written by Swift.
+  - **Changes:** a "Match Guide…" row in the channel menu, showing the guide label, else "None". `GuideRuns` gets `rematch` and `cachedOnly`. `GuideFetch.fetchStep` and `matchData`. `GuideTask` gets `cachedOnly`. The Channels footer is back to "favorite, hide or match".
+  - **Counts:** `test:local` 624 passed; MMTVL full suite 2096; release 114 files.
+  - **Test mapping:** EPGSuggesterTests 5/5. IPTVLibraryTests' and LiveTVModelTests' Match Guide cases are carried, except the scene-level ones (Back to the channel menu, a newer open, the idle cancel, closing both menus), which are step 23 device checks.
+  - **Decisions:** D13–D20 in [M12-decisions-log.md](M12-decisions-log.md):
+    - the rematch is a guide run that downloads nothing;
+    - `matchData` is split from `guideData`;
+    - MatchGuideTask and MMTVL's 30 suggestions;
+    - the channel menu's look, with MMTVL's wording;
+    - a refused save keeps the menu open, with at most 500 matches;
+    - the answers to the implementer's questions;
+    - the scene keeps `Unicode.bs`, and SearchView's imports go to step 22;
+    - "Selected" instead of " · Selected".
+  - **QA fixes:**
+    - The per-guide fetch decision is pure and tested (`fetchStep`).
+    - A tie-break case where guide order and id order disagree is now in the Swift golden.
+    - A failed or abandoned rematch sets `rematch` again and is retried after the 1-hour wait.
+  - **Accepted:** Swift sums weights in Set order and the Roku in sorted order, so a golden tie could in theory differ by one ulp; it was never seen in 21 Swift runs. A guide that falls due during a rematch is fetched at the next 15-minute tick.
+  - **For step 21:** antenna channels need the antenna guide's suggestions first (MMTVL M7j L12), which is a MatchGuideTask change.
+  - **Device checks (step 23):**
+    - The done-when: a match on an unmatched channel shows after the rematch and survives a relaunch. No download line appears during a rematch.
+    - Back and `*` return to the channel menu, focused on Match Guide…. The idle return closes it, including while it loads. A newer open, or Choose Teams, opened while it loads drops the old answer.
+    - The rematch's time on a stick with US2 ("Read N guide(s) in X s").
+    - The wide panel at 1080p and 720p, with right-aligned values, the `·` and `…` glyphs and the wrapped note. The low-space note on a nearly full registry.
+    - `LCase` on non-ASCII on the device. Doubles kept in arrays and AAs (run EPGSuggester's golden on the device).
+    - `*` in the player → Match Guide.
+
