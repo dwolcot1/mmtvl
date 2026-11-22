@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Import confirm (M12 step 14, L2; frame NgJ0S "Import confirm"): a full-screen screen over everything (the
+     background gradient), with a liveMenuWideWidth standard glass panel (panel.9.png), centred: the title, the
+     question, the summary (ImportBundle.summaryRows: hosts and counts, never a URL; read-only rows with a tileFill
+     line between them), the buttons and the footnote. Two states the frame doesn't draw use the same panel: while
+     the bundle downloads, the question line says so and the only button is Cancel; when the import can't be used,
+     the line gives the reason (ImportBundle.message) and the only button is OK. Left and Right move between the
+     buttons, OK answers, Back answers Cancel (or OK when that's the only button). Every key is handled here, so
+     none reaches the screens underneath and Back never leaves the app (D49). Sizes from Theme.bs (3-px grid). -->
+<component name="ImportConfirmView" extends="Group">
+    <interface>
+        <!-- In: { kind: "loading" } | { kind: "confirm", rows: [{ label, value }] } | { kind: "failed", message }. -->
+        <field id="state" type="assocarray" onChange="layoutView" />
+        <!-- Out, once per state: "replace", "cancel" or "ok". -->
+        <field id="choice" type="string" alwaysNotify="true" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/URLPolicy.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/SettingsStore.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/ImportBundle.bs" />
+    <children>
+        <Poster id="background" />
+        <Group id="panelGroup">
+            <Poster id="panel" />
+            <Label id="title" />
+            <Label id="question" />
+            <Group id="rows" />
+            <Group id="buttons" />
+            <Label id="footnote" />
+        </Group>
+    </children>
+</component>

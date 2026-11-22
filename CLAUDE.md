@@ -38,6 +38,9 @@ scripts/deploy-mm.sh             # the newest ~/Desktop/MMTVL-*-build*.zip, or g
 scripts/deploy-mm.sh --rollback  # install the newest kept build older than the installed one
 # Regenerate the college teams catalog (M7l D48; by hand, when conferences change, about yearly; the only thing that talks to ESPN)
 python3 -I scripts/gen-college-teams.py && python3 -I scripts/test_gen_college_teams.py
+# Copy MMTVL's Live TV settings to the Roku app once (M12 L2): reads the Keychain and the JSON files, finds the Roku (or --roku <IP>), serves them once; check the IP address against the Roku's Settings → Network → About
+python3 -I scripts/roku-export-settings.py            # --dry-run: counts and hosts only
+python3 -I scripts/test_roku_export_settings.py
 # Any log command below runs on the mini through SSH (host "mm" in ~/.ssh/config), e.g.:
 ssh mm "/usr/bin/log show --last 30m --predicate 'subsystem == \"dev.mmtvl.launcher\"' --info"
 

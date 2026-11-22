@@ -1,0 +1,211 @@
+' Import confirm (fields in ImportConfirmView.xml). Layout as frame NgJ0S: noticePadding inside the panel; the header
+' (title, noticeHeaderSpacing, question), the summary, the buttons and the footnote noticeSectionSpacing apart;
+' summary rows importSummaryRowHeight high, labels importSummaryLabelWidth wide in secondaryText, values
+' importSummaryGap after them in primaryText (searchRowTitle), a importDividerHeight tileFill line on top of every
+' row but the first; buttons as the low-memory notice's (focus_capsule focused, settings_row otherwise,
+' noticeButtonSpacing apart, labels buttonTextInset from the ends). Wrapped text (the question and the footnote) is
+' measured with boundingRect and rounded up to the 3-px grid.
+
+sub init()
+    m.theme = Theme.make()
+    canvas = m.theme.canvas
+    background = m.top.findNode("background")
+    background.uri = m.theme.images.background
+    background.loadDisplayMode = "scaleToFill"
+    background.width = canvas.width
+    background.height = canvas.height
+    m.top.findNode("panel").uri = m.theme.images.panel
+    fonts = m.theme.fonts
+    colors = m.theme.colors
+    styleLabel(m.top.findNode("title"), fonts.settingsTitle, colors.primaryText, false)
+    styleLabel(m.top.findNode("question"), fonts.settingsDescription, colors.secondaryText, true)
+    styleLabel(m.top.findNode("footnote"), fonts.settingsHint, colors.secondaryText, true)
+    m.top.findNode("title").text = ImportBundle.title
+    m.buttonIDs = []
+    m.focusedButton = 0
+    m.answered = false
+    layoutView()
+end sub
+
+sub styleLabel(label as object, spec as object, color as string, wraps as boolean)
+    label.font = Theme.font(spec)
+    label.color = color
+    label.wrap = wraps
+    if wraps
+        label.maxLines = 3
+        label.height = 0
+    else
+        label.height = Theme.lineHeight(spec)
+        label.vertAlign = "center"
+    end if
+end sub
+
+' A wrapped label's height on the 3-px grid; one line when boundingRect has nothing yet (unverified on a device).
+function textHeight(label as object, spec as object) as integer
+    height = label.boundingRect().height
+    if height < Theme.lineHeight(spec) then return Theme.lineHeight(spec)
+    return Int((height + 2) / 3) * 3
+end function
+
+sub layoutView()
+    if m.theme = invalid then return
+    state = m.top.state
+    if type(state) <> "roAssociativeArray" then state = { kind: "loading" }
+    m.answered = false
+    layout = m.theme.layout
+    fonts = m.theme.fonts
+    padding = layout.noticePadding
+    width = layout.liveMenuWideWidth
+    inner = width - 2 * padding
+    sectionSpacing = layout.noticeSectionSpacing
+
+    title = m.top.findNode("title")
+    title.width = inner
+    title.translation = [padding, padding]
+    y = padding + title.height + layout.noticeHeaderSpacing
+
+    question = m.top.findNode("question")
+    question.width = inner
+    if state.kind = "confirm"
+        question.text = ImportBundle.question
+        m.buttonIDs = ["replace", "cancel"]
+        labels = [ImportBundle.replaceLabel, ImportBundle.cancelLabel]
+    else if state.kind = "failed"
+        message = state.message
+        if not SettingsStore.isString(message) then message = ImportBundle.message("")
+        question.text = message
+        m.buttonIDs = ["ok"]
+        labels = [ImportBundle.okLabel]
+    else
+        question.text = ImportBundle.loadingText
+        m.buttonIDs = ["cancel"]
+        labels = [ImportBundle.cancelLabel]
+    end if
+    question.translation = [padding, y]
+    y = y + textHeight(question, fonts.settingsDescription) + sectionSpacing
+
+    rows = m.top.findNode("rows")
+    rows.removeChildrenIndex(rows.getChildCount(), 0)
+    rows.translation = [padding, y]
+    items = []
+    if state.kind = "confirm" and type(state.rows) = "roArray" then items = state.rows
+    rowY = 0
+    for each item in items
+        makeRow(rows, item, rowY, inner, rowY > 0)
+        rowY = rowY + layout.importSummaryRowHeight
+    end for
+    if items.Count() > 0 then y = y + rowY + sectionSpacing
+
+    m.focusedButton = 0
+    buildButtons(labels)
+    m.top.findNode("buttons").translation = [padding, y]
+    y = y + layout.settingsRowMinHeight
+
+    footnote = m.top.findNode("footnote")
+    footnote.width = inner
+    footnote.visible = state.kind = "confirm"
+    if footnote.visible
+        footnote.text = ImportBundle.footnote
+        y = y + sectionSpacing
+        footnote.translation = [padding, y]
+        y = y + textHeight(footnote, fonts.settingsHint)
+    end if
+    height = y + padding
+
+    panel = m.top.findNode("panel")
+    panel.width = width
+    panel.height = height
+    canvas = m.theme.canvas
+    m.top.findNode("panelGroup").translation = [Int((canvas.width - width) / 6) * 3, Int((canvas.height - height) / 6) * 3]
+end sub
+
+sub makeRow(parent as object, item as object, y as integer, width as integer, divided as boolean)
+    layout = m.theme.layout
+    colors = m.theme.colors
+    spec = m.theme.fonts.searchRowTitle
+    row = parent.createChild("Group")
+    row.translation = [0, y]
+    if divided
+        line = row.createChild("Rectangle")
+        line.color = colors.tileFill
+        line.width = width
+        line.height = layout.importDividerHeight
+    end if
+    labelY = Int((layout.importSummaryRowHeight - Theme.lineHeight(spec)) / 2)
+    name = row.createChild("Label")
+    styleLabel(name, spec, colors.secondaryText, false)
+    name.width = layout.importSummaryLabelWidth
+    name.text = textOf(item.label)
+    name.translation = [0, labelY]
+    value = row.createChild("Label")
+    styleLabel(value, spec, colors.primaryText, false)
+    valueX = layout.importSummaryLabelWidth + layout.importSummaryGap
+    value.width = width - valueX
+    value.text = textOf(item.value)
+    value.translation = [valueX, labelY]
+end sub
+
+function textOf(value as dynamic) as string
+    if SettingsStore.isString(value) then return value
+    return ""
+end function
+
+sub buildButtons(labels as object)
+    layout = m.theme.layout
+    spec = m.theme.fonts.settingsRow
+    buttons = m.top.findNode("buttons")
+    buttons.removeChildrenIndex(buttons.getChildCount(), 0)
+    x = 0
+    for each text in labels
+        button = buttons.createChild("Group")
+        background = button.createChild("Poster")
+        label = button.createChild("Label")
+        styleLabel(label, spec, m.theme.colors.primaryText, false)
+        label.text = text
+        labelWidth = Int(label.boundingRect().width + 0.5)
+        buttonWidth = Int((labelWidth + 2 * layout.buttonTextInset + 2) / 3) * 3
+        background.width = buttonWidth
+        background.height = layout.settingsRowMinHeight
+        label.width = buttonWidth
+        label.horizAlign = "center"
+        label.translation = [0, Int((layout.settingsRowMinHeight - label.height) / 2)]
+        button.translation = [x, 0]
+        x = x + buttonWidth + layout.noticeButtonSpacing
+    end for
+    showFocus()
+end sub
+
+sub showFocus()
+    buttons = m.top.findNode("buttons")
+    for i = 0 to buttons.getChildCount() - 1
+        button = buttons.getChild(i)
+        background = button.getChild(0)
+        label = button.getChild(1)
+        if i = m.focusedButton
+            background.uri = m.theme.images.focusCapsule
+            label.color = m.theme.colors.focusedRowText
+        else
+            background.uri = m.theme.images.settingsRow
+            label.color = m.theme.colors.primaryText
+        end if
+    end for
+end sub
+
+' Every key is the view's while it shows (D49). Back is Cancel, or OK when that's the only button.
+function onKeyEvent(key as string, press as boolean) as boolean
+    if not press or m.answered then return true
+    result = ImportBundle.handleKey(key, m.focusedButton, m.buttonIDs.Count())
+    if result.focused <> m.focusedButton
+        m.focusedButton = result.focused
+        showFocus()
+    end if
+    if result.choice = "" then return true
+    if result.choice = "back"
+        chosen = m.buttonIDs[m.buttonIDs.Count() - 1]
+    else
+        chosen = m.buttonIDs[result.choice.ToInt()]
+    end if
+    m.answered = true
+    m.top.choice = chosen
+    return true
+end function
