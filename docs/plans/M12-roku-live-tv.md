@@ -14,8 +14,8 @@
   - Every decision taken without the user is in **[M12-decisions-log.md](M12-decisions-log.md)**, with the reason and pros and cons.
   - Git: after QA, each step is committed, scanned with gitleaks and pushed. Each phase gets a PR when it's done, stacked on the one before. Once phase 6's automated steps are done, every gate runs again and the PRs are squash-merged in order (#1, #2, #4, #5, then phases 4–6), each rebased onto `master` first.
   - Device steps (1, 4, 15, 23) stay open for the user.
-- **Branches stack:** `m12-phase0` (PR #1) → `m12-phase1` (#2) → `m12-step13` (#4, phase 2) → `m12-step14` (#5, phase 3) → `m12-step16` → `m12-step17` → `m12-step18` → `m12-step19` → **`m12-step20`** (phase 4's PR: head `m12-step20`, base `m12-step14`). Worktree `.claude/worktrees/step9`. Done and QA-passed: steps 2, 3, 5–14 and 16–20. `test:local`: 624 passed; script tests 40; MMTVL full suite 2096.
-- **Next: step 21 (Antenna, phase 5)**, `[implementer][security]`, built with every path gated (user choice U1 in the decisions log). Then step 22 (low-end pass: memory alerts drop logos and the search index; SearchView's render-thread imports, D19), step 24 (security review) and step 25 (docs). Pencil: read frames with `execute` on the file's `uri`, read-only, and never save from this session.
+- **Branches stack:** `m12-phase0` (PR #1) → `m12-phase1` (#2) → `m12-step13` (#4, phase 2) → `m12-step14` (#5, phase 3) → `m12-step16` → `m12-step17` → `m12-step18` → `m12-step19` → `m12-step20` (#6, phase 4: base `m12-step14`) → **`m12-step21`** (phase 5's PR: head `m12-step21`, base `m12-step20`). Worktree `.claude/worktrees/step9`. Done and QA-passed: steps 2, 3, 5–14 and 16–21. `test:local`: 713 passed; script tests 40; MMTVL full suite 2096.
+- **Next: step 22** (phase 6), then step 24 (security review) and step 25 (docs). Step 21 (Antenna) is built with every path gated (U1, D21–D44); its device checks are in its Deviations entry. Step 22 is the low-end pass: memory alerts drop logos and the search index; SearchView's render-thread imports (D19). Pencil: read frames with `execute` on the file's `uri`, read-only, and never save from this session.
 - Gates for every Roku step: `cd roku && npm run build && npm run lint && npm run test:local` (264 passed at the end of phase 1), plus `npm run build:release`. No simulator runs with network access. Use a separate git worktree for parallel steps (`git worktree add -b m12-stepN .claude/worktrees/stepN <commit>`); the built-in isolation started from the wrong commit.
 
 ## Goal
@@ -422,7 +422,7 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
 
 ### Phase 5 — antenna (as decided in step 4)
 
-- [ ] **21. Antenna** `[implementer][security]`, files: `roku/components/tasks/AntennaTask.*`, `roku/source/lib/{HDHomeRun,AntennaLineup,AntennaGuide}.bs`, Settings → Antenna, tests
+- [x] **21. Antenna** `[implementer][security]`, files: `roku/components/tasks/AntennaTask.*`, `roku/source/lib/{HDHomeRun,AntennaLineup,AntennaGuide}.bs`, Settings → Antenna, tests
   - **Discovery:** the methods that passed probe f, then an address typed in Settings → Antenna (LAN addresses only). `discover.json` is accepted only from a private address, with `BaseURL` = that address.
   - **Lineup:** `lineup.json`, leaving out DRM and disabled entries; ids `antenna:<GuideNumber>`; the **Antenna** group after My Teams and at the end of All Channels; `displayNumber`.
   - **Playback:** per step 4. MPEG-2 channels are hidden with "Some antenna channels need MPEG-2, which this Roku can't play" on Settings → Device when they can't play.
@@ -831,3 +831,43 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
     - `LCase` on non-ASCII on the device. Doubles kept in arrays and AAs (run EPGSuggester's golden on the device).
     - `*` in the player → Match Guide.
 
+- **2026-11-22, step 21 (built by the implementer; QA and the security review to follow).** Every path is built, gated (U1): the switches are `roku/source/lib/AntennaConfig.bs`, decisions D21–D34 in [M12-decisions-log.md](M12-decisions-log.md).
+  - **New:** `HDHomeRun.bs` (the packet, the discovery and acceptance rules, the tuner's JSON, the diagnosis; the network is an injected io), `AntennaLineup.bs`, `AntennaGuide.bs` (URL, schedule, matching, both guide formats, the DeviceAuth read), `AntennaConfig.bs`, `components/tasks/AntennaTask.*` (the real io: `roDataGramSocket`, `roUrlTransfer`), and four `test:local` suites.
+  - **Changed:** GuidePipeline reads the antenna guide's file for antenna channels only (`antenna` request; GuideTask never fetches it); `GuideFetch.antennaRow`, `matchData.antennaIndex`; `EPGSuggester.suggestions` (the antenna guide first for antenna channels, MatchGuideTask); `MatchGuide.withAntennaLabel` ("HDHomeRun"); the player plays antenna streams per D24/D25 and reports the error's numbers; the scene merges the antenna's channels after the playlist's, waits for both at launch, diagnoses failures and retries once; Settings → Antenna, the Antenna row, the Device MPEG-2 line; `settings.antennaAddress` (Roku-only).
+  - **Counts:** `test:local` 698 passed (624 + 74) as first built; 710 after the QA fixes below; release 120 files. MMTVLTests unchanged (no golden: D34).
+  - **Test mapping:** AntennaLineupTests 19/19 (channelSourceHidesTheDeviceID as "no channel field holds a DeviceID"); AntennaDiagnosisTests 8/8; AntennaGuideTests 11/11 (sourceIDHasNoToken as "the guide's files hold no token"); HDHomeRunPacketTests and HDHomeRunDiscoveryTests where a Roku applies (no interfaces, netmasks or Mac addresses: the Roku's /24s); SettingsModelTests' antenna page cases without the scan and Channels page; HDHomeRunScanTests and HDHomeRunAPITests' scan cases don't apply (no scan on the Roku).
+  - **Device checks (step 4/23):** probe f (broadcast send from a Roku; `hdhomerun.local` resolving; `GetTargetIpAddress` for D23); probe b (raw TS with each `streamFormat`, MPEG-2 decode, 1080i); what a Video error's texts hold for a tuner's 503/404/805; a zap between two antenna channels on a 2-tuner HDHR4 (the old stream must close first); the SiliconDust XMLTV's size and speed on a stick, and whether it comes gzip-encoded without `Accept-Encoding`; the JSON guide's shape and window (if D27 flips); `roByteArray.GetCRC32` matching zlib's on the device (brs-node does); `FromAsciiString` writing UTF-8; Settings → Antenna's look at 1080p and 720p.
+  - **QA (qa-deep FAIL, 4 majors) and security review (lows only): fixes.**
+    1. The retry replays the channel in place and never changes the screen (`PlayerSession.retryAction`, D35).
+    2. A new stream URL or tuner count now reaches the channels. The task gives `matchKey` and `payloadKey` (`AntennaLineup.setKeys`); `Lineup.antennaChange` merges on the payload and rematches only on ids and names (D37).
+    3. The lineup answers first (`lineupResult`, `AntennaLineup.refreshRun`). The launch waits only for it (and its merge), not for SiliconDust's download (D36).
+    4. The merge is off the render thread. PlaylistTask merges the antenna part on every load, and a new antenna part runs a merge-only PlaylistTask (`Lineup.mergeParts` and `playlistPart`). The scene only assigns, except antenna-only lists after the playlist is removed (D37).
+    5. `errorNumbers`:
+       - skips "/1.x" after "http" and reads statuses after "status", "code" and "returned";
+       - reads 801/805–807 only after "hdhomerun" or "error";
+       - never reads a number in a URL or after "/" or "v".
+       The test now has the failing strings as cases.
+    6. A tuner whose lineup can't be read keeps its channels (`withKept`, D41).
+    7. Find Tuners' line and "Searching…" (D42).
+    8. Busy-time requests wait and run after (`m.antennaPending`). A guide download that can't start waits for the guide run (`m.antennaGuidePending`, D38).
+    9. The player's content and refusal for each switch value are in `PlayerSession.antennaContent`, tested both ways; a gzip-on fetch case was added.
+    10. `codecUnknown` and the MPEG-2 hint (D40; D26 updated).
+    11. D31 corrected to about 3.5 s; the 2 s name probe kept (D39).
+  - **Security lows:**
+    - **L-1 (fixed):** an AntennaTask given up on keeps the guide file gated while alive (`m.abandonedAntennaTask`, `GuideRuns.antennaBusy` and `antennaMayDownload`, tested). The download's watchdog is 300 s for the XMLTV and 600 s for the JSON guide (D38).
+    - **L-2 (fixed):** `refreshRun` always ends with `io.cleanup()` (the GET body and the guide's `.part`), crash or not (tested with a fake that throws after writing); a diagnosis deletes its own body.
+    - **L-3 (fixed):** the guide screen gets `SettingsStore.guideSettings` (`{ channelLogos }` only), tested to carry no `antennaAddress`. The other node fields (typed, the diagnose URL, the channels' URLs) stay for step 24's L-3.
+    - **L-4 (recorded; partly done):** `fetch` clears the DeviceAuth list once the URL holds them. The tokened URL still lives in a local and the roUrlTransfer for the download's length, so a crash backtrace on port 8085 can show it (dev mode only, as step 9's L-7).
+    - **L-5 (recorded; must fix before D27 flips to "json"):** the JSON guide holds every page in memory and has no total cap.
+  - **Device checks added:** timing a merge-only PlaylistTask with a 10,000-channel playlist and antenna channels on a stick (D37); the lineup answer's time at launch with no tuner (about 3.5 s, D39); a retry under the guide's preview and under Settings (D35).
+  - **QA round 2 (qa-deep FAIL, 1 major; the other fixes held).**
+    1. **(major)** `onPlaylistWatchdog`'s full-load branch now calls `afterPlaylistTask()`, so a merge that waited during a slow load starts, and the launch opens after it. `stopPlaylistTask` clears `mergePending` (`Lineup.afterStop`), so an import with no playlist URL doesn't wait forever. The decisions are `Lineup.afterTask`, `launchWaits` and `afterStop`, tested ("the watchdog with a merge pending: a merge starts"; "a stop clears pending"). `applyAntennaOnly` marks the antenna part merged.
+    2. The retry waits for a lineup answer from the run its diagnosis asked for, or a later one (`{ id, minSerial }`, D43, tested).
+    3. A retry under Settings waits for `closeSettings` (D44, tested).
+    4. `ioCleanup` deletes the guide's `.part` only when this run downloaded (`refreshRun` passes it; the cleanup test checks both).
+    5. `onAntennaLineup` and `onAntennaResult` ignore answers whose serial isn't the tracked run's.
+    6. `onAbandonedGuideTaskState` calls `antennaGuideMayGo()`.
+    7. An import that turns the antenna on resets `m.antennaAnswered` while the launch is pending, so the import's launch waits for the antenna's lineup.
+    - **Accepted, no change:** the remaining O(n) field copies (D37's cons, with the 10k device check), and "Searching…" during a queued Find (D42).
+    - **Orchestrator's review:** the merge watchdog's branch also cleared no `mergePending` that was set while the merge ran, so the launch could still wait. It now clears it (the revision −1 brings the merge back at the next task's end; restarting it there could loop every watchdog period).
+    - `test:local`: 713 passed. Security review (step 21's done-when): no findings above low; L-1, L-2 and L-3 fixed, L-4 and L-5 recorded (L-5 must be fixed before D27 flips to "json").

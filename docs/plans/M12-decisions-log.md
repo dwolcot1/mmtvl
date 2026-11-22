@@ -241,3 +241,162 @@ Each entry has:
 - **Pros:** Cleaner text.
 - **Cons:** A one-character difference from the Mac app, only in a rare state.
 
+
+### D21. Switch `discoverByBroadcast` (on): find tuners with SiliconDust's UDP broadcast
+- **Step:** 21 (U1). **Decision (Recommended):** `AntennaConfig.discoverByBroadcast = true`. `roDataGramSocket` sends MMTVL's discover packet (`HDHomeRun.discoverRequestHex`, CRC-32 by `roByteArray.GetCRC32`) to 255.255.255.255 and each of the Roku's private /24 broadcasts on UDP 65001, twice 300 ms apart, and reads replies for 1.5 s (at most 256 read, 64 kept, 4 per address). A reply counts only from a private address on one of the Roku's /24s that isn't its own, naming a BaseURL that is exactly that address; `discover.json` is then asked at `http://<that address>/discover.json`, and its answer must agree (same DeviceID, BaseURL the origin, LineupURL on it, 1–16 tuners) and, when the transfer reports the address it reached, come from that address.
+- **Why:** Probe f's first method, and MMTVL's own (M7j L4). It's the only method that finds more than one tuner.
+- **Explained:** A Roku reports no netmask, so "the subnet" is the /24 of each of its addresses (probe f's choice). A LAN with a wider mask and the tuner outside the Roku's /24 needs the typed address.
+- **Pros:** Finds every tuner without setup. **Cons:** Whether a Roku sends broadcasts at all is unverified (probe f).
+- **To reverse:** Set it to `false` in `roku/source/lib/AntennaConfig.bs`.
+
+### D22. Switch `discoverByName` (on): `hdhomerun.local` when the broadcast finds nothing
+- **Step:** 21 (U1). **Decision (Recommended):** `AntennaConfig.discoverByName = true`: `http://hdhomerun.local/discover.json` through `roUrlTransfer` (Roku resolves the name), only when the broadcast found nothing. Its BaseURL must be a private address on the Roku's /24, and the device is used by that address from then on.
+- **Why:** Probe f's second method, and MMTVL's fallback.
+- **Pros:** Works where broadcasts don't. **Cons:** One tuner at most; whether Roku resolves `.local` names is unverified.
+- **To reverse:** `false` in `AntennaConfig.bs`.
+
+### D23. Switch `nameNeedsPeer` (on): `hdhomerun.local` counts only with the reported address
+- **Step:** 21. **Decision (Recommended):** `AntennaConfig.nameNeedsPeer = true`: the `hdhomerun.local` answer counts only when `roUrlEvent.GetTargetIpAddress` reported the address the transfer reached and it is the BaseURL's address. A reported address that differs is refused even with the switch off.
+- **Why:** MMTVL never trusts a name: it resolves `hdhomerun.local` itself and asks by IP (security M2). A Roku can't resolve a name without fetching, so the reported peer is the only way to know the answer came from the address it names. Whether a Roku reports it, and for which hop, is step 8's open device check.
+- **Explained:** If a Roku never reports the peer, `hdhomerun.local` never works with this on; the typed address still does.
+- **Pros:** No name-based trust. **Cons:** Possibly dead on Rokus that don't report the peer.
+- **To reverse:** `false`: a BaseURL that is a private address on the Roku's /24 is enough.
+
+### D24. Switch `playRawTS` (on): antenna channels play the tuner's raw MPEG-TS
+- **Step:** 21 (U1). **Decision (Recommended):** `AntennaConfig.playRawTS = true`: the lineup's `http://<tuner>:5004/auto/v<n>` goes straight to the `Video` node (no prefetch, no warming, no logo fetch: every GET takes a tuner). Off: antenna channels still list, and playing one shows "This Roku can't play antenna channels".
+- **Why:** Probe b decides whether raw TS plays at all (Roku staff said in 2014 it isn't a supported container). Building the path means only the switch changes.
+- **Pros:** Ready for the probe. **Cons:** May not play on any Roku; then this is the switch to turn off.
+- **To reverse:** `false` in `AntennaConfig.bs`.
+
+### D25. Switch `streamFormat` (""): the Video node's format for antenna streams
+- **Step:** 21 (U1). **Decision (Recommended):** `AntennaConfig.streamFormat = ""` leaves `streamFormat` unset, so Roku picks from the stream (the tuner sends `video/mpeg`). Probe b tries `hls`, `mp4`, `mkv` and unset; whichever plays goes here. Playlist channels keep `hls`.
+- **Why:** None of Roku's documented formats is raw TS; unset is the only one that lets the player sniff the container.
+- **Pros:** One constant to change. **Cons:** A guess until probe b runs.
+- **To reverse:** Set the format probe b found.
+
+### D26. Switch `playMPEG2` (on): MPEG-2 channels only where the Roku decodes MPEG-2
+- **Step:** 21 (U1). **Decision (User, U1; switch Recommended):** `AntennaConfig.playMPEG2 = true`: H.264 always; MPEG-2 (`VideoCodec` "MPEG2") only where `Capabilities` reports `mpeg2` (`CanDecodeVideo`). Elsewhere those channels are hidden from the lineup, counted, and Settings → Device's Antenna MPEG-2 Channels row says "Some antenna channels need MPEG-2, which this Roku can't play" (Settings → Antenna's footer too). A later tuner's H.264 copy of a hidden number still plays. An entry naming no codec is listed (it may be either). Such a channel carries `codecUnknown`, and on a Roku without MPEG-2 its "No signal" or "Can't play" failure says "This channel may need MPEG-2, which this Roku can't play" instead (D40). Off: H.264 only on every Roku ("Off: H.264 Only" on Device).
+- **Why:** U1. ATSC 1.0 is mostly MPEG-2, so on most Rokus few antenna channels will show; the row explains why.
+- **Pros:** No channel that can't play is listed (where the lineup says the codec). **Cons:** An unlabelled MPEG-2 channel is listed and fails on a Roku without MPEG-2 (with D40's hint).
+- **To reverse:** `false` for H.264 only; or hide unlabelled codecs too (`AntennaLineup.isMPEG2`).
+
+### D27. Switch `guideFormat` ("xmltv"): SiliconDust's XMLTV, read by GuideTask
+- **Step:** 21 (U1). **Decision (Recommended):** `AntennaConfig.guideFormat = "xmltv"`: `https://api.hdhomerun.com/api/xmltv?DeviceAuth=…` downloaded by AntennaTask into `cachefs:/antenna/guide.data`, then read by GuideTask's pipeline after the other guides, for antenna channels only (GuidePipeline's `antenna` request), and inflated there if it comes as a gzip body where inflate is kept. `"json"` (unverified) pages `https://api.hdhomerun.com/api/guide.php?DeviceAuth=…&Start=<s>` (at most 12 pages, 4 MB and 30 s each) and writes them out as XMLTV (`AntennaGuide.jsonToXMLTV`: a channel per GuideNumber with the number, name and affiliate as display-names; title, sub-title, desc, category, onscreen episode), so the same pipeline reads it.
+- **Why:** MMTVL uses the XMLTV (7.2 MB for 2 days). The JSON shape is the one SiliconDust's apps are reported to use; nobody has checked it here (no request to SiliconDust from this Mac).
+- **Explained:** GuideTask never sees DeviceAuth or the URL: it only reads the file.
+- **Pros:** One pipeline for both; matching by GuideNumber either way. **Cons:** The JSON path is untested against the real service, and its window length per page is a guess.
+- **To reverse:** `"json"` if the XMLTV is too big for a stick.
+
+### D28. Switch `guideHTTPGzip` (off): no HTTP gzip decoding on the guide download
+- **Step:** 21. **Decision (Recommended):** `AntennaConfig.guideHTTPGzip = false`: `EnableEncodings` stays off, as GuideTask's (step 9), so no `Accept-Encoding: gzip` is sent and the server sends the plain XML; if it sends a gzip body anyway, GuidePipeline inflates it (where inflate is kept, under the run's limits).
+- **Why:** Step 9 kept `EnableEncodings` off because roUrlTransfer would inflate natively into cachefs: faster than the size polls can stop it (a gzip bomb bounded only by the poll). SiliconDust's host is fixed and https, but the same rule holds.
+- **Pros:** The 64 MB cap holds on the bytes written. **Cons:** About 7 MB on the wire instead of about 1 MB.
+- **To reverse:** `true`, if step 23 shows the plain download too slow.
+
+### D29. The typed address: an IPv4 literal on the LAN, kept in settings, never shown
+- **Step:** 21. **Decision (Recommended):** Settings → Antenna → Address… opens the keyboard (empty: the saved address is never shown; the row says "Set" or "None"). OK with nothing typed forgets it. It's accepted only as a private (10/8, 172.16/12, 192.168/16) or link-local IPv4 literal, written plainly, not the Roku's own and not .0 or .255 (`SettingsEdits.checkTunerAddress`); names, public and loopback addresses are refused with "Type the tuner's IP address on your network, like 192.168.1.20". It's saved as `settings.antennaAddress` (Roku-only, kept by an import) and checked again by the task (`HDHomeRun.typedHost`; a test checks the two agree). It's always tried after the other methods (de-duplicated by DeviceID), so a tuner on another subnet works. Its row says "No tuner answered at that address" or "That address isn't an HDHomeRun tuner".
+- **Why:** The plan's "LAN addresses only" and L6's "never show a tuner address". A name would need the same peer check as `hdhomerun.local`.
+- **Pros:** Works where discovery can't. **Cons:** A DHCP change breaks it (the README's DHCP reservation advice applies).
+- **To reverse:** Allow `.local` names with D23's peer rule.
+
+### D30. Diagnosis on the Roku: MMTVL's order, plus 805 and the error's numbers
+- **Step:** 21. **Decision (Recommended):** A failed antenna stream (a Video error or a stall) starts a diagnose AntennaTask: `status.json` (every tuner busy → "Both antenna tuners are in use"; unanswered → "The antenna tuner isn't answering"), then `lineup_status.json` (a scan → "The tuner is scanning for channels"), then the stream's status: 404 → "This channel is no longer on the tuner", 503 or none → "No signal on this channel", else "Can't play this channel". The Roku adds `X-HDHomeRun-Error` 805 after the scan check. The status and 805 are read from the Video node's error texts (`errorMsg`, `errorStr`, `errorInfo`) by `PlayerSession.errorNumbers`, which passes on only the numbers (the texts may hold the stream URL). Unreachable and not-on-the-tuner search again (or read the lineup again) and play the channel once more, as MMTVL. The app's own stream count (`PlayerSession.tunerBudgetProblem`) is MMTVL's rule, called with no other streams: the Roku has one Video, which the channel replaces.
+- **Why:** MMTVL L8, L9. Whether a Roku's error text shows the HTTP status or the 805 header is unverified, so the tuner's own state decides first, as in MMTVL.
+- **Pros:** MMTVL's messages. **Cons:** "No signal" is the fallback when the Roku says nothing useful.
+- **To reverse:** Drop the 805 rule in `HDHomeRun.problemFor`.
+
+### D31. Discovery and lineups on the playlist's cadence; a tuner missing once keeps its channels
+- **Step:** 21. **Decision (Recommended):** AntennaTask runs at launch, on the 15-minute tick and when the guide opens (when the last run is 10 minutes old), on Refresh Now, Find Tuners, a typed address and a setting change. No tuner answering keeps the channels once (a tuner rebooting); twice in a row they go. The launch target waits for both the playlist's and the antenna's first **lineup** answer (D36: never for SiliconDust's download; the lineup watchdog gives one after 90 s), and for the merge that answer starts (D37). Live TV works with a tuner and no playlist (Settings counts a found tuner as set up, as MMTVL).
+- **Why:** The plan ("on the playlist's cadence"); MMTVL's `hasLiveSource`. Without the wait a last antenna channel couldn't open at launch.
+- **Pros:** A last antenna channel plays at launch. **Cons:** With the antenna on and no tuner, the launch waits for the search: about 3.5 s (the 1.5 s broadcast, then `hdhomerun.local`'s 2 s timeout; corrected after QA). The 2 s timeout stays (D39).
+- **To reverse:** Drop the wait in `resolveLaunch`.
+
+### D32. The antenna guide's schedule and files, and no guide run while it downloads
+- **Step:** 21. **Decision (Recommended):** SiliconDust's guide is downloaded inside an AntennaTask refresh, only when Guide from SiliconDust is on, the refresh found channels, and `AntennaGuide.downloadStep` says so: 20–28 h (random) after a success, an hour after a failure, never within an hour of the last download or attempt (Refresh Now too), and at once when the file is gone (cachefs: is emptied by a reboot). The files are in `cachefs:/antenna/` (`guide.data`, `.part`, `.time`, `.due`, `.attempt`; no token in a name), outside the folder GuideTask prunes. The scene asks for the guide only when no guide run is alive, and holds guide runs while that refresh runs (GuideRuns' pending), so no run reads a half-written file. A new antenna guide, a changed antenna channel set or a switch change starts a rematch (GuideRuns' rematch: nothing downloaded again). Turning the guide (or the antenna) off forgets the due time, so turning it on downloads it (the hour's limit still holds), as MMTVL. Settings → Antenna's Status: "N programmes · M of K channels · Updated 6:12 PM", "Failed: <why>", "Not loaded yet", "Off".
+- **Why:** MMTVL L10, L11, security L1. The files follow L5 (guides live in cachefs: only).
+- **Pros:** At most daily, no token stored. **Cons:** Antenna refreshes with the guide on delay a guide run by a few seconds. (After QA and security L-1, a task the watchdog or a setting gave up on keeps the file gated while it's alive: D38.)
+- **To reverse:** A separate guide task with its own schedule.
+
+### D33. Settings → Antenna: MMTVL's wording, no scan and no Channels page
+- **Step:** 21. **Decision (Recommended):** The design has only frame wjg72's Antenna row ("1 Tuner · 12 Channels"); there's no Antenna page frame, so MMTVL's page and wording: Antenna (Use Antenna), Tuners (each tuner: name, "2 tuners", "<model> · N channels"; Find Tuners with "Found 1 tuner" / "Searching…" / "No HDHomeRun found on this network"; Address…), Guide (Guide from SiliconDust; Status). The Tuners footer says channels come from the tuner's lineup and to scan on the tuner's own page or in MMTVL, plus the protected and MPEG-2 counts. No Scan for Channels (the plan) and no per-channel Channels page (single channels are hidden from the guide's channel menu, as playlist ones). With nothing set up and the antenna off, Live TV shows the Antenna row alone; on with no tuner yet, the Channels section; with a tuner, the Guides, Channels and Refresh Now ("Reads the tuner's channels and downloads the guides again now.").
+- **Pros:** The Mac's words. **Cons:** Unreviewed by the user; no frame.
+- **To reverse:** Draw a frame and follow it.
+
+### D34. No Swift golden for the antenna
+- **Step:** 21. **Decision (Recommended):** The antenna's parity is the Swift tests mirrored case for case (AntennaLineupTests 19/19, AntennaDiagnosisTests 8/8, AntennaGuideTests 11/11), not a `RokuParityTests` golden.
+- **Why:** The brief asked for goldens "where it's cheap". The Swift cases are small hand-built inputs with exact expectations, so mirroring them gives the same contract without new MMTVLTests code and a full Swift run; the rules are short (no fold tables or ranking with floating-point ties, which is where steps 9 and 20 needed goldens).
+- **Pros:** No MMTVLTests change. **Cons:** A later change to MMTVL's antenna rules isn't caught by a Roku test.
+- **To reverse:** Add an `antenna.golden.json` written by `RokuParityTests` from the same inputs.
+
+### D35. A failed antenna channel's retry replays in place
+- **Step:** 21 (QA major 1). **Decision (Recommended):** After the search or lineup read a diagnosis asked for, the channel is played again on the player where it is, full screen or in the guide's preview, with the antenna part's fresh copy (a moved tuner's new address). The screen never changes (`PlayerSession.retryAction`, whose `screen` is always ""). Only when it still fails, is still the current channel and the lineup still has it. Once per choice, as MMTVL.
+- **Why:** MMTVL's `diagnose` retries on the same player and never moves the user. The first build called `playChannel`, which opened the player over the guide or Settings when the task answered.
+- **Pros:** No surprise screen change. **Cons:** A retry under Settings plays unseen until Settings closes.
+- **To reverse:** Retry only while `m.screen = "player"`.
+
+### D36. The lineup answers before SiliconDust's download
+- **Step:** 21 (QA major 3). **Decision (Recommended):** A refresh sets `lineupResult` (discovery, lineups, channels, keys) before anything is downloaded, then `result` with the guide's outcome (`AntennaLineup.refreshRun`, tested in lib). The launch waits only for the lineup answer; guide runs still wait for the download (D32). The watchdog is 90 s for the lineup, then the download's own (D38).
+- **Why:** The first build answered once, after the download: up to 180 s at launch after any reboot (cachefs: empty).
+- **Pros:** The launch waits about as long as discovery. **Cons:** Two fields per run.
+- **To reverse:** A separate follow-up guide request.
+
+### D37. The antenna's channels merge off the render thread, on two keys
+- **Step:** 21 (QA majors 2 and 4). **Decision (Recommended):** PlaylistTask merges: each playlist load gets the antenna part (`Lineup.mergeParts`: the playlist's channels, then the antenna's numbered after them) and builds the lineup, fields and key over both. A new antenna part starts a **merge-only** PlaylistTask over the scene's current lists (`Lineup.playlistPart` takes the playlist's part back out). The scene only assigns. Only an emptied playlist (Change Playlist URL, Remove Live TV Source) is merged on the render thread, antenna-sized work only. The task's `AntennaLineup.setKeys` gives two SHA-1 keys, never logged: `matchKey` (id, name, GuideNumber) and `payloadKey` (also each stream URL, tuner count and codec flag). `Lineup.antennaChange`: a new payload merges, and only a new match key rematches the guides. The launch also waits for the merge its lineup answer started.
+- **Why:** The first build merged only on the id/name key, so a tuner's new DHCP address never reached the channels, and the retry played the stale URL. It also rebuilt the lineup on the render thread at every playlist refresh once antenna channels existed, which undid step 9's security L-5 and risked Roku's 3 s kill.
+- **Pros:** Render-thread work stays assignment-only. **Cons (accepted after QA round 2):** O(n) field copies remain:
+  - `task.base` (the merged lists into a merge-only task);
+  - its result back;
+  - `teamsTask.channels`;
+  - QA 4's `rebuildLineup` when the prefs or My Teams changed during a task.
+  Timing them for a 10,000-channel playlist on a stick is a device check. Round 2: any task that ends or is given up starts a merge that waited (`Lineup.afterTask`), and a stopped task clears it (`Lineup.afterStop`), so the launch never waits for a merge that won't come.
+- **To reverse:** Merge in the scene again, if the device check shows it's cheap.
+
+### D38. Antenna requests that arrive while a task is busy wait; the guide file stays gated
+- **Step:** 21 (QA minor 8, security L-1). **Decision (Recommended):**
+  - A refresh asked for while one runs (a typed address, Use Antenna or Guide from SiliconDust turned on, Find Tuners, Refresh Now) runs right after it (`m.antennaPending`, carrying Refresh Now's manual).
+  - A guide download that can't start because a guide run, or a task given up on, may read or write the file waits (`m.antennaGuidePending`). It starts when that ends (`antennaGuideMayGo`, after a guide run and when an abandoned task stops).
+  - An AntennaTask the watchdog or a setting gives up on is kept while alive (`m.abandonedAntennaTask`). Guide runs count it as busy while it asked for the guide, and no new refresh downloads meanwhile (`GuideRuns.antennaBusy`, `antennaMayDownload`, tested).
+  - The download's watchdog: 300 s for the XMLTV, 600 s for the JSON guide (above its worst case of about 507 s).
+- **Why:** QA found these requests dropped. Security L-1: XMLTVScan reads by path and offset, so a run could read halves of two files.
+- **Pros:** No lost request, no torn read. **Cons:** A stuck task holds guide runs until its state reads stop or done.
+- **To reverse:** Drop the pending flags; let the watchdog release the gate.
+
+### D39. `hdhomerun.local`'s timeout stays 2 s
+- **Step:** 21 (QA minor 11). **Decision (Recommended):** The name probe keeps MMTVL's 2 s (`HDHomeRun.timeoutMs`). D31's text now says about 3.5 s with no tuner.
+- **Why:** mDNS answers can take over a second; a shorter timeout could miss a tuner that's there, and the wait is once per launch.
+- **Pros:** Finds slow mDNS answers. **Cons:** A 3.5 s launch wait with the antenna on and no tuner.
+- **To reverse:** A shorter `timeoutMs` for the name probe in `HDHomeRun.byName`.
+
+### D40. An unlabelled channel on a Roku without MPEG-2: "This channel may need MPEG-2, which this Roku can't play"
+- **Step:** 21 (QA minor 10). **Decision (Recommended):** A channel whose lineup entry names no codec carries `codecUnknown`. On a Roku that doesn't play MPEG-2 (Capabilities or D26's switch), its diagnosed "No signal on this channel" or "Can't play this channel" reads "This channel may need MPEG-2, which this Roku can't play". The tuner's own answers (busy, scanning, gone, not answering) still say themselves (`HDHomeRun.problemMessage`'s hint, tested).
+- **Why:** D26 lists such channels; without a hint the failure would read as a reception problem. The wording follows Settings → Device's "Some antenna channels need MPEG-2, which this Roku can't play", in MMTVL's sentence style (no full stop, as the other messages).
+- **Pros:** Explains the likely cause. **Cons:** It may be wrong for a channel that truly has no signal.
+- **To reverse:** Drop the hint argument in `diagnoseStream`.
+
+### D41. A tuner whose lineup can't be read keeps its channels
+- **Step:** 21 (QA minor 6). **Decision (Recommended):** A tuner that answered discovery but whose `lineup.json` failed keeps the previous answer's channels on its address (the scene sends them as `previous`; `AntennaLineup.withKept`, tested). A readable lineup's channel always wins. Its row reads "The antenna tuner isn't answering", as MMTVL.
+- **Why:** MMTVL's AntennaSource keeps a device's entries when its lineup fails.
+- **Pros:** No channels vanish for one bad read. **Cons:** A channel removed from the tuner meanwhile lingers until a lineup reads.
+- **To reverse:** Drop `previous` from the request.
+
+### D42. Find Tuners' line, and when Settings says "Searching…"
+- **Step:** 21 (QA minor 7). **Decision (Recommended):**
+  - Find Tuners' line is set only by its own search: "Found N tuners", "No HDHomeRun found on this network", or (the tuners known before didn't answer, their channels kept once) MMTVL's "No HDHomeRun answered".
+  - A later search that finds a different number of tuners clears it.
+  - "Searching…" shows only during Find Tuners' search, or while no tuner is known.
+  - A no-answer search still updates the tuner list (empty) and the typed address's problem.
+- **Why:** The line went stale, and every 15-minute refresh showed "Searching…".
+- **Pros:** The line means what it says. **Cons (accepted, QA round 2):** a Find queued behind a running refresh shows "Searching…" during that refresh too.
+- **To reverse:** In `applyAntennaLineup` and `antennaSettingsInput`.
+
+### D43. A retry waits for a lineup answer from a run that started after its diagnosis
+- **Step:** 21 (QA round 2). **Decision (Recommended):** The diagnosis records `{ id, minSerial }`, where `minSerial` is the serial of the next refresh run (the one it starts, or the one queued after a running refresh). A lineup answer from an older run keeps the retry waiting and doesn't use it up (`PlayerSession.retryAction`'s `keep`). Only the run it asked for, or a later one, retries. Lineup and result answers whose serial isn't the tracked run's are ignored.
+- **Why:** A refresh already past its lineup when the diagnosis asked for a search answered with the old address and used up the one retry, before the run that would find the new address started.
+- **Pros:** The one retry uses the address the search found. **Cons:** The retry waits for a whole discovery (about 2–4 s).
+- **To reverse:** Retry on the next answer, whatever its run.
+
+### D44. A retry while Settings shows waits for Settings to close
+- **Step:** 21 (QA round 2; the coordinator's call). **Decision (Recommended):** While `m.screen` is "settings", a due retry stays pending (`retryAction`'s `keep`), and `closeSettings` runs it if the channel is still the current one. In the guide or the player it replays in place, as D35.
+- **Why:** A replay behind Settings starts audio nobody asked for.
+- **Pros:** No surprise audio. **Cons:** The channel stays failed under Settings until it closes.
+- **To reverse:** Drop the "settings" case in `PlayerSession.retryAction`.
