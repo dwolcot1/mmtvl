@@ -1,0 +1,429 @@
+' Settings (fields in SettingsScreen.xml). m.nav is SettingsNav's state; m.model the model last read from the field
+' (once per change); m.messages the top page's refused-address and refused-save texts ({ playlist, guide, band });
+' m.columns one record per stack page, in stack order:
+'   { node (the column, clipped to the track's height), content (scrolled), page, list (its sections as last
+'     drawn), signature (what was drawn), rows ({ id: row record }), focusable (ids), contentHeight, role }
+' A row record: { node, background, titleLabel, detailLabel, valueLabel, chevron, top, height, isInfo, dimmed,
+' twoLine, style }. A column is drawn again only when its sections change (signature); a focus move restyles two
+' rows and scrolls.
+
+sub init()
+    m.theme = Theme.make()
+    fonts = m.theme.fonts
+    ' One Font node per spec, shared by every label.
+    m.fonts = {
+        row: Theme.font(fonts.settingsRow),
+        detail: Theme.font(fonts.settingsRowDetail),
+        section: Theme.font(fonts.settingsSection),
+        disclosure: Theme.font(fonts.settingsDisclosure)
+    }
+    m.nav = SettingsNav.open()
+    m.model = emptyModel()
+    m.messages = noMessages()
+    m.columns = []
+    m.trackX = invalid
+    m.track = m.top.findNode("track")
+    m.slide = m.top.findNode("slide")
+    m.slideTrack = m.top.findNode("slideTrack")
+    style()
+    render(false)
+end sub
+
+' Before the scene's first model: nothing set up.
+function emptyModel() as object
+    store = { source: "", guides: [], prefs: SettingsStore.defaultValue("prefs"), settings: SettingsStore.defaultSettings(), lowSpace: false, spaceLeft: -1 }
+    return SettingsStatus.make({ store: store, channels: [] })
+end function
+
+function noMessages() as object
+    return { playlist: "", guide: "", band: "" }
+end function
+
+' The frames' layout, from Theme.bs.
+sub style()
+    colors = m.theme.colors
+    layout = m.theme.layout
+    canvas = m.theme.canvas
+    background = m.top.findNode("background")
+    background.uri = m.theme.images.background
+    background.loadDisplayMode = "scaleToFill"
+    background.width = canvas.width
+    background.height = canvas.height
+    heading = m.top.findNode("title")
+    heading.font = Theme.font(m.theme.fonts.settingsTitle)
+    heading.color = colors.secondaryText
+    heading.width = canvas.width
+    heading.height = Theme.lineHeight(m.theme.fonts.settingsTitle)
+    heading.horizAlign = "center"
+    heading.vertAlign = "center"
+    heading.translation = [0, layout.settingsTitleTop]
+    band = m.top.findNode("band")
+    band.font = Theme.font(m.theme.fonts.settingsDescription)
+    band.width = layout.settingsBandMaxWidth
+    band.height = layout.settingsBandHeight
+    band.wrap = true
+    band.maxLines = 3
+    band.horizAlign = "center"
+    band.vertAlign = "top"
+    band.translation = [Int((canvas.width - layout.settingsBandMaxWidth) / 6) * 3, layout.settingsBandTop]
+    m.slide.duration = m.theme.timing.settingsPage
+end sub
+
+' --- interface functions ---------------------------------------------------------------------------------------
+
+function open(args as dynamic) as boolean
+    page = SettingsPages.rootPage
+    if type(args) = "roAssociativeArray"
+        if SettingsStatus.isText(args.page) then page = args.page
+    end if
+    m.nav = SettingsNav.open(page)
+    m.messages = noMessages()
+    for each record in m.columns
+        m.track.removeChild(record.node)
+    end for
+    m.columns = []
+    m.trackX = invalid
+    render(false)
+    return true
+end function
+
+function takeFocus() as boolean
+    m.top.setFocus(true)
+    return true
+end function
+
+sub onModel()
+    model = m.top.model
+    if type(model) <> "roAssociativeArray" then return
+    if type(model.guides) <> "roArray" or type(model.playlist) <> "roAssociativeArray" or type(model.device) <> "roAssociativeArray" then return
+    m.model = model
+    render(false)
+end sub
+
+sub onMessage()
+    message = m.top.message
+    if type(message) <> "roAssociativeArray" then return
+    if not SettingsStatus.isText(message.kind) or not SettingsStatus.isText(message.text) then return
+    if not m.messages.DoesExist(message.kind) then return
+    m.messages[message.kind] = message.text
+    render(false)
+end sub
+
+' --- keys ------------------------------------------------------------------------------------------------------
+
+' Every key is Settings' (D49): SettingsNav handles them all. The page is drawn before the action goes to the scene,
+' so a model the scene sends back meanwhile finds the new page in place (and the slide already started). A focus
+' move only restyles the rows it leaves and reaches (the sections as last drawn: every model or message change
+' draws them again).
+function onKeyEvent(key as string, press as boolean) as boolean
+    top = m.nav.stack.Count() - 1
+    list = invalid
+    if top < m.columns.Count() then list = m.columns[top].list
+    if type(list) <> "roArray" then list = sectionsAt(top)
+    result = SettingsNav.handle(key, press, m.nav, list)
+    m.nav = result.state
+    if result.pageChanged
+        m.messages = noMessages()
+        render(true)
+    else if press and top < m.columns.Count()
+        markColumn(m.columns[top], SettingsNav.focusedID(m.nav, list), "current")
+        showBand(list)
+    end if
+    chosen = result.action
+    #if DEBUG
+        ' L8: SettingsNav's About sequence (DEBUG builds only, as the Probes screen).
+        if chosen.type = "probeSequence"
+            m.top.action = { type: "openProbes" }
+            return true
+        end if
+    #end if
+    if chosen.type <> "none" then m.top.action = chosen
+    return true
+end function
+
+' The sections of the stack page at index; the top page's carry the messages.
+function sectionsAt(index as integer) as object
+    messages = invalid
+    if index = m.nav.stack.Count() - 1 then messages = m.messages
+    return SettingsPages.sections(m.nav.stack[index].page, m.model, messages)
+end function
+
+' --- drawing ---------------------------------------------------------------------------------------------------
+
+' The columns for the stack (current, parent, and one hidden page sliding off; older ones hidden), the title, the
+' band and the track's position (slid when animate, else placed).
+sub render(animate as boolean)
+    layout = m.theme.layout
+    stack = m.nav.stack
+    top = stack.Count() - 1
+    while m.columns.Count() > stack.Count()
+        gone = m.columns.Pop()
+        m.track.removeChild(gone.node)
+    end while
+    currentList = []
+    for i = 0 to top
+        if i >= m.columns.Count() then m.columns.Push(newColumn(i))
+        record = m.columns[i]
+        role = "hidden"
+        if i = top
+            role = "current"
+        else if i = top - 1
+            role = "parent"
+        end if
+        record.node.visible = i >= top - 2
+        if record.node.visible
+            list = sectionsAt(i)
+            if i = top then currentList = list
+            fillColumn(record, stack[i].page, list)
+            markColumn(record, markedRow(i, role, list), role)
+            if role = "current" then record.node.opacity = 1 else record.node.opacity = layout.settingsDimmedColumnOpacity
+        end if
+    end for
+    m.top.findNode("title").text = SettingsPages.pageTitle(stack[top].page, m.model)
+    showBand(currentList)
+    moveTrack(SettingsNav.trackX(stack.Count(), layout), animate)
+end sub
+
+' The current page's focused row, the parent's opening row; nothing in a hidden column (MMTVL's markedRowID).
+function markedRow(index as integer, role as string, list as object) as dynamic
+    if role = "current" then return SettingsNav.focusedID(m.nav, list)
+    if role = "parent" then return SettingsNav.resolve(SettingsPages.focusableIDs(list), m.nav.stack[index].focus)
+    return invalid
+end function
+
+' A refused save's message (warningText), else the focused row's description.
+sub showBand(list as object)
+    band = m.top.findNode("band")
+    if m.messages.band <> ""
+        band.color = m.theme.colors.warningText
+        band.text = m.messages.band
+        return
+    end if
+    band.color = m.theme.colors.secondaryText
+    band.text = SettingsPages.description(list, SettingsNav.focusedID(m.nav, list))
+end sub
+
+sub moveTrack(target as integer, animate as boolean)
+    placed = SettingsStatus.isNumber(m.trackX)
+    if placed
+        if m.trackX = target then return
+    end if
+    if not placed or not animate
+        m.slide.control = "stop"
+        m.track.translation = [target, 0]
+    else
+        ' From where the track is now, so a press mid-slide carries on from there.
+        m.slideTrack.keyValue = [[m.track.translation[0], 0], [target, 0]]
+        m.slide.control = "start"
+    end if
+    m.trackX = target
+end sub
+
+function newColumn(index as integer) as object
+    layout = m.theme.layout
+    node = m.track.createChild("Group")
+    node.translation = [SettingsNav.columnX(index, layout), layout.settingsListTop]
+    ' Rows scrolled past the track's top or bottom are cut there (MMTVL fades them; see the step's deviations).
+    node.clippingRect = [0, 0, layout.settingsColumnWidth, layout.settingsListHeight]
+    content = node.createChild("Group")
+    rows = {}
+    rows.SetModeCaseSensitive()
+    return { node: node, content: content, page: "", list: invalid, signature: "", rows: rows, focusable: [], contentHeight: 0, role: "" }
+end function
+
+' Draws the page's sections again when they changed: each section's header, rows and footer, settingsRowSpacing
+' apart, sections settingsSectionSpacing apart, inside the list's padding.
+sub fillColumn(record as object, page as string, list as object)
+    record.list = list
+    signature = page + Chr(10) + FormatJson(list)
+    if signature = record.signature then return
+    record.signature = signature
+    record.page = page
+    record.focusable = SettingsPages.focusableIDs(list)
+    layout = m.theme.layout
+    colors = m.theme.colors
+    content = record.content
+    content.removeChildrenIndex(content.getChildCount(), 0)
+    rows = {}
+    rows.SetModeCaseSensitive()
+    record.rows = rows
+    x = layout.settingsListHorizontalPadding
+    rowWidth = layout.settingsColumnWidth - 2 * x
+    inset = layout.settingsRowTextInset
+    textWidth = rowWidth - 2 * inset
+    y = layout.settingsListVerticalPadding
+    for s = 0 to list.Count() - 1
+        section = list[s]
+        if s > 0 then y += layout.settingsSectionSpacing
+        first = true
+        if section.title <> ""
+            header = content.createChild("Label")
+            styleText(header, m.fonts.section, m.theme.fonts.settingsSection, colors.secondaryText)
+            header.text = UCase(section.title)
+            header.width = textWidth
+            header.translation = [x + inset, y]
+            y += header.height
+            first = false
+        end if
+        for each item in section.rows
+            if not first then y += layout.settingsRowSpacing
+            first = false
+            made = makeRow(content, item, x, y, rowWidth)
+            rows[item.id] = made
+            y += made.height
+        end for
+        if section.footer <> ""
+            if not first then y += layout.settingsRowSpacing
+            footer = content.createChild("Label")
+            color = colors.secondaryText
+            if section.warning then color = colors.warningText
+            styleText(footer, m.fonts.detail, m.theme.fonts.settingsRowDetail, color)
+            footer.wrap = true
+            footer.height = 0
+            footer.width = textWidth
+            footer.text = section.footer
+            footer.translation = [x + inset, y]
+            y += Int((footer.boundingRect().height + 2) / 3) * 3
+        end if
+    end for
+    record.contentHeight = y + layout.settingsListVerticalPadding
+end sub
+
+sub styleText(label as object, font as object, spec as object, color as string)
+    label.font = font
+    label.color = color
+    label.height = Theme.lineHeight(spec)
+    label.vertAlign = "center"
+    label.wrap = false
+end sub
+
+' One row's capsule: the title (and the detail under it) from the left, the value and the chevron at the right.
+function makeRow(content as object, item as object, x as integer, y as integer, width as integer) as object
+    layout = m.theme.layout
+    colors = m.theme.colors
+    specs = m.theme.fonts
+    twoLine = item.detail <> ""
+    height = layout.settingsRowMinHeight
+    if twoLine then height = layout.settingsRowTwoLineHeight
+    node = content.createChild("Group")
+    node.translation = [x, y]
+    background = node.createChild("Poster")
+    background.width = width
+    background.height = height
+    inset = layout.settingsRowTextInset
+    lineHeight = Theme.lineHeight(specs.settingsRow)
+    centreY = Int((height - lineHeight) / 6) * 3
+    titleY = centreY
+    if twoLine then titleY = layout.settingsRowVerticalPadding
+    right = width - inset
+    chevron = invalid
+    if item.disclosure
+        chevron = node.createChild("Label")
+        styleText(chevron, m.fonts.disclosure, specs.settingsDisclosure, colors.secondaryText)
+        chevron.height = lineHeight
+        chevron.width = layout.settingsDisclosureWidth
+        chevron.horizAlign = "center"
+        chevron.text = Chr(8250)
+        chevron.translation = [right - layout.settingsDisclosureWidth, centreY]
+        right = right - layout.settingsDisclosureWidth - layout.settingsDisclosureGap
+    end if
+    valueLabel = invalid
+    if item.value <> ""
+        valueLabel = node.createChild("Label")
+        styleText(valueLabel, m.fonts.row, specs.settingsRow, colors.secondaryText)
+        valueLabel.text = item.value
+        valueWidth = Int(valueLabel.boundingRect().width + 0.5)
+        if valueWidth > right - inset then valueWidth = right - inset
+        valueLabel.width = valueWidth
+        valueLabel.horizAlign = "right"
+        valueLabel.translation = [right - valueWidth, centreY]
+        right = right - valueWidth - layout.settingsValueGap
+    end if
+    textWidth = right - inset
+    if textWidth < 0 then textWidth = 0
+    titleLabel = node.createChild("Label")
+    styleText(titleLabel, m.fonts.row, specs.settingsRow, colors.primaryText)
+    titleLabel.width = textWidth
+    titleLabel.text = item.title
+    titleLabel.translation = [inset, titleY]
+    detailLabel = invalid
+    if twoLine
+        detailLabel = node.createChild("Label")
+        styleText(detailLabel, m.fonts.detail, specs.settingsRowDetail, colors.secondaryText)
+        detailLabel.width = textWidth
+        detailLabel.text = item.detail
+        detailLabel.translation = [inset, titleY + lineHeight + layout.settingsRowLineSpacing]
+    end if
+    made = { node: node, background: background, titleLabel: titleLabel, detailLabel: detailLabel, valueLabel: valueLabel, chevron: chevron, top: y, height: height, isInfo: item.action = invalid, dimmed: item.dimmed, twoLine: twoLine, style: "" }
+    styleRow(made, "normal")
+    return made
+end function
+
+' The marked row's style (focused in the current column, selected in the parent), every other row's normal; then
+' the column scrolls to the marked row (the list's top on its first focusable row, its end on the last, else the
+' row centred: MMTVL's SettingsPageList.scroll).
+sub markColumn(record as object, marked as dynamic, role as string)
+    record.role = role
+    markedStyle = "normal"
+    if role = "current"
+        markedStyle = "focused"
+    else if role = "parent"
+        markedStyle = "selected"
+    end if
+    markedID = ""
+    if SettingsStatus.isText(marked) then markedID = marked
+    for each id in record.rows
+        if id = markedID then styleRow(record.rows[id], markedStyle) else styleRow(record.rows[id], "normal")
+    end for
+    if markedID = "" then return
+    found = record.rows[markedID]
+    if found = invalid then return
+    position = "middle"
+    if record.focusable.Count() > 0
+        if record.focusable[0] = markedID
+            position = "first"
+        else if record.focusable[record.focusable.Count() - 1] = markedID
+            position = "last"
+        end if
+    end if
+    offset = SettingsNav.scrollOffset(record.contentHeight, m.theme.layout.settingsListHeight, found.top, found.height, position)
+    record.content.translation = [0, -offset]
+end sub
+
+' normal: settings_row (an action row) or settings_info_row; focused: the white focus capsule with black text;
+' selected (the parent's opening row): the focus capsule tinted settingsSelectedRowFill. Info rows are never marked.
+' A dimmed row (a hidden group, a guide not in use) is at unavailableOpacity unless focused.
+sub styleRow(made as object, rowStyle as string)
+    if made.isInfo then rowStyle = "normal"
+    if made.style = rowStyle then return
+    made.style = rowStyle
+    images = m.theme.images
+    colors = m.theme.colors
+    blend = "0xFFFFFFFF"
+    primary = colors.primaryText
+    secondary = colors.secondaryText
+    if rowStyle = "focused" or rowStyle = "selected"
+        uri = images.focusCapsule
+        if made.twoLine then uri = images.focusCapsuleTall
+        if rowStyle = "focused"
+            blend = colors.focusedRowFill
+            primary = colors.focusedRowText
+            secondary = colors.focusedRowSecondaryText
+        else
+            blend = colors.settingsSelectedRowFill
+        end if
+    else if made.isInfo
+        uri = images.settingsInfoRow
+        if made.twoLine then uri = images.settingsInfoRowTall
+    else
+        uri = images.settingsRow
+        if made.twoLine then uri = images.settingsRowTall
+    end if
+    made.background.uri = uri
+    made.background.blendColor = blend
+    made.titleLabel.color = primary
+    for each label in [made.detailLabel, made.valueLabel, made.chevron]
+        if label <> invalid then label.color = secondary
+    end for
+    if made.dimmed and rowStyle <> "focused" then made.node.opacity = m.theme.layout.unavailableOpacity else made.node.opacity = 1
+end sub

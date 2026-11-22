@@ -150,4 +150,27 @@ namespace PlayerSessionTests
         ]
     end function
 
+    ' QA of step 13: the first playlist answer while Settings (or its keyboard) shows leaves Settings on screen;
+    ' Back from it then goes where the launch would have, and the last channel plays only then.
+    sub test_launchWithSettingsOpenStaysOnSettings(t as object)
+        channels = [{ id: "id:a", number: 1, name: "A", group: "News" }]
+        target = PlayerSession.launchTarget(channels, "id:a")
+        route = PlayerSession.launchRoute(target, "settings")
+        t.assertEqual(route, { show: "", settingsReturn: "player", deferredID: "id:a" })
+        guideTarget = PlayerSession.launchTarget(channels, "id:gone")
+        t.assertEqual(PlayerSession.launchRoute(guideTarget, "settings"), { show: "", settingsReturn: "guide", deferredID: "" })
+        t.assertEqual(PlayerSession.launchRoute(target, "guide"), { show: "player", settingsReturn: "", deferredID: "" }, "Settings closed: as before")
+        t.assertEqual(PlayerSession.launchRoute(guideTarget, "guide").show, "guide")
+    end sub
+
+    sub test_backFromSettingsPlaysTheDeferredChannel(t as object)
+        channels = [{ id: "id:a", number: 1, name: "A", group: "News" }]
+        t.assertEqual(PlayerSession.returnFromSettings("player", "id:a", channels, false), { screen: "player", playID: "id:a" })
+        t.assertEqual(PlayerSession.returnFromSettings("player", "id:a", [], false), { screen: "guide", playID: "" }, "the playlist no longer has it (removed in Settings)")
+        t.assertEqual(PlayerSession.returnFromSettings("player", "", channels, false), { screen: "guide", playID: "" }, "nothing to play: the guide")
+        t.assertEqual(PlayerSession.returnFromSettings("player", "", channels, true), { screen: "player", playID: "" }, "a channel plays: back to it")
+        t.assertEqual(PlayerSession.returnFromSettings("guide", "", channels, true), { screen: "guide", playID: "" })
+        t.assertEqual(PlayerSession.returnFromSettings(invalid, invalid, invalid, false), { screen: "guide", playID: "" })
+    end sub
+
 end namespace

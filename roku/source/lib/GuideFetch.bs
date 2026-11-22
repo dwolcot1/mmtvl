@@ -36,9 +36,8 @@ namespace GuideFetch
     const memoryGuardPercent = 15
     ' How often the observer asks roAppMemoryMonitor (ms); tick is called after every 64 KB read or inflated.
     const memorySampleMs = 250
-    ' Whether .gz guides are inflated at all (D55): step 4 decides from probe 3d; until then on, within
-    ' Capabilities' per-class limit (inflateMaxCompressedBytes). Off: every .gz guide is "Can't read .gz on this Roku".
-    const inflateEnabled = true
+    ' Whether .gz guides are inflated at all (D55) is GuideSources.inflateEnabled (step 13: the scene's Settings →
+    ' Device reads it too, and GuideSources is light enough for the scene).
     const guardInactiveNote = "Memory guard inactive: this Roku didn't report its memory"
 
     function publicChain(source as object) as boolean
@@ -179,7 +178,9 @@ namespace GuideFetch
     end function
 
     ' Settings → Guides (security L-3: no URLs): one row per source, in priority order:
-    '   { index, host, status, problem, matched, fromPlaylist, stale }
+    '   { index, host, status, problem, matched, programmes, fromPlaylist, stale }
+    ' programmes (step 13): how many programmes the run kept from this guide (its matched channels' within the
+    ' window; 0 when it gave none), for Settings' "48,210 programmes · 398 channels · Updated 6:12 PM".
     ' outcomes[i].state is the download's: "downloaded", "cached" (a fresh file reused), "stale" (the download
     ' failed and the last file was read: status "Failed: <host>", stale true, programmes still shown, as MMTVL keeps
     ' a guide's rows when a refresh fails), "tooLarge" (over maximumBytes or the run's budget, or still waiting
@@ -191,15 +192,17 @@ namespace GuideFetch
             entry = result.guides[i]
             outcome = outcomes[i]
             host = Log.host(sources[i].url)
-            row = { index: sources[i].index, host: host, status: entry.status, problem: entry.problem, matched: entry.matched, fromPlaylist: GuideSources.isTrue(sources[i].fromPlaylist), stale: false }
+            row = { index: sources[i].index, host: host, status: entry.status, problem: entry.problem, matched: entry.matched, programmes: GuideFetch.programmeCount(entry), fromPlaylist: GuideSources.isTrue(sources[i].fromPlaylist), stale: false }
             if outcome.state = "tooLarge"
                 row.status = GuidePipeline.tooLargeStatus
                 row.problem = "tooLarge"
                 row.matched = 0
+                row.programmes = 0
             else if outcome.state = "unreadable"
                 row.status = GuideFetch.failedStatus(host)
                 row.problem = "failed"
                 row.matched = 0
+                row.programmes = 0
             else if outcome.state = "stale" and entry.ok
                 row.status = GuideFetch.failedStatus(host)
                 row.problem = "failed"
@@ -208,6 +211,16 @@ namespace GuideFetch
             rows.Push(row)
         end for
         return rows
+    end function
+
+    ' The programmes a pipeline guide entry holds (all its EPG ids' lists).
+    function programmeCount(entry as object) as integer
+        count = 0
+        if type(entry.programmes) <> "roAssociativeArray" then return count
+        for each epgID in entry.programmes
+            count += entry.programmes[epgID].Count()
+        end for
+        return count
     end function
 
     function failedStatus(host as string) as string

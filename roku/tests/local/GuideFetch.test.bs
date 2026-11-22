@@ -143,8 +143,10 @@ namespace GuideFetchTests
         result = GuidePipeline.process(request)
         sources = GuideFetchTests.fixtureSources()
         rows = GuideFetch.statusRows(sources, [{ state: "downloaded" }, { state: "cached" }], result)
-        t.assertEqual(rows[0], { index: 1, host: "iptv.example", status: "OK, 17 channels matched", problem: "", matched: 17, fromPlaylist: false, stale: false })
-        t.assertEqual(rows[1], { index: 2, host: "guides.iptv.example", status: "OK, 7 channels matched", problem: "", matched: 7, fromPlaylist: true, stale: false })
+        t.assertEqual(rows[0], { index: 1, host: "iptv.example", status: "OK, 17 channels matched", problem: "", matched: 17, programmes: 6, fromPlaylist: false, stale: false })
+        t.assertEqual(rows[1], { index: 2, host: "guides.iptv.example", status: "OK, 7 channels matched", problem: "", matched: 7, programmes: 4, fromPlaylist: true, stale: false })
+        ' Step 13: each guide's programmes, which together are what the guide screen gets.
+        t.assertEqual(rows[0].programmes + rows[1].programmes, GuideFetch.guideData(result, request.windowStart, request.windowEnd).programmeCount)
         text = FormatJson(rows)
         for each piece in ["://", "token", "guide-a", "user"]
             t.assertEqual(text.Instr(piece), -1, "no " + piece)
@@ -164,6 +166,8 @@ namespace GuideFetchTests
         t.assertEqual(rows[1].status, "Too large for this Roku")
         t.assertEqual(rows[1].problem, "tooLarge")
         t.assertEqual(rows[1].matched, 0)
+        t.assertEqual(rows[1].programmes, 0, "a guide too large gives none")
+        t.assertTrue(rows[0].programmes > 0, "a stale file's programmes still count")
         failed = GuideFetch.statusRows(sources, [{ state: "downloaded" }, { state: "failed" }], result)
         t.assertEqual(failed[1].status, "Failed: guides.iptv.example", "the pipeline's")
         t.assertFalse(failed[1].stale, "not stale")

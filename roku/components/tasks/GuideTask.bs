@@ -140,7 +140,7 @@ function readGuides(sources as object, fetched as object, overrides as object) a
         overrides: overrides,
         windowStart: windowStart,
         windowEnd: windowEnd,
-        canInflate: GuideFetch.inflateEnabled,
+        canInflate: GuideSources.inflateEnabled,
         inflateMaxCompressedBytes: deviceCaps.inflateMaxCompressedBytes,
         maxProgrammes: deviceCaps.programmeLimit,
         maxInflatedBytes: inflateRoom,

@@ -1,0 +1,354 @@
+' Settings' pages (M12 step 13; frames LQwUy, wjg72, DEDBc and B94oz in design/roku-live-tv.pen, approved
+' 2026-11-21): a port of MMTVL's SettingsModel+Pages (Settings/SettingsModel+Pages.swift: rootSections,
+' remoteInputSections, aboutSections, liveTVSections, guidesSection, channelsSection, iptvGroupsSections,
+' iptvHiddenChannelsSections, guideSourceSections, confirmRemoveIPTVSections) for the Roku: MMTVL's pages, wording
+' and footers, with keyboard rows for the paste rows and no Preview on Home, plus the Roku-only Device, Import from
+' MMTVL and About pages. Pure functions over SettingsStatus.make's model, so no URL ever reaches a row. Uses
+' SettingsStatus (countText) and URLDisplay (separator).
+'
+' Pages are strings: "root", "liveTV", "guide:<cache id>", "groups", "hiddenChannels", "confirmRemoveSource",
+' "remoteInput", "device", "import", "about".
+'   sections(page, model, messages) -> [{ id, title, rows, footer, warning }]: title and footer "" for none;
+'     warning: the footer is a warning (warningText). messages { playlist, guide }: a refused URL's message, shown
+'     as its row's detail (MMTVL's pasteMessage) until the next push or pop.
+'   row: { id, title, value, detail, disclosure, dimmed, action, description }: value, detail and description ""
+'     for none; action invalid for an info row (never focused), else one of
+'       { type: "push", page }, { type: "pop" }
+'       { type: "toggle", setting }        channelUpMovesUpList, usePlaylistGuide, channelLogos
+'       { type: "editURL", field }         "playlist" or "guide": the scene opens the keyboard
+'       { type: "moveGuide", id, step }, { type: "removeGuide", id }
+'       { type: "toggleGroupHidden", name }, { type: "unhideChannel", id }
+'       { type: "refresh" }, { type: "removeSource" }
+'   pageTitle(page, model) -> the title over the columns.
+'   focusableIDs(list) -> the ids of the rows with an action, in order; rowWithID(list, id) -> the row or invalid.
+'   description(list, id) -> the band's text for a focused row ("" for none).
+'   guidePage(id) -> "guide:<id>"; guideIDOf(page) -> the id, or "" when page isn't a guide's.
+'
+' Seams for later steps: step 18 adds My Teams to the Channels section (after Hidden Channels, as MMTVL), and step
+' 21 the Antenna row (first in Channels; with no playlist, Channels with the Antenna row alone, as MMTVL's
+' liveTVSections). Neither draws a placeholder now.
+namespace SettingsPages
+
+    const rootPage = "root"
+    const liveTVPage = "liveTV"
+    const guidePrefix = "guide:"
+    const groupsPage = "groups"
+    const hiddenChannelsPage = "hiddenChannels"
+    const confirmRemovePage = "confirmRemoveSource"
+    const remoteInputPage = "remoteInput"
+    const devicePage = "device"
+    const importPage = "import"
+    const aboutPage = "about"
+
+    const playlistEditHint = "Type the M3U address on the Roku's keyboard"
+    const guideEditHint = "Type an XMLTV address on the Roku's keyboard"
+    const guideSourceDescription = "Use the guide the playlist names, or the guides you added. The guides you added are kept either way."
+    const channelLogosDescription = "Shows channel logos in the guide and the banner. On at first. On Rokus with 512 MB or less, logos can slow the guide: turn them off if it feels slow."
+
+    function sections(page as string, model as object, messages = invalid as dynamic) as object
+        if page = SettingsPages.rootPage then return SettingsPages.rootSections(model)
+        if page = SettingsPages.liveTVPage then return SettingsPages.liveTVSections(model, messages)
+        if page = SettingsPages.groupsPage then return SettingsPages.groupsSections(model)
+        if page = SettingsPages.hiddenChannelsPage then return SettingsPages.hiddenChannelsSections(model)
+        if page = SettingsPages.confirmRemovePage then return SettingsPages.confirmRemoveSections()
+        if page = SettingsPages.remoteInputPage then return SettingsPages.remoteInputSections(model)
+        if page = SettingsPages.devicePage then return SettingsPages.deviceSections(model)
+        if page = SettingsPages.importPage then return SettingsPages.importSections()
+        if page = SettingsPages.aboutPage then return SettingsPages.aboutSections(model)
+        guideID = SettingsPages.guideIDOf(page)
+        if guideID <> "" then return SettingsPages.guideSections(model, guideID)
+        return []
+    end function
+
+    function pageTitle(page as string, model as object) as string
+        if page = SettingsPages.rootPage then return "Settings"
+        if page = SettingsPages.liveTVPage then return "Live TV"
+        if page = SettingsPages.groupsPage then return "Groups"
+        if page = SettingsPages.hiddenChannelsPage then return "Hidden Channels"
+        if page = SettingsPages.confirmRemovePage then return "Remove Live TV Source?"
+        if page = SettingsPages.remoteInputPage then return "Remote & Input"
+        if page = SettingsPages.devicePage then return "Device"
+        if page = SettingsPages.importPage then return "Import from MMTVL"
+        if page = SettingsPages.aboutPage then return "About"
+        guideID = SettingsPages.guideIDOf(page)
+        if guideID <> ""
+            for each guide in model.guides
+                if guide.id = guideID then return guide.label
+            end for
+            return "Guide"
+        end if
+        return ""
+    end function
+
+    function guidePage(id as string) as string
+        return SettingsPages.guidePrefix + id
+    end function
+
+    function guideIDOf(page as string) as string
+        prefix = SettingsPages.guidePrefix
+        if Len(page) <= Len(prefix) or Left(page, Len(prefix)) <> prefix then return ""
+        return Mid(page, Len(prefix) + 1)
+    end function
+
+    function focusableIDs(list as object) as object
+        ids = []
+        for each section in list
+            for each item in section.rows
+                if item.action <> invalid then ids.Push(item.id)
+            end for
+        end for
+        return ids
+    end function
+
+    function rowWithID(list as object, id as dynamic) as dynamic
+        if not SettingsStatus.isText(id) then return invalid
+        for each section in list
+            for each item in section.rows
+                if item.id = id then return item
+            end for
+        end for
+        return invalid
+    end function
+
+    function description(list as object, id as dynamic) as string
+        found = SettingsPages.rowWithID(list, id)
+        if found = invalid then return ""
+        return found.description
+    end function
+
+    ' --- pages -----------------------------------------------------------------------------------------------
+
+    ' M7g L6: categories only; each opens its page.
+    function rootSections(model as object) as object
+        liveValue = "Not Set Up"
+        if model.hasLiveSource then liveValue = SettingsPages.channelCount(model.totalChannelCount)
+        return [SettingsPages.newSection("categories", "", [
+            SettingsPages.newRow({ id: "liveTV", title: "Live TV", value: liveValue, disclosure: true, action: SettingsPages.push(SettingsPages.liveTVPage), description: "The playlist, antenna and guides, channel groups, hidden channels and teams." }),
+            SettingsPages.newRow({ id: "remoteInput", title: "Remote & Input", disclosure: true, action: SettingsPages.push(SettingsPages.remoteInputPage), description: "Which way Channel Up and Channel Down change channels." }),
+            SettingsPages.newRow({ id: "device", title: "Device", value: model.device.modelName, disclosure: true, action: SettingsPages.push(SettingsPages.devicePage), description: "This Roku's model and memory, and the Live TV features that depend on them." }),
+            SettingsPages.newRow({ id: "import", title: "Import from MMTVL", disclosure: true, action: SettingsPages.push(SettingsPages.importPage), description: "Bring the playlist, guides, favorites and other Live TV settings over from MMTVL on a Mac." }),
+            SettingsPages.newRow({ id: "about", title: "About", value: model.version, disclosure: true, action: SettingsPages.push(SettingsPages.aboutPage), description: "The version and build of MMTVL Live TV." })
+        ], "")]
+    end function
+
+    function remoteInputSections(model as object) as object
+        direction = "Higher Number"
+        if model.channelUpMovesUpList then direction = "Up the List"
+        return [SettingsPages.newSection("input", "", [
+            SettingsPages.newRow({ id: "channelUp", title: "Channel Up", value: direction, action: SettingsPages.toggle("channelUpMovesUpList"), description: "Changes channel in Live TV. Up the List moves up the list like the Up arrow; Higher Number goes to the next number." })
+        ], "")]
+    end function
+
+    ' M4, M6b, M7f L4, on the Roku: keyboard rows replace the paste rows; no Preview on Home.
+    function liveTVSections(model as object, messages as dynamic) as object
+        playlist = model.playlist
+        playlistRows = []
+        if playlist.has
+            playlistRows.Push(SettingsPages.newRow({ id: "playlist.info", title: playlist.host, value: SettingsPages.channelCount(playlist.channelCount), detail: playlist.line }))
+        end if
+        editTitle = "Add Playlist URL…"
+        if playlist.has then editTitle = "Change Playlist URL…"
+        playlistRows.Push(SettingsPages.newRow({ id: "playlist.edit", title: editTitle, detail: SettingsPages.messageOr(messages, "playlist", SettingsPages.playlistEditHint), action: { type: "editURL", field: "playlist" } }))
+        list = [SettingsPages.newSection("playlist", "Playlist", playlistRows, "")]
+        ' Step 21: with no playlist and the antenna on, MMTVL shows Channels with the Antenna row here.
+        if not model.hasLiveSource then return list
+        list.Push(SettingsPages.guidesSection(model, messages))
+        list.Push(SettingsPages.channelsSection(model))
+        manageRows = [SettingsPages.newRow({ id: "refresh", title: "Refresh Now", action: { type: "refresh" }, description: "Downloads the playlist and the guides again now." })]
+        if playlist.has
+            manageRows.Push(SettingsPages.newRow({ id: "removeSource", title: "Remove Live TV Source", disclosure: true, action: SettingsPages.push(SettingsPages.confirmRemovePage), description: "Forgets the playlist and guide addresses on this Roku." }))
+        end if
+        ' Frame wjg72's Manage footer.
+        list.Push(SettingsPages.newSection("manage", "", manageRows, "Addresses are kept on this Roku and never shown in full."))
+        return list
+    end function
+
+    ' M6b L1: the guides in priority order; typed ones open their own page.
+    function guidesSection(model as object, messages as dynamic) as object
+        rows = []
+        ' M7f L4: a choice only when the playlist names a guide and one was added.
+        if model.playlistNamesGuide and model.pastedGuideCount > 0
+            source = "Added Guides"
+            if model.usePlaylistGuide then source = "Playlist"
+            rows.Push(SettingsPages.newRow({ id: "guideSource", title: "Guide Source", value: source, action: SettingsPages.toggle("usePlaylistGuide"), description: SettingsPages.guideSourceDescription }))
+        end if
+        for i = 0 to model.guides.Count() - 1
+            guide = model.guides[i]
+            spec = { id: "guide." + guide.id, title: guide.label, detail: guide.line, dimmed: not guide.inUse }
+            if guide.fromPlaylist
+                spec.value = "From Playlist"
+            else
+                if guide.inUse then spec.value = (i + 1).ToStr() else spec.value = "Off"
+                spec.disclosure = true
+                spec.action = SettingsPages.push(SettingsPages.guidePage(guide.id))
+            end if
+            rows.Push(SettingsPages.newRow(spec))
+        end for
+        if rows.Count() = 0
+            rows.Push(SettingsPages.newRow({ id: "guide.none", title: "No guide", detail: "Type an XMLTV guide address below" }))
+        end if
+        if model.pastedGuideCount < SettingsStore.maximumGuides
+            rows.Push(SettingsPages.newRow({ id: "guide.add", title: "Add Guide…", detail: SettingsPages.messageOr(messages, "guide", SettingsPages.guideEditHint), action: { type: "editURL", field: "guide" } }))
+        end if
+        count = ""
+        if model.playlist.has then count = "Guide data for " + SettingsStatus.grouped(model.matchedChannelCount) + " of " + SettingsStatus.grouped(model.playlist.channelCount) + " channels. "
+        return SettingsPages.newSection("guides", "Guides", rows, count + "A channel uses the first guide in this list that has it.")
+    end function
+
+    ' M6b L5: groups and hidden channels; favorites and single channels are managed from the guide.
+    function channelsSection(model as object) as object
+        hiddenGroups = 0
+        for each group in model.groups
+            if group.hidden then hiddenGroups += 1
+        end for
+        groupsValue = "All Shown"
+        if hiddenGroups > 0 then groupsValue = hiddenGroups.ToStr() + " Hidden"
+        hiddenValue = "None"
+        if model.hiddenChannels.Count() > 0 then hiddenValue = SettingsStatus.grouped(model.hiddenChannels.Count())
+        ' Step 21: the Antenna row first; step 18: My Teams after Hidden Channels (frame wjg72 draws both).
+        ' Step 20 (Match Guide) restores the frame's footer: "To favorite, hide or match one channel: in the guide,
+        ' press * on it."
+        return SettingsPages.newSection("channels", "Channels", [
+            SettingsPages.newRow({ id: "groups", title: "Groups", value: groupsValue, disclosure: true, action: SettingsPages.push(SettingsPages.groupsPage), description: "Which groups show in the guide." }),
+            SettingsPages.newRow({ id: "hiddenChannels", title: "Hidden Channels", value: hiddenValue, disclosure: true, action: SettingsPages.push(SettingsPages.hiddenChannelsPage), description: "Channels hidden from the guide." })
+        ], "To favorite or hide one channel: in the guide, press * on it.")
+    end function
+
+    function groupsSections(model as object) as object
+        rows = []
+        for each group in model.groups
+            shown = "Shown"
+            if group.hidden then shown = "Hidden"
+            rows.Push(SettingsPages.newRow({ id: "group." + group.name, title: group.name, value: shown, detail: SettingsStatus.countText(group.channelCount, "channel", "channels"), dimmed: group.hidden, action: { type: "toggleGroupHidden", name: group.name } }))
+        end for
+        return [SettingsPages.newSection("groups", "", rows, "Hidden groups and their channels don't show in the guide or when changing channels.")]
+    end function
+
+    function hiddenChannelsSections(model as object) as object
+        rows = []
+        for each channel in model.hiddenChannels
+            rows.Push(SettingsPages.newRow({ id: "hidden." + channel.id, title: channel.number + "  " + channel.name, value: "Show", detail: channel.group, action: { type: "unhideChannel", id: channel.id } }))
+        end for
+        if rows.Count() = 0 then rows.Push(SettingsPages.newRow({ id: "hidden.none", title: "No hidden channels" }))
+        return [SettingsPages.newSection("hiddenChannels", "", rows, "Select a channel to show it again.")]
+    end function
+
+    ' M6b: one typed guide; an id no longer listed (or a url-tvg guide) shows nothing.
+    function guideSections(model as object, guideID as string) as object
+        typed = []
+        for each guide in model.guides
+            if not guide.fromPlaylist then typed.Push(guide)
+        end for
+        index = -1
+        for i = 0 to typed.Count() - 1
+            if typed[i].id = guideID then index = i
+        end for
+        if index < 0 then return []
+        rows = [SettingsPages.newRow({ id: "guidePage.status", title: "Status", detail: typed[index].line })]
+        if index > 0 then rows.Push(SettingsPages.newRow({ id: "guidePage.moveUp", title: "Move Up", action: { type: "moveGuide", id: guideID, step: -1 } }))
+        if index < typed.Count() - 1 then rows.Push(SettingsPages.newRow({ id: "guidePage.moveDown", title: "Move Down", action: { type: "moveGuide", id: guideID, step: 1 } }))
+        rows.Push(SettingsPages.newRow({ id: "guidePage.remove", title: "Remove Guide", action: { type: "removeGuide", id: guideID } }))
+        return [SettingsPages.newSection("guidePage", "", rows, "When two guides have the same channel, the higher one wins.")]
+    end function
+
+    ' Cancel first, as MMTVL's confirm pages.
+    function confirmRemoveSections() as object
+        return [SettingsPages.newSection("confirm", "", [
+            SettingsPages.newRow({ id: "confirm.cancel", title: "Cancel", action: { type: "pop" } }),
+            SettingsPages.newRow({ id: "confirm.remove", title: "Remove", action: { type: "removeSource" } })
+        ], "Forgets the playlist and guide addresses and deletes the downloaded guides.")]
+    end function
+
+    ' L7 (frame B94oz): this Roku, then each feature On or Off: <reason>, the guide window in hours. Only Channel
+    ' Logos is a switch. L5: the warning when the registry has under 4 KB left.
+    function deviceSections(model as object) as object
+        device = model.device
+        modelValue = device.modelName
+        if device.os <> "" then modelValue += " " + URLDisplay.separator() + " " + device.os
+        footer = ""
+        if model.lowSpace
+            footer = "This Roku is almost out of room for settings"
+            if SettingsStatus.isNumber(model.spaceLeft) and model.spaceLeft >= 0 then footer += " (" + SettingsStatus.grouped(model.spaceLeft) + " bytes left)"
+            footer += ". Guide matches aren't saved until some favorites, hidden channels or guide matches are removed."
+        end if
+        thisRoku = SettingsPages.newSection("thisRoku", "This Roku", [
+            SettingsPages.newRow({ id: "device.model", title: "Model", value: modelValue }),
+            SettingsPages.newRow({ id: "device.memory", title: "Memory", value: device.memory + " " + URLDisplay.separator() + " " + device.classLabel })
+        ], footer)
+        thisRoku.warning = model.lowSpace
+        logos = "Off"
+        if model.channelLogos then logos = "On"
+        mpeg2 = "Off: No MPEG-2"
+        if device.mpeg2 then mpeg2 = "On"
+        ac3 = "Off: No AC-3"
+        if device.ac3 then ac3 = "On"
+        features = SettingsPages.newSection("features", "Features", [
+            SettingsPages.newRow({ id: "device.guideWindow", title: "Guide Window", value: device.guideHours.ToStr() + " Hours" }),
+            SettingsPages.newRow({ id: "device.channelLogos", title: "Channel Logos", value: logos, action: SettingsPages.toggle("channelLogos"), description: SettingsPages.channelLogosDescription }),
+            SettingsPages.newRow({ id: "device.compressedGuides", title: "Compressed Guides", value: device.compressed }),
+            SettingsPages.newRow({ id: "device.mpeg2", title: "Antenna MPEG-2 Channels", value: mpeg2 }),
+            SettingsPages.newRow({ id: "device.ac3", title: "Dolby Digital", value: ac3 })
+        ], "")
+        return [thisRoku, features]
+    end function
+
+    ' L2: how to run the export script (step 14 builds the import). Text only.
+    function importSections() as object
+        return [SettingsPages.newSection("import", "On a Mac with MMTVL", [
+            SettingsPages.newRow({ id: "import.run", title: "Run the export script", detail: "python3 -I scripts/roku-export-settings.py" }),
+            SettingsPages.newRow({ id: "import.choose", title: "Choose this Roku", detail: "The script lists the Rokus on your network" }),
+            SettingsPages.newRow({ id: "import.confirm", title: "Check and replace", detail: "This Roku shows what comes over: choose Replace Settings" })
+        ], "Run it from MMTVL's folder, on the same network as this Roku. The playlist, guides, favorites, hidden channels and teams replace this Roku's; nothing is sent back to the Mac.")]
+    end function
+
+    ' M7c L28: the version and build. L8: in DEBUG builds a key sequence here opens the Probes screen (SettingsNav).
+    function aboutSections(model as object) as object
+        return [SettingsPages.newSection("about", "", [
+            SettingsPages.newRow({ id: "about.version", title: "Version", value: model.version }),
+            SettingsPages.newRow({ id: "about.build", title: "Build", value: model.build })
+        ], "Settings are saved on this Roku.")]
+    end function
+
+    ' --- helpers ---------------------------------------------------------------------------------------------
+
+    ' "1 Channel", "1,234 Channels".
+    function channelCount(count as integer) as string
+        return SettingsStatus.countText(count, "Channel", "Channels")
+    end function
+
+    function messageOr(messages as dynamic, field as string, fallback as string) as string
+        if type(messages) = "roAssociativeArray"
+            message = messages[field]
+            if SettingsStatus.isText(message)
+                if message <> "" then return message
+            end if
+        end if
+        return fallback
+    end function
+
+    function push(page as string) as object
+        return { type: "push", page: page }
+    end function
+
+    function toggle(setting as string) as object
+        return { type: "toggle", setting: setting }
+    end function
+
+    function newSection(id as string, heading as string, rows as object, footer as string) as object
+        return { id: id, title: heading, rows: rows, footer: footer, warning: false }
+    end function
+
+    ' A row from a partial spec: missing text fields are "", flags false, action invalid.
+    function newRow(spec as object) as object
+        made = { id: spec.id, title: "", value: "", detail: "", disclosure: false, dimmed: false, action: invalid, description: "" }
+        for each field in ["title", "value", "detail", "description"]
+            if SettingsStatus.isText(spec[field]) then made[field] = spec[field]
+        end for
+        for each field in ["disclosure", "dimmed"]
+            if SettingsStatus.isTrue(spec[field]) then made[field] = true
+        end for
+        if type(spec.action) = "roAssociativeArray" then made.action = spec.action
+        return made
+    end function
+
+end namespace

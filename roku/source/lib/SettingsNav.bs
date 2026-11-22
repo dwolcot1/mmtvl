@@ -1,0 +1,233 @@
+' Settings' stack, focus and keys (M12 step 13): a port of MMTVL's SettingsModel navigation (Settings/
+' SettingsModel.swift: handle :280-333, columns, parentSelectionRowID, push/pop :892-951) and ListFocus
+' (SettingsTypes.swift:454-468), and of SettingsView's track position (Settings/SettingsView.swift: trackPosition,
+' trackOffset). Pure functions, no nodes. Uses SettingsPages.
+'
+'   open(page) -> state: "root", or "device" (the low-memory notice's Open Settings: the root on Device, then
+'     Device, so Back walks out as if it had been opened by hand, as MMTVL's openTile).
+'   state { stack: [{ page, focus }], held, replays }: focus is the page's focused row id ("" = the first);
+'     held the key pressed and not yet released (a held key's repeats), replays the About page's Replay count
+'     (DEBUG builds only: release builds carry neither the count nor the sequence).
+'   handle(key, press, state, list) -> { handled, state, action, pageChanged }
+'     list: SettingsPages.sections for the top page. handled is always true: every key is Settings' while it
+'     shows, and Back never leaves the app (D49): Back on the root asks the scene to close Settings (action
+'     "close"), which returns to the screen it came from.
+'     up / down          the focusable row above / below, clamped (no wrap, as ListFocus.move)
+'     rewind / fastforward / channelup / channeldown   8 rows (MMTVL's Channel Up/Down, M7 L5)
+'     right              opens a push row (M7g L7); values don't cycle
+'     left               back a page, except on the root (M7g L7)
+'     OK                 the focused row's action: push and pop here; everything else is returned for the scene
+'                        (removeGuide and removeSource also go back a page, as MMTVL)
+'     back               back a page; on the root, action "close"
+'     replay             DEBUG builds: on the About page, the third in a row: action "probeSequence" (L8: the
+'                        screen opens the Probes screen). Release builds: nothing.
+'     A press of the key still held (no release since its last press) is a repeat: Up and Down repeat, Left
+'     and Right don't change page on one (MMTVL's isRepeat; whether a Roku repeats held keys is a device check).
+'   currentPage(state), focusedID(state, list): ListFocus.resolve over list's focusable rows (invalid: none).
+'   columns(state) -> [{ index, page, role }]: every stack page ("current" the top, "parent" the one below,
+'     "hidden" older ones), then one "empty" column (the slot a pushed page slides into).
+'   trackX(depth, layout) -> the track's x: the root list centred (settingsRootColumnLeading) at depth 1; from the
+'     first category on, settingsSideMargin minus a column (width + gap) for each level past 2.
+'   columnX(index, layout) -> a column's x on the track.
+'   scrollOffset(contentHeight, viewHeight, top, height, position) -> how far a column scrolls: 0 when it fits;
+'     position "first" (the first focusable row: the list's top), "last" (its end) or "middle" (the row centred),
+'     clamped, on the 3-px grid.
+namespace SettingsNav
+
+    ' MMTVL's SettingsModel.pageRows.
+    const pageRows = 8
+    ' L8: Replay presses in a row on the About page that open the Probes screen (DEBUG builds).
+    const probePresses = 3
+
+    function open(page = "root" as string) as object
+        state = { stack: [{ page: SettingsPages.rootPage, focus: "" }], held: "" }
+        #if DEBUG
+            state.replays = 0
+        #end if
+        if page = SettingsPages.devicePage
+            state.stack[0].focus = "device"
+            state.stack.Push({ page: SettingsPages.devicePage, focus: "" })
+        end if
+        return state
+    end function
+
+    function currentPage(state as object) as string
+        return state.stack[state.stack.Count() - 1].page
+    end function
+
+    function focusedID(state as object, list as object) as dynamic
+        return SettingsNav.resolve(SettingsPages.focusableIDs(list), state.stack[state.stack.Count() - 1].focus)
+    end function
+
+    function handle(key as string, press as boolean, state as object, list as object) as object
+        current = SettingsNav.copy(state)
+        result = { handled: true, state: current, action: { type: "none" }, pageChanged: false }
+        if not press
+            if current.held = key then current.held = ""
+            return result
+        end if
+        isRepeat = current.held = key
+        current.held = key
+        #if DEBUG
+            ' L8: three Replays in a row on About.
+            if key = "replay" and SettingsNav.currentPage(current) = SettingsPages.aboutPage
+                if not isRepeat then current.replays = current.replays + 1
+                if current.replays >= SettingsNav.probePresses
+                    current.replays = 0
+                    result.action = { type: "probeSequence" }
+                end if
+                return result
+            end if
+            current.replays = 0
+        #end if
+        ids = SettingsPages.focusableIDs(list)
+        top = current.stack[current.stack.Count() - 1]
+        focus = SettingsNav.resolve(ids, top.focus)
+        if key = "up" or key = "down"
+            stepSize = 1
+            if key = "up" then stepSize = -1
+            SettingsNav.setFocus(current, SettingsNav.move(ids, focus, stepSize))
+        else if key = "rewind" or key = "channelup"
+            SettingsNav.setFocus(current, SettingsNav.move(ids, focus, -SettingsNav.pageRows))
+        else if key = "fastforward" or key = "channeldown"
+            SettingsNav.setFocus(current, SettingsNav.move(ids, focus, SettingsNav.pageRows))
+        else if key = "right"
+            chosen = SettingsPages.rowWithID(list, focus)
+            if not isRepeat and chosen <> invalid
+                if chosen.action <> invalid
+                    if chosen.action.type = "push" then SettingsNav.pushPage(result, focus, chosen.action.page)
+                end if
+            end if
+        else if key = "left"
+            if not isRepeat and current.stack.Count() > 1 then SettingsNav.popPage(result)
+        else if key = "OK"
+            chosen = SettingsPages.rowWithID(list, focus)
+            if chosen <> invalid
+                if chosen.action <> invalid then SettingsNav.perform(result, focus, chosen.action)
+            end if
+        else if key = "back"
+            if current.stack.Count() > 1
+                SettingsNav.popPage(result)
+            else
+                result.action = { type: "close" }
+            end if
+        end if
+        return result
+    end function
+
+    sub perform(result as object, focus as dynamic, chosen as object)
+        kind = chosen.type
+        if kind = "push"
+            SettingsNav.pushPage(result, focus, chosen.page)
+        else if kind = "pop"
+            SettingsNav.popPage(result)
+        else
+            if kind = "removeGuide" or kind = "removeSource" then SettingsNav.popPage(result)
+            result.action = chosen
+        end if
+    end sub
+
+    ' The top page keeps the row that opened the new one, so Back comes back to it (and the parent column marks it).
+    sub pushPage(result as object, focus as dynamic, page as string)
+        current = result.state
+        SettingsNav.setFocus(current, focus)
+        current.stack.Push({ page: page, focus: "" })
+        result.pageChanged = true
+    end sub
+
+    sub popPage(result as object)
+        current = result.state
+        if current.stack.Count() <= 1 then return
+        current.stack.Pop()
+        result.pageChanged = true
+    end sub
+
+    sub setFocus(current as object, id as dynamic)
+        if not SettingsStatus.isText(id) then id = ""
+        current.stack[current.stack.Count() - 1].focus = id
+    end sub
+
+    function columns(state as object) as object
+        result = []
+        last = state.stack.Count() - 1
+        for i = 0 to last
+            role = "hidden"
+            if i = last
+                role = "current"
+            else if i = last - 1
+                role = "parent"
+            end if
+            result.Push({ index: i, page: state.stack[i].page, role: role })
+        end for
+        result.Push({ index: last + 1, page: "", role: "empty" })
+        return result
+    end function
+
+    function trackX(depth as integer, layout as object) as integer
+        if depth <= 1 then return layout.settingsRootColumnLeading
+        return layout.settingsSideMargin - (depth - 2) * (layout.settingsColumnWidth + layout.settingsColumnGap)
+    end function
+
+    function columnX(index as integer, layout as object) as integer
+        return index * (layout.settingsColumnWidth + layout.settingsColumnGap)
+    end function
+
+    function scrollOffset(contentHeight as integer, viewHeight as integer, top as integer, height as integer, position as string) as integer
+        highest = contentHeight - viewHeight
+        if highest <= 0 then return 0
+        if position = "first" then return 0
+        if position = "last" then return SettingsNav.onGrid(highest, true)
+        offset = top + Int(height / 2) - Int(viewHeight / 2)
+        if offset < 0 then offset = 0
+        if offset > highest then offset = highest
+        return SettingsNav.onGrid(offset, offset = highest)
+    end function
+
+    ' A multiple of 3 (down, or up when the end must show whole).
+    function onGrid(value as integer, roundUp as boolean) as integer
+        if roundUp then return Int((value + 2) / 3) * 3
+        return Int(value / 3) * 3
+    end function
+
+    ' ListFocus.resolve: current when it's listed, else the first id; invalid with none.
+    function resolve(ids as object, current as dynamic) as dynamic
+        if ids.Count() = 0 then return invalid
+        if SettingsStatus.isText(current)
+            for each id in ids
+                if id = current then return current
+            end for
+        end if
+        return ids[0]
+    end function
+
+    ' ListFocus.move: stepSize places from the resolved current id, clamped to the ends.
+    function move(ids as object, current as dynamic, stepSize as integer) as dynamic
+        resolved = SettingsNav.resolve(ids, current)
+        if resolved = invalid then return invalid
+        index = 0
+        for i = 0 to ids.Count() - 1
+            if ids[i] = resolved then index = i
+        end for
+        index += stepSize
+        if index < 0 then index = 0
+        if index > ids.Count() - 1 then index = ids.Count() - 1
+        return ids[index]
+    end function
+
+    ' A new state; the stack's entries are copied, so the caller's state never changes.
+    function copy(state as object) as object
+        stack = []
+        for each entry in state.stack
+            stack.Push({ page: entry.page, focus: entry.focus })
+        end for
+        held = ""
+        if SettingsStatus.isText(state.held) then held = state.held
+        result = { stack: stack, held: held }
+        #if DEBUG
+            result.replays = 0
+            if SettingsStatus.isNumber(state.replays) then result.replays = state.replays
+        #end if
+        return result
+    end function
+
+end namespace

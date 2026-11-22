@@ -8,9 +8,13 @@
      in state; on a Low Roku's first launch, the low-memory notice over whatever opened first. Step 12: the guide
      (GuideScreen, over the player, whose Video shows in the guide's preview place), the channel menu
      (ChannelMenuView, over the guide or the player), the logos (LogoTask), favorites and hidden channels saved in
-     prefs with the lineup built again, lastGroup, and the 3-minute return to the playing channel (D51). Until step
-     13 builds it, Settings → Device is a placeholder here (settingsPlaceholder). Back never leaves the app (D49):
-     the scene handles every key that reaches it. -->
+     prefs with the lineup built again, lastGroup, and the 3-minute return to the playing channel (D51). Step 13:
+     Settings (SettingsScreen), opened with * in the guide's group column (or in a guide with no channels) and by
+     the low-memory notice's Open Settings (on Device); the scene saves what it asks through SettingsStore, opens
+     the keyboard for addresses (StandardKeyboardDialog, as the scene's dialog: a typed URL goes from the dialog to
+     the store, never through another node), reloads the playlist or starts a guide run after a source or guide
+     change, and gives it a model with no URL in it (SettingsStatus.make). In DEBUG builds the Probes screen opens
+     from Settings → About (L8). Back never leaves the app (D49): the scene handles every key that reaches it. -->
 <component name="MainScene" extends="Scene">
     <interface>
         <!-- Lineup.build's result for the last playlist that loaded (kept when a later load fails). -->
@@ -20,7 +24,7 @@
         <!-- "" after a load, else what to show: "Couldn't load the playlist (<host>)", or without "(<host>)" when there is none. -->
         <field id="playlistStatus" type="string" />
         <!-- Step 9, Settings → Guides: one row per guide in priority order, no URLs (security L-3):
-             { index, host, status, problem, matched, fromPlaylist, stale } (GuideFetch.statusRows). Kept when a
+             { index, host, status, problem, matched, programmes, fromPlaylist, stale } (GuideFetch.statusRows). Kept when a
              guide task fails. -->
         <field id="guideStatuses" type="array" />
         <!-- "" or a note on the last guide run ("Memory guard inactive: …"). -->
@@ -55,19 +59,20 @@
     <script type="text/brighterscript" uri="pkg:/source/lib/BannerText.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/LogoCache.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/GuideIdle.bs" />
+    <!-- Step 13: Settings' model and edits. -->
+    <script type="text/brighterscript" uri="pkg:/source/lib/URLDisplay.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/SettingsStatus.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/SettingsEdits.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/GuideRuns.bs" />
     <children>
         <!-- The guide's background too: the guide has none, so the player's Video shows through in its preview place. -->
         <Poster id="background" />
         <!-- Shown once a channel plays; under the guide it plays on in the guide's preview place (preview). -->
         <PlayerScreen id="player" visible="false" />
         <GuideScreen id="guide" visible="false" />
-        <!-- Step 13 replaces this with Settings → Device. Until then the notice's Open Settings comes here; Back or
-             OK returns to the screen it came from. -->
-        <Group id="settingsPlaceholder" visible="false">
-            <Poster id="settingsBackground" />
-            <Label id="settingsTitle" text="Settings → Device" />
-            <Label id="settingsHint" text="Settings come with step 13 · Back: return" />
-        </Group>
+        <!-- Step 13: over the guide and the player (which plays on under it); Back on its root returns to the
+             screen it came from. -->
+        <SettingsScreen id="settings" visible="false" />
         <!-- Over the guide or the player while open. -->
         <ChannelMenuView id="channelMenu" visible="false" />
         <!-- D51: the 3-minute return to the playing channel (Theme timing.guideIdleReturn), from the last input. -->

@@ -4,6 +4,10 @@
     "manifest",
     "source/lib/**/*",
     {
+      "src": "components/theme/Theme.bs",
+      "dest": "source/theme/Theme.bs"
+    },
+    {
       "src": "components/probes/ProbeKit.bs",
       "dest": "source/probes/ProbeKit.bs"
     },

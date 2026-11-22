@@ -356,12 +356,23 @@ namespace GuideKeysTests
         t.assertEqual(GuideKeys.handle("options", true, state).action, { type: "channelMenu", channelID: "id:c2" })
     end sub
 
-    sub test_optionsInTheGroupsColumnDoesNothing(t as object)
+    ' Step 13: * in the group column opens Settings (the column stays open, so Back comes back to it).
+    sub test_optionsInTheGroupsColumnOpensSettings(t as object)
         state = GuideKeysTests.toGroups(GuideKeysTests.model("Live", "id:c1"))
-        t.assertEqual(GuideKeys.handle("options", true, state).action, { type: "none" })
+        result = GuideKeys.handle("options", true, state)
+        t.assertEqual(result.action, { type: "openSettings" })
+        t.assertEqual(result.state.focus, "groups")
         state = GuideKeysTests.press(GuideKeysTests.press(GuideKeysTests.press(state, "up"), "up"), "up")
         t.assertEqual(state.focus, "search")
-        t.assertEqual(GuideKeys.handle("options", true, state).action, { type: "none" })
+        t.assertEqual(GuideKeys.handle("options", true, state).action, { type: "openSettings" })
+    end sub
+
+    ' Step 13: with no channels (a first launch with no playlist), * opens Settings from the guide itself.
+    sub test_optionsWithNoRowsOpensSettings(t as object)
+        state = GuideKeys.open(Lineup.build([], {}), "", "")
+        t.assertEqual(state.rows.Count(), 0)
+        t.assertEqual(GuideKeys.handle("options", true, state).action, { type: "openSettings" })
+        t.assertEqual(GuideKeys.handle("OK", true, state).action, { type: "none" }, "OK still does nothing")
     end sub
 
     sub test_okOnChooseTeamsOpensThePickerAndKeepsTheRow(t as object)

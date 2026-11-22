@@ -15,6 +15,16 @@ namespace CapabilitiesTests
         t.assertEqual(caps.programmeLimit, 60000)
     end sub
 
+    ' Step 13: Settings → Device shows the model's name; a Roku OS without GetModelDisplayName gives "".
+    sub test_theModelsNameForSettings(t as object)
+        caps = Capabilities.detect(CapabilitiesTests.device({}), CapabilitiesTests.monitor(1024))
+        t.assertEqual(caps.modelName, "Roku Ultra")
+        t.assertEqual(caps.model, "4850X")
+        bare = CapabilitiesTests.device({})
+        bare.Delete("GetModelDisplayName")
+        t.assertEqual(Capabilities.detect(bare, CapabilitiesTests.monitor(1024)).modelName, "")
+    end sub
+
     sub test_aLimitAtOrUnder512MBIsLow(t as object)
         caps = Capabilities.detect(CapabilitiesTests.device({}), CapabilitiesTests.monitor(512))
         t.assertEqual(caps.deviceClass, "Low")
@@ -145,6 +155,7 @@ namespace CapabilitiesTests
             ac3: CapabilitiesTests.flag(options.ac3),
             version: "15.1",
             GetModel: CapabilitiesTests.fakeModel,
+            GetModelDisplayName: CapabilitiesTests.fakeModelName,
             GetOSVersion: CapabilitiesTests.fakeOSVersion,
             GetVersion: CapabilitiesTests.fakeVersion,
             GetUIResolution: CapabilitiesTests.fakeUIResolution,
@@ -165,6 +176,10 @@ namespace CapabilitiesTests
     ' The methods below run with m = the fake.
     function fakeModel() as string
         return "4850X"
+    end function
+
+    function fakeModelName() as string
+        return "Roku Ultra"
     end function
 
     function fakeOSVersion() as object

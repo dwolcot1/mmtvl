@@ -55,7 +55,8 @@
 '     action: { type, ... }: none, play { channelID }, channelMenu { channelID }, groupChanged { group,
 '       groupIndex } (remember it as lastGroup), openSearch, openTeamPicker, togglePause (the playing channel,
 '       MMTVL's Play/Pause in the guide), returnToChannel { reload } (Back: full screen on the channel; reload when
-'       it isn't playing, which retries a failed one).
+'       it isn't playing, which retries a failed one), openSettings (step 13: * in the group column, or with no
+'       rows at all, as on a first launch with no playlist).
 '
 ' The keys (Roku's on the left; L4 maps Rewind/Fast Forward to MMTVL's Channel Up/Down, which page):
 '   up / down          the row (or, in the column, the group) above / below; loops (M7n L3)
@@ -66,7 +67,9 @@
 '   fastforward / channeldown  page down. A page stops at the end row and wraps only from it.
 '   OK                 grid: play; channel cell: the channel menu; groups: select the group; Search: open Search;
 '                      Choose Teams: the team picker; an upcoming game: play its channel
-'   options            the channel menu (grid or channel cell); nothing in the column or on Choose Teams
+'   options            the channel menu (grid or channel cell); Settings in the column (Search or a group) and
+'                      when the group has no rows (step 13: MMTVL reaches Settings from Home, which a Roku app
+'                      doesn't have); nothing on Choose Teams
 '   back               the column or Search: back to the grid; else return to the channel, and with nothing to
 '                      return to, nothing (M7m L2, D49)
 '   play               togglePause
@@ -141,6 +144,10 @@ namespace GuideKeys
         end if
         if current.focus = "groups" or current.focus = "search"
             GuideKeys.handleColumn(key, result)
+            return result
+        end if
+        if key = "options" and current.rows.Count() = 0
+            result.action = GuideKeys.action("openSettings")
             return result
         end if
         rowHere = GuideKeys.rowAtFocus(current)
@@ -223,6 +230,9 @@ namespace GuideKeys
             GuideKeys.moveInColumn(result, GuideKeys.pageStep(key, GuideKeys.pageGroupRows))
         else if key = "back" or key = "left"
             current.focus = "grid"
+        else if key = "options"
+            ' Step 13: Settings; the column stays open under it, so Back from Settings comes back here.
+            result.action = GuideKeys.action("openSettings")
         else if key = "OK" or key = "right"
             if current.focus = "search"
                 ' Focus stays, so closing Search comes back to the Search row.

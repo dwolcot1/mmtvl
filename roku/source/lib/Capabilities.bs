@@ -2,7 +2,7 @@
 '   memoryMB    the app's memory limit (GetChannelMemoryLimit), or invalid when it's unknown
 '   uiHD        true with a 720p UI
 '   mpeg2, ac3  CanDecodeVideo / CanDecodeAudio
-'   osVersion, model
+'   osVersion, model, modelName (GetModelDisplayName: "Roku Express"; "" when unknown; Settings → Device, step 13)
 ' and derives:
 '   deviceClass "Low" (memory limit unknown or at most lowMemoryLimitMB, or a 720p UI) or "High"; classReason says why
 '   guideHours, logosDefault, inflateMaxCompressedBytes (invalid: no limit), programmeLimit (the most guide
@@ -49,7 +49,8 @@ namespace Capabilities
             "mpeg2": Capabilities.canDecode(deviceInfo, "video", "mpeg2"),
             "ac3": Capabilities.canDecode(deviceInfo, "audio", "ac3"),
             "osVersion": Capabilities.osVersion(deviceInfo),
-            "model": Capabilities.model(deviceInfo)
+            "model": Capabilities.model(deviceInfo),
+            "modelName": Capabilities.modelName(deviceInfo)
         }
         reasons = []
         if caps.memoryMB = invalid
@@ -176,6 +177,17 @@ namespace Capabilities
     function model(deviceInfo as dynamic) as string
         try
             name = deviceInfo.GetModel()
+            if Capabilities.isString(name) then return name
+        catch e
+            return ""
+        end try
+        return ""
+    end function
+
+    ' The model's name for people ("Roku Express"), else "".
+    function modelName(deviceInfo as dynamic) as string
+        try
+            name = deviceInfo.GetModelDisplayName()
             if Capabilities.isString(name) then return name
         catch e
             return ""
