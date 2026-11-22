@@ -1,0 +1,48 @@
+' Search's folding (M12 step 19; its own file from step 22's QA round 1, D53): Foundation's
+' folding([.caseInsensitive, .diacriticInsensitive]) as EPGMatcher's generated table gives it, in the LiveSearch
+' namespace. Uses EPGMatcher (the fold table, with Unicode) and nothing else, so SearchFolder (the view's folding for
+' non-ASCII typing) loads this file, EPGMatcher.bs and Unicode.bs only. SearchTask and TeamsTask load it with
+' LiveSearchIndex.bs and LiveSearch.bs.
+'
+'   newFolder() -> EPGMatcher's normalizer with fold(text) (folded with it), which LiveSearch.typedWords calls for
+'     non-ASCII text.
+'   folded(text, n) -> each non-ASCII character its mapping, a combining mark nothing, anything else itself; then
+'     LCase. Code points above U+FFFF stay as they are. "" for anything that isn't text.
+namespace LiveSearch
+
+    ' Step 22 (D19): the folder carries fold, which the model's typedWords calls for non-ASCII text.
+    function newFolder() as object
+        n = EPGMatcher.newNormalizer()
+        n.fold = LiveSearch.foldMethod
+        return n
+    end function
+
+    ' n.fold(text) (m is the folder): LiveSearch.folded with it.
+    function foldMethod(text as dynamic) as string
+        return LiveSearch.folded(text, m)
+    end function
+
+    function folded(text as dynamic, n = invalid as dynamic) as string
+        kind = LCase(type(text))
+        if kind <> "string" and kind <> "rostring" then return ""
+        if n = invalid then n = EPGMatcher.newNormalizer()
+        if not n.nonASCII.IsMatch(text) then return LCase(text)
+        if n.mappings = invalid then EPGMatcher.loadFoldTable(n)
+        parts = []
+        for i = 1 to Len(text)
+            piece = Mid(text, i, 1)
+            code = Asc(piece)
+            if code >= 128
+                mapped = n.mappings[piece]
+                if mapped <> invalid
+                    piece = mapped
+                else if code <= 65535
+                    if EPGMatcher.inRanges(code, n.drops) then piece = ""
+                end if
+            end if
+            parts.Push(piece)
+        end for
+        return LCase(parts.Join(""))
+    end function
+
+end namespace

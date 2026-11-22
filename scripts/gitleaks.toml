@@ -10,39 +10,64 @@ title = "MMTVL"
 [extend]
 useDefault = true
 
+# The key groups are non-capturing, so each finding's secret is its whole match and --redact hides all of it (M12
+# step 24, D58: with a capturing group gitleaks took that group as the secret and printed the rest, token included).
 [[rules]]
 id = "iptv-playlist-url"
 description = "IPTV playlist or panel URL with an account part"
-regex = '''(?i)https?://[^\s"'<>]+/(get\.php|player_api\.php|xmltv\.php|app\d*/)[^\s"'<>]{8,}'''
+regex = '''(?i)https?://[^\s"'<>]+/(?:get\.php|player_api\.php|xmltv\.php|app\d*/)[^\s"'<>]{8,}'''
 
 [[rules]]
 id = "m3u-stream-token"
 description = "Stream URL with a long token path segment"
-regex = '''(?i)https?://[^\s"'<>]+/[A-Za-z0-9_-]{32,}/[^\s"'<>]*\.(m3u8?|ts)'''
+regex = '''(?i)https?://[^\s"'<>]+/[A-Za-z0-9_-]{32,}/[^\s"'<>]*\.(?:m3u8?|ts)'''
 
+# The URL a query belongs to is part of the match when it is written right before it (M12 step 24, D58), so the
+# .example allowlist below can judge the URL itself.
 [[rules]]
 id = "credential-query"
 description = "Credentials in a URL query"
-regex = '''(?i)[?&](username|password|token|api_key|apikey)=[^&\s"'<>]{6,}'''
+regex = '''(?i)(?:https?://[^\s"'<>]*?)?[?&](?:username|password|token|api_key|apikey)=[^&\s"'<>]{6,}'''
 
 [[rules]]
 id = "plex-token"
 description = "Plex token"
-regex = '''(?i)(X-Plex-Token|plex-token|accessToken)["'=:\s]+[A-Za-z0-9_-]{16,}'''
+regex = '''(?i)(?:X-Plex-Token|plex-token|accessToken)["'=:\s]+[A-Za-z0-9_-]{16,}'''
 
-# Test fixtures and documentation stand-ins (whole-line match): reserved .example hosts, and the made-up
-# HDHomeRun DeviceAuth values in AntennaGuideTests.
+# M12 step 24 (N-4): an HDHomeRun DeviceAuth in a SiliconDust guide URL.
+[[rules]]
+id = "hdhomerun-deviceauth"
+description = "HDHomeRun DeviceAuth in a URL"
+regex = '''(?i)DeviceAuth=[A-Za-z0-9+/=_%-]{8,}'''
+
+# Reserved .example hosts (RFC 2606), judged on each finding's own match, which must start with a .example URL (M12
+# step 24, N-4, D58). Until step 24 this was a whole-line allowlist, so a real URL on the same line as a .example one
+# was suppressed too.
+[[allowlists]]
+description = "MMTVL test fixtures: findings on a reserved .example host"
+regexTarget = "match"
+regexes = [
+  '''(?i)^https?://([a-z0-9._-]+(:[a-z0-9._-]*)?@)?[a-z0-9.-]*\.example([/:?"]|$)''',
+]
+
+# The made-up DeviceAuths of AntennaGuideTests (Swift and Roku) and URLDisplayTests, judged on the match: the whole
+# value must be made of them, as written or percent-decoded (gitleaks decodes percent-encoded text and scans it too).
+[[allowlists]]
+description = "MMTVL test fixtures: made-up HDHomeRun DeviceAuths"
+regexTarget = "match"
+regexes = [
+  '''^DeviceAuth=(AAAAbbbb1111|CCCCdddd2222|FAKEauthONE1111|FAKEauthTWO2222|abcdef0123456789|ab%2Bcd%2Fef%3D%3D1234|ab\+cd/ef==1234|ab%5Fcd%2Def12345|ab_cd-ef12345)+"?$''',
+]
+
+# Other test fixtures and documentation stand-ins (whole-line match).
 [[allowlists]]
 description = "MMTVL test fixtures and placeholders"
 regexTarget = "line"
 regexes = [
-  '''(?i)https?://([a-z0-9._-]+(:[a-z0-9._-]*)?@)?[a-z0-9.-]*\.example([/:?"]|$)''',
-  # M12 Roku tests: made-up import secrets and a made-up DeviceAuth.
+  # M12 Roku tests: made-up import secrets.
   '''"(0123456789abcdef0123456789abcdef|fedcba9876543210fedcba9876543210)"''',
-  '''DeviceAuth=abcdef0123456789"''',
   # pen.dev's file identifier in design/*.pen (file metadata, not a credential; user, 2026-11-22).
   '''^\s*"fileToken":\s*"[A-Za-z0-9_-]+",?\s*$''',
-  '''(AAAAbbbb1111|CCCCdddd2222|ab_cd-ef12345|ab%5Fcd%2Def12345)''',
   '''user:secret@meet\.google\.com/home\?calling=1&token=abc''',
   '''user:secret@IPTV\.example:8080/get\.php\?token=abc#x''',
 ]

@@ -168,6 +168,10 @@ sub answerMatch(request as object)
     if picked.Count() > 0
         index = ensureIndex(request.options)
         holder = m.top.guideHolder
+        ' Step 22 (D48, D2's fallback): after a critical memory alert the match makes no copy of the guide; game
+        ' entries still match, programmes and upcoming games don't.
+        skipGuide = request.skipGuide
+        if (type(skipGuide) = "Boolean" or type(skipGuide) = "roBoolean") and skipGuide then holder = invalid
         if holder <> invalid
             #if DEBUG
                 timer = CreateObject("roTimespan")

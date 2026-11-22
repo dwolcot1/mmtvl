@@ -62,6 +62,8 @@ xcodebuild -project MMTVL.xcodeproj -scheme MMTVL -derivedDataPath build test
 
 Set your own team in the project's signing settings, or sign ad hoc with `CODE_SIGN_IDENTITY=-` (then Accessibility has to be granted again after each build).
 
+The `roku/` folder holds a separate, sideloaded Roku app for Live TV; see [roku/README.md](roku/README.md).
+
 ## License
 
 MMTVL is MIT licensed ([LICENSE](LICENSE)). It includes mpv, FFmpeg and other libraries under their own licenses, some LGPL: see [THIRD_PARTY_NOTICES.md](MMTVL/Licenses/THIRD_PARTY_NOTICES.md), which also explains how to rebuild MMTVL with a modified library. The same list is in Settings → Licenses.

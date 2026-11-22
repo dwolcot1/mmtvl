@@ -14,8 +14,14 @@
   - Every decision taken without the user is in **[M12-decisions-log.md](M12-decisions-log.md)**, with the reason and pros and cons.
   - Git: after QA, each step is committed, scanned with gitleaks and pushed. Each phase gets a PR when it's done, stacked on the one before. Once phase 6's automated steps are done, every gate runs again and the PRs are squash-merged in order (#1, #2, #4, #5, then phases 4–6), each rebased onto `master` first.
   - Device steps (1, 4, 15, 23) stay open for the user.
-- **Branches stack:** `m12-phase0` (PR #1) → `m12-phase1` (#2) → `m12-step13` (#4, phase 2) → `m12-step14` (#5, phase 3) → `m12-step16` → `m12-step17` → `m12-step18` → `m12-step19` → `m12-step20` (#6, phase 4: base `m12-step14`) → **`m12-step21`** (phase 5's PR: head `m12-step21`, base `m12-step20`). Worktree `.claude/worktrees/step9`. Done and QA-passed: steps 2, 3, 5–14 and 16–21. `test:local`: 713 passed; script tests 40; MMTVL full suite 2096.
-- **Next: step 22** (phase 6), then step 24 (security review) and step 25 (docs). Step 21 (Antenna) is built with every path gated (U1, D21–D44); its device checks are in its Deviations entry. Step 22 is the low-end pass: memory alerts drop logos and the search index; SearchView's render-thread imports (D19). Pencil: read frames with `execute` on the file's `uri`, read-only, and never save from this session.
+- **Branches stack:** `m12-phase0` (PR #1) → `m12-phase1` (#2) → `m12-step13` (#4, phase 2) → `m12-step14` (#5, phase 3) → `m12-step16` → `m12-step17` → `m12-step18` → `m12-step19` → `m12-step20` (#6, phase 4: base `m12-step14`) → `m12-step21` (#7, phase 5: base `m12-step20`) → `m12-step22` → `m12-step24` → **`m12-step25`** (phase 6 is steps 22, 24 and 25 on stacked branches; its PR opens now, base `m12-step21`). Worktree `.claude/worktrees/step9`. Done and QA-passed: steps 2, 3, 5–14 and 16–21; step 24 is done (no findings above low; the lows are in its entry); step 25 is done (docs, D61); step 22 is built and QA-passed, its done-when (a 2-hour stick run under 80 % of `GetChannelMemoryLimit`) waits for step 23. `test:local`: 742 passed; release build 127 files; script tests 40; MMTVL full suite 2096.
+- **Next (automated run): the phase 6 PR** (`m12-step25`, base `m12-step21`; steps 22, 24 and 25), then **every gate again** on the top of the stack (`cd roku && npm run build && npm run lint && npm run test:local && npm run build:release`, `python3 -I scripts/test_roku_export_settings.py`, the MMTVL full suite, and step 24's gitleaks commands), then the **squash-merges in order** (#1, #2, #4, #5, #6, #7, then phase 6), each rebased onto `master` first. Steps 21 and 22 are built with every unprobed path gated or guarded (U1, D21–D55); their device checks are in their Deviations entries. Pencil: read frames with `execute` on the file's `uri`, read-only, and never save from this session.
+- **For the user (device steps, still open; the receiver at −75 dB, the TV and receiver off when done):**
+  - **Step 1:** a Roku (Ultra as the reference, plus a Streaming Stick or Express), developer mode, a DHCP reservation, `roku/.env`; record model, OS and Control by mobile apps here.
+  - **Step 4:** run the probe build (`npm run build` → `out/mmtvl-live-tv.zip`, or `npm run deploy`) on both, record the table, and decide .gz guides, the guide window, MPEG-2 and Multiview; then flip `AntennaConfig.bs` and the provisional limits to match.
+  - **Step 15:** device build A (the migration, zapping, guides, a 30-minute stick run, reboot, re-sideload for Q33), plus the device checks steps 2–14 list.
+  - **Step 23:** device build B (My Teams, Search, Match Guide, antenna, an hour on the stick), plus step 22's done-when (a 2-hour stick run under 80 %) and the device checks steps 16–24 list.
+  - **Not device:** look through `design/roku-live-tv.pen` for the provider's name (step 25's entry).
 - Gates for every Roku step: `cd roku && npm run build && npm run lint && npm run test:local` (264 passed at the end of phase 1), plus `npm run build:release`. No simulator runs with network access. Use a separate git worktree for parallel steps (`git worktree add -b m12-stepN .claude/worktrees/stepN <commit>`); the built-in isolation started from the wrong commit.
 
 ## Goal
@@ -213,7 +219,7 @@ scripts/roku-export-settings.py   one-time migration (L2), python3 -I, standard 
 
 ### Local decisions
 
-- **L1, tooling:** BrighterScript (`.bs`, namespaces and classes, compiled to BrightScript), `roku-deploy`, Rooibos and bslint as npm **devDependencies** in `roku/`. `package-lock.json` is committed. Nothing from npm ships in the app. The device address and password come from gitignored `roku/.env`.
+- **L1, tooling:** BrighterScript (`.bs`, namespaces and classes, compiled to BrightScript), `roku-deploy`, Rooibos and bslint as npm **devDependencies** in `roku/`. `package-lock.json` is committed. Nothing from npm ships in the app except BrighterScript's runtime, `@rokucommunity/bslib` 0.1.1 (MIT), which `bsc` adds to every build as `source/bslib.brs`, with its notice in `licenses/bslib.txt` (corrected at step 25: security N-5, D61). The device address and password come from gitignored `roku/.env`.
   - *Why:* type checks and tests with no runtime dependency.
 - **L2, migration** is a one-time script, `scripts/roku-export-settings.py` (Python standard library, run as `python3 -I`):
   1. Reads `iptv-playlist-url` and `iptv-guide-urls` with `security find-generic-password -s dev.mmtvl.launcher -a <account> -w` (macOS may ask to allow it), plus the JSON files above.
@@ -448,10 +454,16 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
   4. Antenna: channels listed, an H.264 channel plays, MPEG-2 per step 4, both tuners busy gives the message (start 2 antenna streams elsewhere).
   5. The stick: an hour of use without a crash, and the Settings → Device texts are right.
   - Done when: each check is ticked or its failure is recorded here.
-- [ ] **24. Security review** `[security]`
-  - The whole `roku/` tree and the script: no URL, token, `DeviceAuth` or secret in logs; the import's validation; LAN-only rules for import and antenna; HTTPS certificate use; the registry contents; the npm devDependencies (versions, `npm audit`, nothing shipped); gitleaks (`scripts/gitleaks.toml`) over the branch; no provider name.
+- [x] **24. Security review** `[security]`
+  - The whole `roku/` tree and the script: no URL, token, `DeviceAuth` or secret in logs; the import's validation; LAN-only rules for import and antenna; HTTPS certificate use; the registry contents; the npm devDependencies (versions, `npm audit`, nothing shipped; step 24 found bslib does ship, N-5); gitleaks (`scripts/gitleaks.toml`) over the branch; no provider name.
+  - gitleaks, from the repo root: the branch's commits, then the files as they are, one directory per run:
+    - `gitleaks git --config scripts/gitleaks.toml --log-opts="origin/master..m12-step24" --redact --no-banner .`
+    - `gitleaks dir --config scripts/gitleaks.toml --redact --no-banner roku`
+    - `gitleaks dir --config scripts/gitleaks.toml --redact --no-banner scripts`
+    - `gitleaks dir --config scripts/gitleaks.toml --redact --no-banner MMTVLTests`
+    - `gitleaks dir --config scripts/gitleaks.toml --redact --no-banner docs`
   - Done when: no open findings above low, and lows are recorded here.
-- [ ] **25. Docs** `[doc]`
+- [x] **25. Docs** `[doc]`
   - A **Roku (M12)** section in `CLAUDE.md`:
     - the commands: `npm run build|lint|deploy|test|console` in `roku/`, `.env`, the migration script and its flags;
     - the layout; the registry section `mmtvl` and its keys;
@@ -506,7 +518,7 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
   - `roku/tools/roku.mjs` runs `deploy`, `test`, `console` and `test-local`, reads `roku/.env` (a one-line message and exit 1 when it's missing), and passes the password to Rooibos by environment, never argv.
   - The Rooibos build is `bsconfig.test.json` (extends `bsconfig.json`, specs staged as `source/tests`). The off-device build is `bsconfig.local.json`. Local suites are `tests/local/<Suite>.test.bs` with `namespace <Suite>Tests` and `sub test_<name>(t)`, run by `tests/local/support/LocalTest.bs`, and `npm run test:local` exits 1 on any failure. `npm run lint` covers all three projects.
   - Also: HD icon and splash variants, and `bs_const=DEBUG=true` in the manifest. **The release build must set DEBUG=false** (QA minor): owed by whichever step adds packaging; no `package` script yet.
-  - **`npm audit`: 43 high, accepted as dev-only.** zod via brs-node's jimp, picomatch (no patched release exists) and decode-uri-component. Nothing from npm ships in the app (L1). Re-check at step 24.
+  - **`npm audit`: 43 high, accepted as dev-only.** zod via brs-node's jimp, picomatch (no patched release exists) and decode-uri-component. Nothing from npm ships in the app (L1). Re-check at step 24. *(Corrected at step 25: bslib ships as `source/bslib.brs`, N-5, D61; the audit's packages are dev-only either way.)*
   - Device checks owed to the first device session: `npm run deploy` shows the scene and version, the icon and splash look right, and the Rooibos sample passes.
 - **2026-11-18, step 3 review (security L-2), carried to steps 6, 8, 9 and 21:** the app fetches whatever the playlist names: its `url-tvg` guide, and its stream URLs. Carry over the equivalent of MMTVL's `RelayURLPolicy`, so public entries never reach loopback, link-local, LAN or the Roku's own addresses.
 - **2026-11-18, step 3, for step 9: display-name case.** Step 3's `XMLTVScan` lowercases display-names, as *Research* says, but MMTVL's `XMLTVParser.add` keeps names as written, de-duplicated exactly. So "ESPN" and "espn" stay two names when ids merge. Matching folds case either way. Step 9 follows MMTVL, and the parity fixtures decide.
@@ -871,3 +883,106 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
     - **Accepted, no change:** the remaining O(n) field copies (D37's cons, with the 10k device check), and "Searching…" during a queued Find (D42).
     - **Orchestrator's review:** the merge watchdog's branch also cleared no `mergePending` that was set while the merge ran, so the launch could still wait. It now clears it (the revision −1 brings the merge back at the next task's end; restarting it there could loop every watchdog period).
     - `test:local`: 713 passed. Security review (step 21's done-when): no findings above low; L-1, L-2 and L-3 fixed, L-4 and L-5 recorded (L-5 must be fixed before D27 flips to "json").
+- **2026-11-22, step 22 (built by the implementer; QA to follow; checkbox left open: the done-when is a device check).** Decisions D45–D55 in [M12-decisions-log.md](M12-decisions-log.md).
+  - **New:**
+    - `MemoryRelief.bs`: per alert, what goes (D45–D48), Roku's fallback (D47), the guards and the DEBUG line (D54);
+    - `LiveSearchIndex.bs` and `components/search/SearchFolder.*` (D53);
+    - tests: MemoryReliefTests, SearchTypingTests, Layout720pTests.
+  - **Changed:**
+    - `main.bs` subscribes to the alerts and gives them to the scene's new `memoryAlert` field;
+    - MainScene drops what `MemoryRelief.apply` says: logos through `logoSettings()`, LogoTask `{ clear: true }`, SearchTask `{ kind: "dropIndex" }`, GuideTask's new `windowHours` with a rematch run, TeamsTask's `skipGuide`;
+    - logos load at their display size (D49);
+    - Settings → Device's texts (D52);
+    - `npm run build:release` checks that no DEBUG memory line is left (D54).
+  - **Counts:** `test:local` 735 passed (713 + 22); release 124 files. `Search.test.bs` is unchanged.
+  - **API source:** developer.roku.com answered 403, so `roAppMemoryMonitor`, `ifAppMemoryMonitor`, `roAppMemoryNotificationEvent`, `roDeviceInfoEvent`, "Memory management", "Specifying display resolution", Poster and the 15.2 release notes were read from Roku's GitHub docs repo (`rokudev/dev-doc`, branch v2.0).
+  - **Unverified:**
+    - the event's value type;
+    - whether 15.2+ sends the 85–95 % alerts, and how they are throttled;
+    - `GetChannelMemoryLimit`'s units;
+    - how a Poster scales a non-square logo with both load fields set;
+    - whether a component's scripts compile only when its first node is made (D53).
+  - **Plan items handed to step 22, as decided:**
+    - 720p images: not made (D50);
+    - Settings' animation and D5's one-line game: left as is (D55);
+    - D2's fallback: built as the critical-level `skipGuide` (D48);
+    - the search index: dropped by every alert from 80 % (D45).
+  - **Device checks (step 23):**
+    - **The done-when:** on a Streaming Stick, a 2-hour run with guide browsing stays under 80 % of `GetChannelMemoryLimit`. Read the DEBUG `[MMTVL][Memory] Using … highest since launch … (under 80 %)` line every 5 minutes on port 8085.
+    - **Memory alerts:**
+      - The launch line says which alerts are on: "(80, 85, 90 and 95 %)" on 15.2+, "(one, at 80 %)" earlier, or the device fallback.
+      - At an alert, the `Warning: Memory alert: N % …` line appears. Logos leave the guide and the banner, and Settings → Device says "Off: Low Memory".
+      - At 85 %, a guide run with no download follows, and Guide Window reads "12 Hours: Low Memory".
+      - At 90 %, My Teams keeps only game entries.
+      - The next Search after an alert shows "Searching…" while the index builds.
+      - Relaunching brings everything back.
+      - To force an alert, a DEBUG build could load a large guide on a stick. **Unverified** whether Roku's tools can raise one.
+    - **Texture memory:** `loaded_textures` on port 8080 shows the logos at 48 and 96 px, whatever their file size.
+    - **720p, on an HD Roku (or a Roku set to 720p):**
+      - no screen clips at 1280 × 720 (the guide, its group column, the channel menu and the wide Match Guide menu, Search, Choose Teams, Settings and its band, the banner, the timeshift bar and badge, the low-memory notice, Import);
+      - text widths in the system font;
+      - the 9-patch corners scaled by 2/3 (D50);
+      - Settings → Device's texts for that Roku's class (D52).
+    - **Search:** typing a non-ASCII letter from the Roku mobile app narrows as on the Mac (the SearchFolder node), and the first such letter causes no stall.
+    - **Fallback forced (QA round 1):** on a Roku without app memory alerts (or with `EnableMemoryWarningEvent` returning false), a "low" or "critical" `roDeviceInfoEvent` reaches the scene and drops what D47 says.
+  - **QA round 1 (qa-deep FAIL, 1 major): fixes.**
+    1. **(major)** The fallback's `roDeviceInfo` is kept in the AA Main holds for its whole loop, with the monitor, so it isn't released and stays able to send (D47).
+    2. `onMemoryAlert(event)` reads each event's own data, so a 90 % alert followed at once by an 89 % one is still applied (D47).
+    3. A memory shrink's run skips the failure wait (`GuideRuns.rematchWaits`, tested). Settings → Device shows "12 Hours: Low Memory" only once a run with that window has answered (D46).
+    4. `SearchFolder` loads only `LiveSearchFold.bs` (new: `newFolder`, `folded`), `EPGMatcher.bs` and `Unicode.bs`: 124,273 → 49,396 bytes (D53).
+    5. D53's numbers are corrected: SearchView after = 105,289 bytes (LiveSearch 20,590).
+    6. The logos' `loadWidth`/`loadHeight` are in the XML markup, before any `uri`, and no longer set in `init()` (D49).
+    7. A `dropIndex` that arrives during an index build is done right after that request (a waiting query uses the index once), so the index isn't kept (D45).
+    - **Counts:** `test:local` 736 passed; release 125 files.
+- **2026-11-22, step 24 (security review: nothing above low; the lows fixed or recorded by the implementer; QA to follow).** Decisions D56–D60 in [M12-decisions-log.md](M12-decisions-log.md).
+  - **Fixed:**
+    - **N-1 (D57):** after Remove Live TV Source set LogoTask's `playlistURL` to `""`, logos still waiting were fetched with `URLPolicy.allows(url, "")`, which allows any host, LAN and loopback included.
+      - Now `URLPolicy.allowsLogo` refuses every logo with no playlist, before LogoTask makes a transfer ("not allowed"; not remembered as failed).
+      - MainScene's `dropWaitingLogos()` sends LogoTask `{ clear: true, reason: "source" }` on Remove Live TV Source, a changed playlist and an import's Replace.
+      - Test: `LogoCacheTests.withNoPlaylistAWaitingLogoIsRefused` (a waiting `http://127.0.0.1/x.png` is refused with `noPlaylist`; the old check allowed it). Task components aren't in the local build, so "no transfer is made" rests on `fetch` checking before `CreateObject("roUrlTransfer")`.
+    - **N-2:** `PlaylistTask.loadPlaylist`'s catch now deletes `tmp:/mmtvl-playlist.m3u`, as ImportTask's does; not after a merge-only run, which never downloads (a stopped task's load may still be using the file). **No test:** PlaylistTask creates its `roUrlTransfer` itself and isn't in the local build, so a throwing fake reader can't reach it without a refactor.
+    - **N-3 (D56):** `HDHomeRun.decodeJSON` checks `JsonDepth.fits(text, 8)` before `ParseJson` for `discover.json`, `lineup.json`, `status.json` and `lineup_status.json`; the loop is the import's, moved to `source/lib/JsonDepth.bs`. Tests:
+      - `HDHomeRunTests.aDeeplyNestedAnswerIsntParsed`: a discover.json that `ParseJson` reads as a good tuner, with one field 9 deep, gives "notTuner"; 8 deep is still a tuner; a 16 KB nested answer gives "notTuner"; the other three files are refused the same way.
+      - `JsonDepthTests` (3).
+    - **N-4 (D58):** `scripts/gitleaks.toml`:
+      - the `.example` allowlist is checked against each finding's match (`regexTarget = "match"`, anchored), and `credential-query` takes in the URL written before its query;
+      - new rule `hdhomerun-deviceauth`, `(?i)DeviceAuth=[A-Za-z0-9+/=_%-]{8,}`, with the made-up test DeviceAuths allowlisted on the match;
+      - the key groups are non-capturing, so `--redact` hides each whole match. Before, it printed tokens next to the redacted group. This wasn't a finding.
+      - Step 24's text above now gives the per-directory commands.
+    - **N-6 (D59):** `npm audit fix` (no `--force`) in `roku/`: "31 high severity vulnerabilities" (JSON metadata: high 33) → "found 0 vulnerabilities". Only `package-lock.json` changed (transitive: jimp 1.7.0, zod 4.6.7, `decode-uri-component` removed, `source-map-resolve` 0.5.0). The direct devDependencies are unchanged, and all four gates pass, so it is kept.
+    - **N-8 (D60):** the import's confirm screen begins with a **From** row, the address the import asked (`checkRequest`'s host), which the script prints as "serving the settings from <address>". The plan forbids showing a tuner's address, not this one. Tests: `ImportTests.theSummaryShowsHostsAndCountsOnly` (updated) and `theSummarySaysWhereTheBundleCameFrom`.
+  - **Recorded, accepted low (with the device check):** **L-6 of step 8**, which this plan didn't word. Where a transfer reports no peer address, the peer check fails open:
+    - `GuideTask.checkPeer` (GuideTask.bs:423-428) and `LogoTask.checkPeer` (LogoTask.bs:131-137 as reviewed, 140-146 now) accept and warn once;
+    - `ImportBundle.peerAllowed` (ImportBundle.bs:132-135 as reviewed, 133-137 now) returns true;
+    - `PlaylistTask` only logs whether one was reported (the playlist is typed by the user).
+    - Whether a Roku always reports `GetTargetIpAddress`, and for which hop, is step 8's device check. If it does, these can fail closed.
+  - **Handed on to step 25 (docs):**
+    - **N-5:** bslib 0.1.1 (MIT) ships in the app as `source/bslib.brs`; the README's licenses need it.
+    - **N-7:** the registry holds the token-bearing playlist and guide URLs in plain text. This is unavoidable on Roku (no keychain); the README should say so, next to the dev-mode console risk.
+    - **The `.pen` check:** the text of `design/roku-live-tv.pen` hasn't been checked for a provider name. It can be read only through the Pencil MCP tools, which the implementer may not use.
+  - **Carried lows, re-assessed; all stand as low:**
+    - **L-3 (step 8):** URL-bearing node fields; it depends on the device's `/query/app-ui` answer (step 15).
+    - **L-7 (step 9):** a crash backtrace on port 8085 shows locals (dev mode only).
+    - **L-8 (step 9):** unsalted SHA-1 of guide URLs in file names, ids and `SettingsScreen.model` (readable only with dev-mode access).
+    - **Step 14 L-3:** any LAN host with ECP can open the confirm screen with its own bundle. N-8's From row now shows which host it was.
+    - **Step 14 L-4:** the 64 KB cap is polled every 250 ms.
+    - **Step 21 L-4:** the tokened SiliconDust URL lives in a local and the transfer while it downloads (dev mode only).
+    - **Step 21 L-5:** the JSON guide has no total cap. It is still gated off (D27 = "xmltv"), and must be fixed before D27 flips. N-3's depth check doesn't cover `AntennaGuide`'s `ParseJson` of that guide either.
+  - **Commands run** (all in the worktree; nothing on a Roku, the LAN or the provider's network):
+    - in `roku/`: `npm audit` (before and after), `npm audit fix`, `npm ls --depth=0`, and the gates `npm run build && npm run lint && npm run test:local && npm run build:release` → "LOCAL TESTS: 742 passed, 0 failed", "Release build: 126 files, no probe code, no DEBUG memory line";
+    - gitleaks 8.30.1 from the root, as in step 24's text above (each "no leaks found"), plus `gitleaks git --config scripts/gitleaks.toml --redact --no-banner .` over the whole history (207 commits, "no leaks found"), and the old config against scratch cases for comparison (D58).
+    - `scripts/roku-export-settings.py` wasn't touched, so its tests weren't run.
+  - **Counts:** `test:local` 742 passed (736 + 6); release 126 files (`JsonDepth.brs`).
+  - **Device checks (step 23):** the From row at 1080p and 720p (8 rows); a tuner's `lineup.json` passing the depth scan in reasonable time on a stick; Remove Live TV Source with logos still loading (the "Live TV source changed: N waiting logos dropped" line, and no logo fetched after it).
+- **2026-11-22, step 25 (docs; done-when met).** Written against the code, not the plan: a **Roku (M12)** section in `CLAUDE.md` (plus the gates line in its Commands), a new `roku/README.md`, D54–D56 "as built", Q30–Q33 "pending" notes, the M12 row and the repo layout in the master plan, and **D61** in [M12-decisions-log.md](M12-decisions-log.md).
+  - **Done-when:** every `npm run` script the docs name exists in `roku/package.json`: `build`, `build:release`, `lint`, `test:local`, `deploy`, `test`, `console` (the plan's `build|lint|deploy|test|console` among them). The script's flags are `--roku` and `--dry-run` (`argparse`, `roku-export-settings.py:710-712`).
+  - **N-5 (D61):** `roku/licenses/bslib.txt` (bslib 0.1.1's MIT notice) is in `files` of `bsconfig.json`, `bsconfig.test.json` and `bsconfig.release.json`, so it ships in every zip. "Nothing from npm ships" is corrected in L1, step 2's entry, step 24's text and D59.
+  - **N-7:** the README and `CLAUDE.md` say the playlist and guide URLs are in the registry in plain text, unavoidably, and how to wipe them (Remove Live TV Source, Remove Guide, or delete the dev app), next to the dev-mode console on port 8085.
+  - **Where the plan and the build differ** (recorded, not changed; the docs describe the build):
+    - The layout's `package` script doesn't exist. Packaging is `build:release`, an unsigned zip that checks itself; `test:local` was added (Deviations, 2026-11-18).
+    - *Tests* lists Rooibos suites. They're `test:local` suites run by brs-node; Rooibos has only the `Log` sample (`tests/Log.spec.bs`).
+    - `npm run deploy` sideloads the **DEBUG** build (with the Probes screen). A release build goes on through the installer page; there's no `deploy:release`.
+    - Step 20 names `components/guide/MatchGuide.*`. It's built as `MatchGuideTask.*`, with the menu in `ChannelMenuView` (D16).
+  - **No app bugs found** while checking the docs.
+  - **Gates** (in `roku/`): `npm run build && npm run lint && npm run test:local && npm run build:release` → "LOCAL TESTS: 742 passed, 0 failed", "Release build: 127 files, no probe code, no DEBUG memory line" (126 + the notice). No network, simulator or Roku was used.
+  - **Human check (handed on by step 24):** the text in `design/roku-live-tv.pen` hasn't been checked for the provider's name, its domains or its Roku app's name. A `.pen` file can only be read through the Pencil MCP tools, and there's no private-terms file to grep with, so **the user should look through the frames' text** (titles, sample channel and programme names, notes frame) before the phase 6 PR merges.

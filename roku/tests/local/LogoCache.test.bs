@@ -95,6 +95,36 @@ namespace LogoCacheTests
         t.assertEqual(LogoCache.popNewest(queue), invalid)
     end sub
 
+    ' Step 22 (D45): a memory alert empties the queue; each path is reported (LogoTask answers it as not loaded), and a
+    ' path may be asked for again later.
+    sub test_aMemoryAlertEmptiesTheQueue(t as object)
+        queue = LogoCache.newQueue()
+        LogoCache.enqueue(queue, LogoCacheTests.request("a"), 10)
+        LogoCache.enqueue(queue, LogoCacheTests.request("b"), 10)
+        t.assertEqual(LogoCache.clearQueue(queue), [LogoCacheTests.request("a").path, LogoCacheTests.request("b").path], "oldest first")
+        t.assertInvalid(LogoCache.popNewest(queue))
+        t.assertEqual(queue.paths.Count(), 0)
+        t.assertEqual(LogoCache.clearQueue(queue), [], "nothing waiting")
+        t.assertTrue(LogoCache.enqueue(queue, LogoCacheTests.request("a"), 10).added, "it may come again")
+    end sub
+
+    ' Step 24 (security N-1): once Remove Live TV Source sets LogoTask's playlistURL to "", a logo still waiting is
+    ' refused before LogoTask makes a transfer (fetch checks URLPolicy.allowsLogo first and answers "not allowed").
+    ' allows(url, "") alone would have let it through: no referrer means any host.
+    sub test_withNoPlaylistAWaitingLogoIsRefused(t as object)
+        loopback = "http://127.0.0.1/x.png"
+        queue = LogoCache.newQueue()
+        t.assertTrue(LogoCache.enqueue(queue, { url: loopback, path: LogoCache.path(loopback) }, 10).added)
+        waiting = LogoCache.popNewest(queue)
+        t.assertEqual(waiting.url, loopback)
+        t.assertEqual(URLPolicy.allowsLogo(waiting.url, "", []), { ok: false, reason: "noPlaylist" }, "no playlist: no logo")
+        t.assertEqual(URLPolicy.allowsLogo("https://logos.example/a.png", "", []), { ok: false, reason: "noPlaylist" }, "not even a public one")
+        t.assertTrue(URLPolicy.allows(waiting.url, "", []).ok, "the old check: no referrer, any host")
+        t.assertEqual(URLPolicy.allowsLogo(waiting.url, "https://iptv.example/list.m3u", []), { ok: false, reason: "internalHost" }, "a public playlist names no loopback logo")
+        t.assertTrue(URLPolicy.allowsLogo("https://logos.example/a.png", "https://iptv.example/list.m3u", []).ok, "a playlist's public logo")
+        t.assertEqual(URLPolicy.allowsLogo("file:///x.png", "https://iptv.example/list.m3u", []), { ok: false, reason: "notWeb" })
+    end sub
+
     function request(name as string) as object
         url = "https://logos.example/" + name + ".png"
         return { url: url, path: LogoCache.path(url) }

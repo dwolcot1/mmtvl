@@ -28,6 +28,9 @@
         <!-- Step 20: Match Guide's rematch. true: no guide is downloaded; each is read from its cachefs: file
              whatever its age (GuideFetch.withoutDownload), so the run only matches again with the saved overrides. -->
         <field id="cachedOnly" type="boolean" value="false" />
+        <!-- Step 22 (D46): the guide window in hours after a memory alert (MemoryRelief.windowHours); 0, or more than
+             the device class's guideHours, keeps the class's. -->
+        <field id="windowHours" type="integer" value="0" />
         <field id="guideData" type="assocarray" />
         <!-- Step 20: GuideFetch.matchData (the matches and each guide's channel list, no programmes), set before
              result; Match Guide (MatchGuideTask) reads it from the holder. -->
@@ -40,11 +43,13 @@
     <script type="text/brighterscript" uri="pkg:/source/lib/Refresh.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/SettingsStore.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/Capabilities.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/MemoryRelief.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/Inflate.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/XMLTVDate.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/XMLTVScan.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/EPGMatcher.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/AntennaConfig.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/JsonDepth.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/HDHomeRun.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/AntennaLineup.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/AntennaGuide.bs" />

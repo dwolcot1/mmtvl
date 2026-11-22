@@ -146,7 +146,7 @@ function testLocal() {
 // The release build (M12 step 3): bsconfig.release.json leaves out components/probes and the probe assets and
 // compiles with bs_const DEBUG=false (bsc removes every #if DEBUG block). The staged manifest's bs_const line is
 // set to DEBUG=false too, then the staging folder is checked (both team catalogs under data/; no probes folder, no
-// file or text naming a probe) before it is zipped to out/mmtvl-live-tv-release.zip. Signed packaging is a later step.
+// file or text naming a probe; step 22: no DEBUG memory console line) before it is zipped to out/mmtvl-live-tv-release.zip. Signed packaging is a later step.
 async function buildRelease() {
     const staging = join(root, 'out', 'release-staging');
     rmSync(staging, { recursive: true, force: true });
@@ -173,7 +173,8 @@ async function buildRelease() {
     };
     collect(staging, '');
     // The team catalogs (step 16): pro-teams.json from roku/data, college-teams.json copied from MMTVL at build.
-    const missing = ['data/pro-teams.json', 'data/college-teams.json'].filter((file) => !files.includes(file));
+    // Step 25 (D61, D62): bslib's MIT notice, since bsc ships source/bslib.brs in every build.
+    const missing = ['data/pro-teams.json', 'data/college-teams.json', 'licenses/bslib.txt'].filter((file) => !files.includes(file));
     if (missing.length > 0) {
         fail(`build:release: missing from the release build: ${missing.join(', ')}`);
     }
@@ -181,11 +182,18 @@ async function buildRelease() {
     // allowed mention is main's deletion of the probe registry section (security L-6), taken out before the check.
     const probeCode = /ProbesScreen|ProbeTask|ProbeKit|ProbeSynthetic|probeLaunch|mmtvl-probe|\[PROBE\]|pkg:\/probes/;
     const allowedProbeText = /CreateObject\("roRegistry"\)\.Delete\("mmtvl-probe"\)/g;
+    // Step 22 (D54): the DEBUG memory console line (main.bs, MemoryRelief.consoleLine) is DEBUG-only too.
+    const debugOnlyCode = /MemoryRelief_consoleLine|memoryTimer|"Using "|highest since launch/;
     const problems = files.filter((file) => /probe/i.test(file));
     for (const file of files.filter((name) => /\.(brs|xml)$|^manifest$/.test(name))) {
         const text = readFileSync(join(staging, file), 'utf8').replace(allowedProbeText, '');
         if (probeCode.test(text)) {
             problems.push(`${file} names probe code`);
+        }
+        // Code lines only: comments may name it.
+        const code = text.split('\n').filter((line) => !/^\s*'/.test(line)).join('\n');
+        if (debugOnlyCode.test(code)) {
+            problems.push(`${file} has the DEBUG memory console line`);
         }
         if (/DEBUG\s*=\s*true/i.test(text)) {
             problems.push(`${file} has DEBUG=true`);
@@ -198,7 +206,7 @@ async function buildRelease() {
     const zipPath = join(root, 'out', 'mmtvl-live-tv-release.zip');
     rmSync(zipPath, { force: true });
     await rokuDeploy.zipFolder(staging, zipPath);
-    console.log(`Release build: ${files.length} files, no probe code; out/mmtvl-live-tv-release.zip`);
+    console.log(`Release build: ${files.length} files, no probe code, no DEBUG memory line; out/mmtvl-live-tv-release.zip`);
 }
 
 const commands = { deploy, test, console: console8085, 'test-local': testLocal, 'build-release': buildRelease };

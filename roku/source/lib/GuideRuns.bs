@@ -19,7 +19,8 @@
 '   runFailed(runs, wasCachedOnly) -> after a run that failed or was given up (QA of step 20): a rematch run's
 '     rematch is set again, so the overrides it was for are matched once the failure wait is over.
 '   isWaitingAfterFailure(failedRunAt, now) -> the last run failed less than an hour ago
-'     (GuideSources.retryAfterSeconds): choose's rematchWaiting.
+'     (GuideSources.retryAfterSeconds): choose's rematchWaiting. rematchWaits(failedRunAt, now, shrinkPending) ->
+'     the same, but never while a memory alert's shorter window waits for its run (step 22, QA round 1).
 '   choose(runs, hasChannels, verdict, rematchWaiting) -> { runs, run, reason, forgetTimes, cachedOnly }: past the
 '     gate. rematchWaiting (optional, false): a rematch waits (kept) while the last run's failure wait lasts. No
 '     channels: no run, the flags kept (the playlist's answer checks again). force: a run, reason "refresh",
@@ -117,6 +118,13 @@ namespace GuideRuns
     function isWaitingAfterFailure(failedRunAt as dynamic, now as dynamic) as boolean
         if not Refresh.isNumber(failedRunAt) then return false
         return not Refresh.isDue(failedRunAt, now, GuideSources.retryAfterSeconds)
+    end function
+
+    ' Step 22 (QA round 1): choose's rematchWaiting. A shrink a memory alert asked for (shrinkPending) never waits out
+    ' a failure: the shorter window is the point; else isWaitingAfterFailure.
+    function rematchWaits(failedRunAt as dynamic, now as dynamic, shrinkPending as boolean) as boolean
+        if shrinkPending then return false
+        return GuideRuns.isWaitingAfterFailure(failedRunAt, now)
     end function
 
     function checkAgain(runs as object) as boolean

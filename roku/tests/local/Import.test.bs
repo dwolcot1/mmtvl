@@ -274,8 +274,9 @@ namespace ImportTests
     ' --- the confirm screen ---------------------------------------------------------------------------------------
 
     sub test_theSummaryShowsHostsAndCountsOnly(t as object)
-        rows = ImportBundle.summaryRows(ImportTests.sampleBundle(), "204  Metro News 24")
+        rows = ImportBundle.summaryRows(ImportTests.sampleBundle(), "204  Metro News 24", "192.168.1.20")
         t.assertEqual(rows, [
+            { label: "From", value: "192.168.1.20" },
             { label: "Playlist", value: "iptv.example" },
             { label: "Guides", value: "2: epg.example, guides.example" },
             { label: "Favorites", value: "2 channels" },
@@ -297,10 +298,20 @@ namespace ImportTests
         empty.teams = []
         empty.overrides = {}
         values = []
-        for each row in ImportBundle.summaryRows(empty, "None")
+        for each row in ImportBundle.summaryRows(empty, "None", "10.0.0.5")
             values.Push(row.value)
         end for
-        t.assertEqual(values, ["None", "None", "None", "None", "None", "None", "None"])
+        t.assertEqual(values, ["10.0.0.5", "None", "None", "None", "None", "None", "None", "None"])
+    end sub
+
+    ' Step 24 (security N-8): the From row names the address the bundle came from, the one the request was checked
+    ' for (the script prints the Mac's), so a bundle another LAN host sent reads as such.
+    sub test_theSummarySaysWhereTheBundleCameFrom(t as object)
+        checked = ImportBundle.parseContentID("mmtvl-import:10.0.0.5:51234:" + ImportTests.secret, ["192.168.1.50"])
+        t.assertTrue(checked.ok)
+        rows = ImportBundle.summaryRows(ImportTests.sampleBundle(), "None", checked.host)
+        t.assertEqual(rows[0], { label: "From", value: "10.0.0.5" }, "the first row")
+        t.assertEqual(ImportBundle.summaryRows(ImportTests.sampleBundle(), "None", "")[0], { label: "From", value: "?" }, "never empty")
     end sub
 
     sub test_theLastChannelsLabel(t as object)

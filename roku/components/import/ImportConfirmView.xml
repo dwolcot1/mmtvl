@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <!-- Import confirm (M12 step 14, L2; frame NgJ0S "Import confirm"): a full-screen screen over everything (the
      background gradient), with a liveMenuWideWidth standard glass panel (panel.9.png), centred: the title, the
-     question, the summary (ImportBundle.summaryRows: hosts and counts, never a URL; read-only rows with a tileFill
-     line between them), the buttons and the footnote. Two states the frame doesn't draw use the same panel: while
+     question, the summary (ImportBundle.summaryRows: the From row with the import's own address (step 24 N-8, not
+     in the frame), then hosts and counts, never a URL; read-only rows with a tileFill line between them), the buttons and the footnote. Two states the frame doesn't draw use the same panel: while
      the bundle downloads, the question line says so and the only button is Cancel; when the import can't be used,
      the line gives the reason (ImportBundle.message) and the only button is OK. Left and Right move between the
      buttons, OK answers, Back answers Cancel (or OK when that's the only button). Every key is handled here, so
@@ -18,6 +18,7 @@
     <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/URLPolicy.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/SettingsStore.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/JsonDepth.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/ImportBundle.bs" />
     <children>
         <Poster id="background" />

@@ -35,6 +35,21 @@ end sub
 
 sub enqueue(request as dynamic)
     if type(request) <> "roAssociativeArray" then return
+    ' Step 22 (D45): a memory alert turned the logos off; nothing waiting is fetched. Step 24 (N-1, D57): so does a
+    ' removed or changed Live TV source (reason "source"), since what waits was named by the old playlist.
+    clearing = request.clear
+    if (type(clearing) = "Boolean" or type(clearing) = "roBoolean") and clearing
+        dropped = LogoCache.clearQueue(m.queue)
+        for each droppedPath in dropped
+            m.top.ready = { path: droppedPath, ok: false }
+        end for
+        if request.reason = "source"
+            if dropped.Count() > 0 then Log.info("Logos", "Live TV source changed: " + dropped.Count().ToStr() + " waiting logos dropped")
+        else
+            Log.info("Logos", "Memory alert: " + dropped.Count().ToStr() + " waiting logos dropped")
+        end if
+        return
+    end if
     if not LogoCache.isOwnPath(request.url, request.path) then return
     if m.failed.DoesExist(request.path) or m.queue.paths.DoesExist(request.path) then return
     if m.fs.Exists(request.path)
@@ -48,14 +63,16 @@ sub enqueue(request as dynamic)
     end for
 end sub
 
-' Downloads one logo into its cached path. false (remembered for this run) when it may not be fetched or failed.
+' Downloads one logo into its cached path. false (remembered for this run, except a refusal for want of a playlist)
+' when it may not be fetched or failed.
 function fetch(item as object) as boolean
     if m.fs.Exists(item.path) then return true
     playlistURL = m.top.playlistURL
     host = Log.host(item.url)
-    if not URLPolicy.allows(item.url, playlistURL).ok
-        return failed(item, host, "not allowed")
-    end if
+    ' Step 24 (N-1): with no playlist (Remove Live TV Source), nothing waiting is fetched (URLPolicy.allowsLogo).
+    ' That refusal isn't remembered, so the same logo loads once a playlist names it again.
+    verdict = URLPolicy.allowsLogo(item.url, playlistURL)
+    if not verdict.ok then return failed(item, host, "not allowed", verdict.reason <> "noPlaylist")
     part = item.path + LogoCache.partSuffix
     m.fs.Delete(part)
     port = CreateObject("roMessagePort")
@@ -109,8 +126,8 @@ function fetch(item as object) as boolean
     return true
 end function
 
-function failed(item as object, host as string, reason as string) as boolean
-    m.failed[item.path] = true
+function failed(item as object, host as string, reason as string, remember = true as boolean) as boolean
+    if remember then m.failed[item.path] = true
     Log.info("Logos", Log.withHost("A logo", host) + " wasn't loaded: " + reason)
     return false
 end function

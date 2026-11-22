@@ -400,3 +400,223 @@ Each entry has:
 - **Why:** A replay behind Settings starts audio nobody asked for.
 - **Pros:** No surprise audio. **Cons:** The channel stays failed under Settings until it closes.
 - **To reverse:** Drop the "settings" case in `PlayerSession.retryAction`.
+
+### D45. Memory alerts drop logos and Search's index first, and what goes stays gone until the next launch
+- **Step:** 22. **Decision (Recommended):** `MemoryRelief.apply` (pure, tested) decides, per alert:
+  - **80 % (level 1):** channel logos off (the guide's rows and the banner drop theirs, LogoTask's queue empties) and SearchTask's title index dropped;
+  - **85 % (level 2):** also the guide window shrinks (D46);
+  - **90 % or more (level 3):** also My Teams stops copying the guide (D48).
+
+  Logos, the window and the My Teams change stay until the app is opened again. The search index is dropped again by every alert from level 1, since the next search builds it again. A fall below a threshold (Roku OS 15.2 alerts both ways) brings nothing back. The saved Channel Logos setting is unchanged; Settings → Device says why they're off (D52).
+- **Why:** The plan asks alerts to drop logos and shrink the guide window, and step 19 (D7) handed the index to these alerts. Bringing things back when memory falls would load them again and push memory back up, so a Roku near its limit would cycle.
+- **Explained:** On a Roku that runs short once, the guide loses its logos (and, if it gets worse, some hours) for the rest of that session. Opening the app again starts fresh.
+- **Pros:**
+  - Cheapest, least visible things go first; the index costs only a rebuild.
+  - No cycling near the limit.
+- **Cons:**
+  - A single short spike costs the logos for the whole session.
+  - With Search open, a rebuilt index can raise memory again and draw another alert (each one drops it again).
+  - QA round 1: a drop that arrives while the index is being built (the build can't stop, D7) is done right after that request. A query already waiting uses the new index once, then it goes, so the index isn't kept after the alert.
+  - The levels are Roku's documented thresholds, not measured on a stick (step 23).
+- **To reverse:** Change `MemoryRelief.apply`; to bring things back on a fall, act on level 0 in `onMemoryAlert`.
+
+### D46. The guide window shrinks to 12 hours, read again from the files there are
+- **Step:** 22. **Decision (Recommended):** At level 2, `MemoryRelief.shrunkGuideHours` (12) becomes the window. GuideTask's new `windowHours` field carries it to every run from then on, and the scene asks for a rematch run at once (GuideRuns' rematch: it downloads nothing and reads the cached files for the shorter window). The antenna guide's download uses the same window.
+- **QA round 1:**
+  - The shrink's run doesn't wait out the hour after a failed run (`GuideRuns.rematchWaits` with the scene's `shrinkPending`, tested). A Match Guide rematch still waits.
+  - Settings → Device shows "12 Hours: Low Memory" only once a run with the 12-hour window has answered (the window of the guide held, `m.guideShownHours`). Until then it shows the class's hours, which is what the guide holds. Of the two options QA gave, this was the simpler, and the page never claims a window the guide doesn't have.
+- **Why:** The guide data is the biggest thing the app keeps. Trimming it in place would take a long loop on the render thread; a guide run does the work in a Task with its memory guard.
+- **Explained:** The guide shows 12 hours ahead (plus the past 2 hours) instead of 24 or 36.
+- **Pros:**
+  - Roughly halves the programmes kept.
+  - No download, and the work stays off the render thread.
+- **Cons:**
+  - While the run reads, the old guide is still held, a brief peak at a bad time. GuideTask's memory guard stops reading if memory runs out.
+  - One step only (no 6-hour step at 90 %).
+  - If the shrink's own run fails, its retry waits out the normal hour (`shrinkPending` clears when a run starts).
+- **To reverse:** Change `shrunkGuideHours`, or drop `shrinkGuide` from `MemoryRelief.apply`.
+
+### D47. Alerts are read on the main thread, with Roku's own fallback, and an old Roku OS counts its one alert as level 2
+- **Step:** 22. **Decision (Recommended):**
+  - `main.bs` creates `roAppMemoryMonitor`, calls `EnableMemoryWarningEvent(true)` on its port and hands each `roAppMemoryNotificationEvent` to the scene's `memoryAlert` field.
+  - QA round 1: the monitor and the fallback's `roDeviceInfo` are both kept in the AA Main holds for its whole loop, as Roku's example keeps its object. A released `roDeviceInfo` would send nothing.
+  - QA round 1: the scene observes `memoryAlert` with a handler that reads each event's own data (`event.getData()`), not the field's latest value. Two alerts set back to back (a 90 going up, then an 89 going down) are therefore both applied. Of QA's two options, this keeps every alert. Sending only the highest level from main would also work, since drops stay (D45), but it would re-send old alerts.
+  - The level reads the higher of the event's `memoryUsagePercent` and `GetMemoryLimitPercent()` at that moment.
+  - Where the monitor is missing or its alerts can't be turned on, `roDeviceInfo.EnableLowGeneralMemoryEvent(true)` is used, as Roku's own example does: "low" is level 2, "critical" level 3.
+  - With neither, nothing is dropped early, as before.
+  - Before Roku OS 15.2 there is one alert, at 80 %, so that alert counts as level 2 (the 85 % one will never come).
+  - Every call is guarded.
+- **Why:** Roku's docs (rokudev/dev-doc, `roappmemorymonitor.md`, `ifappmemorymonitor.md`, `roappmemorynotificationevent.md`, release notes 15.2). developer.roku.com refused the fetch (403); the same pages in Roku's own GitHub docs repo were read instead.
+- **Explained:** Newer Roku OS versions warn at 80, 85, 90 and 95 %; older ones warn once. The app reacts to whichever it gets.
+- **Pros:** Works on every Roku OS the app runs on, and never crashes for a missing call.
+- **Cons:**
+  - **Unverified:** the event's value type, the throttling, and whether a 15.2 Roku really sends the 85–95 % alerts (step 23). The units of `GetChannelMemoryLimit` aren't documented (Capabilities reads them by size).
+  - A Roku with no monitor gets only the device's "low", which may come late.
+- **To reverse:** In `MemoryRelief.levelOf` and `subscribe`.
+
+### D48. At a critical level, My Teams matches game entries only (D2's cheap fallback)
+- **Step:** 22. **Decision (Recommended):** From level 3, the scene's match requests carry `skipGuide: true`, and TeamsTask then makes no copy of the guide. Game entries ("Away @ Home" channels) still match; programmes on networks and upcoming games don't, until the next launch.
+- **Why:** D2's 5-minute copy (up to 25,000 programmes on a Low Roku) is a memory peak. Skipping it costs one field and one check, whereas D2's other fallback (a pre-filtered team set per guide load) is new work.
+- **Explained:** On a Roku about to run out of memory, My Teams keeps its game channels but stops reading the guide.
+- **Pros:** Removes the largest periodic peak exactly when it matters.
+- **Cons:** My Teams loses its network games and upcoming games for the rest of the session.
+- **To reverse:** Drop `skipGuide` from `requestTeams`, or build D2's pre-filtered set.
+
+### D49. Logos load at their display size; no WebP conversion
+- **Step:** 22. **Decision (Recommended):** The guide's channel cell and the banner set the Poster's `loadWidth`/`loadHeight` to the size shown (48 and 96 px), keeping `scaleToFit`. Nothing is converted to WebP. QA round 1: the two fields are set in the XML markup, so they are in place before any `uri` (Roku's Poster doc). Their values are Theme's `guideLogoSize` and `liveBannerLogoSize` written out; no test ties them together, so change both together.
+- **Why:**
+  - Roku's "Memory management" page: texture memory is width × height × 4 bytes, whatever the file's size or format. LogoCache keeps logos up to 512 KB, which can be a 2000-pixel square (16 MB of texture each).
+  - WebP only shrinks files. The app's own bitmaps are 9-patches (PNG by definition) and icons of at most 86 px. The provider's logos arrive in whatever format the provider uses, and LogoCache already keeps `.webp` ones as they are.
+  - The plan's logo cache (cachefs, LogoTask) is unchanged.
+- **Explained:** A logo now takes at most 48 × 48 × 4 bytes (9 KB) in the guide, whatever its file.
+- **Pros:** Bounded texture memory for logos.
+- **Cons:** **Unverified:** how a Poster scales a non-square logo with both load fields set (it should keep the aspect ratio). Check with `loaded_textures` on port 8080 (step 23).
+- **To reverse:** Remove the two attributes in `GuideChannelCell.xml` and `PlayerBanner.xml`.
+
+### D50. No separate 720p images
+- **Step:** 22. **Decision (Recommended):** No HD image set (`uri_resolution_autosub`). An HD Roku scales the FHD bitmaps by 2/3.
+- **Why:** Roku recommends 720p images "for performance reasons". Here every bitmap is a 9-patch or icon of at most 86 × 86 px (under 30 KB of texture each), with corners and borders on the 3-px grid. The splash and the app icon already have HD versions in the manifest.
+- **Pros:** One image set, with no URI rewriting.
+- **Cons:** Corners scaled by 2/3 may be slightly soft at 720p (a device check).
+- **To reverse:** Run `gen-ninepatch.py` at 2/3 into `images/hd/`, and add `uri_resolution_autosub` plus `$$RES$$` paths in `Theme.images()`.
+
+### D51. The 720p layout check is a test of the FHD layout
+- **Step:** 22. **Decision (Recommended):** `Layout720pTests` checks that:
+  - the manifest designs for FHD only (`ui_resolutions=fhd`, so an HD Roku scales by 2/3);
+  - every layout value in Theme is a multiple of 3 (counts of rows and lines aside);
+  - fonts are at least 24 px;
+  - each screen's boxes fit 1920 × 1080: the guide's grid and hint, the group column, Search's results and hint, Choose Teams' columns, Settings' columns, track and band, the menus, the banner and badge.
+- **Why:** With auto-scaling, nothing clips at 1280 × 720 that fits 1920 × 1080, and values on the 3-px grid land on whole pixels.
+- **Pros:** Runs on every `test:local`; a new value off the grid fails it.
+- **Cons:** Text widths in Roku's system font can only be checked on a Roku: long titles, the wide menu's values and the Device rows (step 23).
+- **To reverse:** Delete the test.
+
+### D52. Settings → Device texts per class and after memory alerts
+- **Step:** 22. **Decision (Recommended):**
+  - Channel Logos' description says "On a Low Roku (see Memory above)" instead of "On Rokus with 512 MB or less". A 720p UI or an unknown memory limit also makes a Roku Low.
+  - After an alert: Channel Logos reads "Off: Low Memory", with "This Roku ran low on memory, so logos are off until MMTVL Live TV opens again. This switch keeps your choice for next time." Guide Window reads "12 Hours: Low Memory", with the detail "Shorter until MMTVL Live TV opens again".
+  - The other texts were checked for each class and kept (tested): Low by memory, Low by its 720p UI ("Low (720p UI)"), Low with an unknown limit ("Unknown · Low"), and High.
+- **Why:** The page follows the "On" / "Off: <reason>" pattern (L7), and the old description was wrong for 720p-only Low Rokus.
+- **Pros:** The page says why something is off.
+- **Cons:** Unreviewed wording; the lengths still need checking at 720p.
+- **To reverse:** The constants in `SettingsPages.bs`.
+
+### D53. D19: SearchView's imports slimmed; the fold tables load only for non-ASCII typing
+- **Step:** 22. **Decision (Recommended):**
+  - `LiveSearch.bs` is split in two. The model and texts stay in `LiveSearch.bs`, which SearchView loads. The folding, the entries, the title index and `searchProgrammes` move to `LiveSearchIndex.bs`, the same namespace, which SearchTask and TeamsTask load.
+  - SearchView no longer loads `EPGMatcher.bs`.
+  - ASCII text is lowercased in the view. Other text (only the Roku mobile app's keyboard sends it) goes to a `SearchFolder` node, made on first use, which loads the fold tables and folds exactly as SearchTask does.
+  - QA round 1: `newFolder` and `folded` moved into their own small file, `LiveSearchFold.bs`. SearchFolder loads only that file, `EPGMatcher.bs` (the fold table) and `Unicode.bs`; the Tasks load it with the other two LiveSearch files.
+  - The state's `searching` flag, set by `textChanged`, replaces the view's calls to `isSearching`.
+- **Why:** Moving the narrowing into SearchTask would make it wait for the Task (busy while it builds the index, D7), so typing would no longer narrow at once. The split keeps the behaviour identical. `Search.test.bs` is unchanged and passes, and `SearchTypingTests` checks that `typedWords` equals `queryWords` and `searching` equals `isSearching` for ASCII, accented and combining-mark texts.
+- **Measured** (compiled `.brs` in `out/staging`, comments included):
+  - **Before:** 153,082 bytes. Theme 21,021; Unicode 10,346; EPGMatcher 35,199; TeamCatalog 8,745; TeamPicker 20,979; BannerText 4,749; MyTeams 5,416; LiveSearch 33,296; SearchView 11,915; bslib 1,416.
+  - **After** (corrected in QA round 1): 105,289 bytes. LiveSearch 20,590; SearchView 12,027; no EPGMatcher. That is 77,665 bytes of code without comments.
+  - **SearchFolder** (QA round 1): 124,273 bytes before (Unicode, EPGMatcher, TeamCatalog, TeamPicker, BannerText, MyTeams, LiveSearch, LiveSearchIndex). 49,396 bytes after: Unicode 10,346; EPGMatcher 35,199; LiveSearchFold 2,133; SearchFolder 302; bslib 1,416.
+- **Pros:**
+  - About 48 KB less on the render thread (the 35 KB fold tables included), and about 49 KB, not 124 KB, if non-ASCII is ever typed.
+  - Same results and timing.
+- **Cons:**
+  - One more component.
+  - **Unverified:** whether Roku compiles a component's scripts when the first node of it is made (so SearchFolder costs nothing until then) or when the app starts.
+- **To reverse:** Merge the two files and import `EPGMatcher.bs` in SearchView again.
+
+### D54. The DEBUG memory line: every 5 minutes, from the main thread
+- **Step:** 22. **Decision (Recommended):** In DEBUG builds, `main.bs` waits at most 5 minutes on its port and then prints `[MMTVL][Memory] Using N % of the limit (GetChannelMemoryLimit M MB, available A MB); highest since launch H % (under 80 % | reached 80 %); alerts K`, plus one line at launch. The highest value counts the 5-minute samples and the alerts. All of it sits inside `#if DEBUG`, and `npm run build:release` now fails if the release staging's code (comments aside) holds it.
+- **Why:** This is the step's done-when: a 2-hour stick run stays under 80 %. The main thread already has a port loop and no render work.
+- **Pros:** One line answers the done-when, and the release build has none of it.
+- **Cons:** A spike between samples shows only if it caused an alert.
+- **To reverse:** In `main.bs` and `MemoryRelief.consoleLine`.
+
+### D55. Left as is: Settings' animation and the one-line upcoming game
+- **Step:** 22. **Decision (Recommended):** The plan's "Step 22 may revisit" items are unchanged:
+  - Settings' animation (only the track slides; rows are clipped, not faded);
+  - D5's one-line upcoming game cell.
+- **Why:** Each needs a device to judge (fades cost render time on a stick), and neither affects memory.
+- **To reverse:** Revisit after step 23's look at 1080p and 720p.
+
+### D56. A tuner's JSON is checked for nesting before ParseJson, with the import's check shared
+- **Step:** 24 (security N-3). **Decision (Recommended):**
+  - The import's byte loop (`ImportBundle.depthOf`, step 14) moves to a small shared lib, `source/lib/JsonDepth.bs` (`ofBytes`, `ofText`, `fits`; about 1 KB compiled). `ImportBundle.depthOf` calls it with its limit of 3, unchanged.
+  - `HDHomeRun.decodeJSON` runs `JsonDepth.fits(text, HDHomeRun.maximumJSONDepth)` before `ParseJson` for `discover.json`, `lineup.json`, `status.json` and `lineup_status.json`. The limit is **8**: these files nest 1 or 2 deep, so this leaves room for firmware differences. A deeper answer reads as no answer: `discover.json` then gives "notTuner".
+  - `JsonDepth.bs` is loaded where `ImportBundle.bs` or `HDHomeRun.bs` is (MainScene, ImportConfirmView, ImportTask, AntennaTask, GuideTask). No other lib moves.
+  - The function is `decodeJSON`, not `parseJSON`. BrighterScript resolves a call inside a namespace to that namespace's own function first, ignoring case, so a `parseJSON` would have turned its own `ParseJson(text)` call into a call to itself. `test:local` caught it (a stack overflow).
+- **Why:** The tuner is a LAN device the app trusts only after checks. A hostile device on the LAN could answer with deep nesting to make `ParseJson` recurse. One loop for both callers means one set of tests.
+- **Explained:** Before reading a tuner's answer, the app counts how deeply its brackets nest. More than 8 levels, and the answer is ignored.
+- **Pros:** The same check as the import's, tested once (`JsonDepthTests`), and it stops counting as soon as the limit is passed.
+- **Cons:**
+  - The scan is a BrightScript loop over every byte, on AntennaTask's or GuideTask's thread. A normal `lineup.json` is tens of KB; one near the 1 MB cap would take longer (**unverified** on a stick).
+  - About 1 KB more code on the render thread (MainScene and ImportConfirmView load ImportBundle).
+- **To reverse:** Call `ParseJson` directly in `HDHomeRun.decodeJSON`, and put the loop back in `ImportBundle.depthOf`.
+
+### D57. A logo needs a playlist, and a removed or changed source empties LogoTask's queue
+- **Step:** 24 (security N-1). **Decision (Recommended):**
+  - `URLPolicy.allowsLogo(url, playlistURL)`: with no playlist (`""`), every logo is refused (reason `noPlaylist`); otherwise it is `allows(url, playlistURL)`, as before. LogoTask's `fetch` checks it before it makes a transfer, and logs "not allowed".
+  - A refusal for want of a playlist isn't remembered as failed, so the same logo loads once a playlist names it again. Other refusals and failures are still remembered for the run.
+  - MainScene's `dropWaitingLogos()` sends `{ clear: true, reason: "source" }` (step 22's clear) on Remove Live TV Source, on a changed playlist (`changePlaylist`) and on an import's Replace. It is sent before the new `playlistURL`, so a logo LogoTask starts in between is judged against the playlist that named it. LogoTask logs "Live TV source changed: N waiting logos dropped" when it dropped any.
+- **Why:** Logos come only from a playlist's entries. `allows(url, "")` means "typed by the user", which allows any host, LAN and loopback included.
+- **Explained:** When the Live TV source is removed or changed, logos that were still waiting to download are no longer fetched.
+- **Pros:** Closes the gap without changing how logos load while a playlist is set.
+- **Cons:** On an import, the queue is cleared twice: once in `applyImportedSettings` and once in `changePlaylist`. The second clear finds nothing and logs nothing.
+- **To reverse:** Use `URLPolicy.allows` in `LogoTask.fetch` again, and remove `dropWaitingLogos()`.
+
+### D58. gitleaks: allowlists checked against each finding, a DeviceAuth rule, and redaction that hides the whole match
+- **Step:** 24 (security N-4). **Decision (Recommended):** In `scripts/gitleaks.toml` (gitleaks 8.30.1):
+  - **The `.example` allowlist** is now a finding-level `[[allowlists]]` with `regexTarget = "match"`, anchored with `^`, so a finding is allowed only when its own match starts with a `.example` URL. Until now it was a whole-line allowlist, so a real URL on the same line as a `.example` one was hidden too. RE2 has no lookahead, so "every URL on the line is `.example`" can't be written as a line regex.
+  - **`credential-query`** now takes in the URL its query belongs to, when the URL is written right before it (`(?:https?://[^\s"'<>]*?)?` in front), so the anchored allowlist can judge that URL. A query with no URL before it is still found.
+  - **New rule `hdhomerun-deviceauth`:** `(?i)DeviceAuth=[A-Za-z0-9+/=_%-]{8,}`. Its allowlist is also checked against the match: the whole value must be made of the tests' made-up DeviceAuths, as written or percent-decoded (gitleaks also scans percent-decoded text). The old line entries for those values are removed, so a real DeviceAuth on a fixture's line is found.
+  - **Redaction:** the rules' key groups are now non-capturing. gitleaks takes a rule's first capture group as the secret, so `--redact` hid only `get.php`, `m3u8` or the query's key name and printed the rest, tokens included. Each finding's secret is now its whole match. This wasn't one of the review's findings: it came up while checking N-4, and it changes only what a scan prints.
+- **Checked:**
+  - With the old config's `.example` line removed, there were 22 findings on the branch's commits and 24 across the four folders, all from `iptv-playlist-url` and `credential-query` on `.example` fixtures.
+  - With the new config, the branch, `roku`, `scripts`, `MMTVLTests`, `docs` and the whole history (207 commits) have none.
+  - A scratch file (not committed) with a made-up provider-style URL, a credential query and DeviceAuths, each next to a `.example` URL or a made-up value on its line, gives 5 findings, each redacted in full. The old config gave 1.
+- **Explained:** The leak scan no longer skips a real address just because a test address is on the same line. It now finds HDHomeRun keys, and hides everything it finds when asked to.
+- **Pros:** Each finding is judged by its own text, and `--redact` output is safe to paste.
+- **Cons:**
+  - Fingerprints of past findings change (the secret is now the whole match). The repo has no `.gitleaksignore`.
+  - A real URL inside a `.example` URL's own query (`https://a.example/r?u=https://real/...`) is still allowed, since the match starts at the `.example` URL.
+- **To reverse:** Restore the file as it was before step 24.
+
+### D59. `npm audit fix` kept: 33 high to 0, dev tools only
+- **Step:** 24 (security N-6). **Decision (Recommended):** `npm audit fix` (never `--force`) in `roku/` is kept.
+  - **Before:** `npm audit` said "31 high severity vulnerabilities" (its JSON metadata: high 33, total 33). **After:** "found 0 vulnerabilities" (metadata: total 0).
+  - Only `package-lock.json` and `node_modules` changed, all from `registry.npmjs.org`. The direct devDependencies (`package.json` and `npm ls --depth=0`) are unchanged: bslint 0.8.47, brighterscript 0.73.8, brs-node 2.7.0, roku-deploy 3.18.4, rooibos-roku 5.17.0.
+  - **Transitive changes:** `jimp` and every `@jimp/*` 1.6.1 → 1.7.0, `bmp-ts` 1.0.9 → 1.1.0, `zod` 3.25.76 → 4.6.7 (jimp 1.7.0's), `decode-uri-component` removed, `source-map-resolve` 0.5.3 → 0.5.0 (deprecated; npm's choice).
+  - All four gates pass after it.
+- **Why:** The plan's step 24 asked for `npm audit`, and step 2 accepted 43 high as dev-only. The fix needed no direct version change.
+- **Explained:** The build tools' own dependencies were updated to versions without the known problems. None of these ships in the Roku app (the one npm package that does, bslib, isn't among them: D61).
+- **Pros:** A clean audit, so a new advisory stands out.
+- **Cons:**
+  - `zod` is a major version newer under brs-node's jimp. Only brs-node's image handling uses jimp, and no local test exercises it.
+  - `source-map-resolve` moved to an older, deprecated release.
+- **To reverse:** Restore `roku/package-lock.json` from before step 24, then `npm ci` in `roku/`.
+
+### D60. The import's confirm screen says where the bundle came from
+- **Step:** 24 (security N-8). **Decision (Recommended):** `ImportBundle.summaryRows(bundle, lastChannelLabel, fromHost)` begins with a **From** row: the IPv4 address the import asked (`checkRequest`'s host, kept as `m.importHost` in the scene; "?" if empty). The script prints that address ("serving the settings from <address>"), so the user can compare the two. The frame (NgJ0S) has no such row; it uses the same row style. The panel grows by one row (57 px at 1080p; about 910 px tall in all, estimated from the Theme tokens with a two-line question and footnote).
+- **Why:** Any LAN host with ECP can open the confirm screen with its own bundle (step 14's accepted L-3). With its address on screen, a bundle from another host reads as one.
+- **Plan check:** the plan forbids showing a **tuner's** address (L6, D29), URLs (only hosts) and the migration secret. Nothing forbids the import's own source address, and step 14 already has the user compare IP addresses (its M-1).
+- **Explained:** Before replacing settings, the Roku shows which computer on the network sent them.
+- **Pros:** The user can spot an import they didn't start.
+- **Cons:**
+  - A LAN IPv4 address on screen (and in photos of it).
+  - **Unverified:** the 8-row panel at 720p (step 23).
+- **To reverse:** Drop the first row in `summaryRows` and its third argument.
+
+### D61. bslib's MIT notice ships inside the package, and in the README
+- **Step:** 25 (security N-5 of step 24). **Decision (Recommended):** `roku/licenses/bslib.txt` holds the MIT license of `@rokucommunity/bslib` 0.1.1 (© 2021 RokuCommunity), with a line saying it covers `source/bslib.brs`. `"licenses/**/*"` is in the `files` of `bsconfig.json`, `bsconfig.test.json` and `bsconfig.release.json`, so every zip carries it at `licenses/bslib.txt`. `roku/README.md` (Third-party code) and `CLAUDE.md` (Roku (M12)) name it too. The plan's L1, step 2's entry, step 24's text and D59, which said nothing from npm ships, are corrected.
+- **Why:** BrighterScript's compiler adds bslib to every build as `source/bslib.brs` (1,416 bytes), so the app does ship npm code, and MIT asks for its notice "in all copies or substantial portions of the Software". A notice inside the package travels with every copy of the zip; a README alone stays in the repo.
+- **Explained:** A small text file with bslib's license now rides along in the app. It is never shown on screen.
+- **Checked:** `npm run build:release` went from 126 to 127 files ("Release build: 127 files, no probe code, no DEBUG memory line"), and `unzip -l` lists `licenses/bslib.txt` (1,345 bytes) in `out/mmtvl-live-tv.zip` and `out/mmtvl-live-tv-release.zip`. The other gates pass ("LOCAL TESTS: 742 passed, 0 failed").
+- **Pros:** Meets the license for every copy of the app, at the cost of 1.3 KB in the package, with no code change.
+- **Cons:**
+  - Nothing checks that the notice matches bslib's version: a bslib update (with a BrighterScript update) needs the file changed by hand. (That the notice is there, `build:release` checks since D62.)
+  - The notice isn't reachable from the app's UI (a Licenses page like MMTVL's would be new UI).
+  - The test zip also holds the Rooibos framework (MIT), with no notice in it; that zip goes only to a developer's own Roku.
+- **To reverse:** Delete `roku/licenses/` and the `"licenses/**/*"` lines; keep the README's notice.
+
+### D62. The release build checks for bslib's notice; no Rooibos notice or `deploy:release`; a pointer in the root README
+- **Step:** 25 (the implementer's three questions). **Decision (Recommended):** `npm run build:release` fails when `licenses/bslib.txt` is missing from the release build, like the team catalogs. The test zip gets no Rooibos notice and no `deploy:release` script is added. The root `README.md` gets one line pointing at `roku/README.md`.
+- **Why:** The notice is a license duty, so a missing one should stop the build that gets installed. The test zip is never handed out (it runs on the dev Roku only), and a release build goes on through the installer page, as the README says.
+- **Explained:** The check is one more entry in the list of files a release build must hold.
+- **Pros:** The notice can't silently drop out; the repo's front page says the Roku app exists. **Cons:** The check proves the file is there, not that it matches bslib's version.
+- **To reverse:** Remove `licenses/bslib.txt` from the list in `roku/tools/roku.mjs`; delete the README line.

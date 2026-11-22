@@ -18,6 +18,7 @@
 '       version, build     "0.1", "1"
 '       playlistChannelCount  step 21: how many of channels are the playlist's (missing: all of them)
 '       antenna            step 21: antennaOf's input (below); antennaPlaysMPEG2: AntennaConfig.playMPEG2
+'       memoryRelief       step 22: MemoryRelief's state ({ logos, guideHours }; missing: nothing dropped)
 '     }
 '     model {
 '       version, build, hasLiveSource, totalChannelCount
@@ -30,10 +31,13 @@
 '       groups             [{ name, channelCount, hidden }] in playlist order (M6b L5)
 '       hiddenChannels     [{ id, number, name, group }] in playlist order; number is Lineup.displayNumber's
 '       channelUpMovesUpList, channelLogos
-'       device             { modelName, os, memory, deviceClass, classLabel, guideHours, compressed, mpeg2, ac3 }
+'       device             { modelName, os, memory, deviceClass, classLabel, guideHours, compressed, mpeg2, ac3,
+'                          guideShrunk, logosDropped }
 '                          (L7): os "Roku OS 15.0" ("" unknown), memory "512 MB" or "Unknown", classLabel the class
 '                          as the Memory row shows it ("Low (720p UI)" when only the 720p UI makes it Low, from
-'                          classReason), compressed the Compressed Guides value
+'                          classReason), compressed the Compressed Guides value; step 22: guideHours is the window in
+'                          use, guideShrunk whether a memory alert shrank it, logosDropped whether one turned the
+'                          logos off (until the app opens again)
 '       lowSpace, spaceLeft   the registry (L5)
 '       antenna            step 21: antennaOf's model (Settings → Antenna; no address, DeviceID or URL)
 '     }
@@ -118,6 +122,7 @@ namespace SettingsStatus
         inflates = true
         if SettingsStatus.isBoolean(input.inflateEnabled) then inflates = input.inflateEnabled
         model.device = SettingsStatus.deviceOf(input.caps, inflates)
+        SettingsStatus.applyRelief(model.device, input.memoryRelief)
         ' Step 21 (D26): MPEG-2 channels play only where the Roku decodes it and AntennaConfig.playMPEG2 allows it.
         model.device.mpeg2Switch = not SettingsStatus.isBoolean(input.antennaPlaysMPEG2) or input.antennaPlaysMPEG2
         return model
@@ -294,6 +299,21 @@ namespace SettingsStatus
         device.ac3 = SettingsStatus.isTrue(caps.ac3)
         return device
     end function
+
+    ' Step 22 (D45, D46): what memory alerts changed. A shrunk window shorter than the class's is the one in use.
+    sub applyRelief(device as object, relief as dynamic)
+        device.guideShrunk = false
+        device.logosDropped = false
+        if type(relief) <> "roAssociativeArray" then return
+        device.logosDropped = SettingsStatus.isTrue(relief.logos)
+        hours = relief.guideHours
+        if SettingsStatus.isNumber(hours)
+            if hours > 0 and hours < device.guideHours
+                device.guideHours = Int(hours)
+                device.guideShrunk = true
+            end if
+        end if
+    end sub
 
     ' "Roku OS 15.0" from "15.0.4.1234"; "" when unknown.
     function osText(version as dynamic) as string
