@@ -70,6 +70,8 @@ namespace Theme
             "settingsRowDetail": { "uri": regular, "size": 24 },
             "settingsDescription": { "uri": regular, "size": 27 },
             "settingsHint": { "uri": regular, "size": 24 }, ' Theme.swift 22
+            ' Roku-only (step 13): a disclosure row's chevron, "›" (MMTVL's chevron.right in settingsRowDetailFont, semibold).
+            "settingsDisclosure": { "uri": bold, "size": 24 },
             "liveBannerTitle": { "uri": bold, "size": 39 },
             "liveBannerProgramme": { "uri": regular, "size": 30 },
             "liveBannerDetail": { "uri": regular, "size": 24 }, ' Theme.swift 22
@@ -217,7 +219,18 @@ namespace Theme
             "settingsBandHeight": 105,
             "settingsBandMaxWidth": 1398,
             "settingsDimmedColumnOpacity": 0.55,
-            "settingsRowFocusScale": 1.03
+            "settingsRowFocusScale": 1.03,
+            ' Roku-only (step 13, frames LQwUy, wjg72, DEDBc, B94oz): the track's visible height (settingsListTop to
+            ' 936, where the band's 24-px gap starts); a row's vertical padding and the gap between its title and
+            ' detail lines (settingsRowTwoLineHeight's 12 and 3); the chevron's box, settingsDisclosureGap after the
+            ' value; at least settingsValueGap between the title and the value.
+            "settingsListHeight": 792,
+            "settingsRowVerticalPadding": 12,
+            "settingsRowLineSpacing": 3,
+            "settingsDisclosureWidth": 27,
+            "settingsDisclosureGap": 24,
+            "settingsValueGap": 24,
+            "unavailableOpacity": 0.4 ' Theme.swift unavailableOpacity: dimmed rows (a hidden group, a guide not in use)
         }
     end function
 
@@ -261,6 +274,7 @@ namespace Theme
             "pausedOverlayDuration": 15, ' D51
             "guideIdleReturn": 180, ' D51
             "menuFade": 0.2, ' Theme.swift menuFadeAnimation
+            "settingsPage": 0.4, ' Theme.swift settingsPageAnimation (a spring, response 0.4): the track's slide
             "overlayFade": 0.25
         }
     end function

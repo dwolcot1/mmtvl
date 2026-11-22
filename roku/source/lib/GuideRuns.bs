@@ -1,0 +1,87 @@
+' When the scene starts a guide run after Settings changed something (M12 step 13, QA of step 13): pure functions
+' over three flags, so a change made while GuideTask runs (or while a task the watchdog gave up on is still alive)
+' is never lost until the 15-minute tick, and the downloaded guides of a removed source are deleted only when no
+' task can be reading or writing them, before any newer run starts.
+'
+'   runs { pending, force, deletePending }
+'     pending        a run was asked for while a task was busy: check again (GuideSources.isRunDue decides) as soon
+'                    as it answers or is let go
+'     force          Refresh Now: the next run downloads every guide again (the scene forgets their times)
+'     deletePending  Remove Live TV Source: the downloaded guides and the last results go before anything else
+'   newState() -> all false.
+'   sourcesChanged(runs) -> pending (a playlist, guide or guide source change; the scene then calls its check).
+'   refreshNow(runs) -> force.  removeSource(runs) -> deletePending.
+'   gate(runs, busy) -> { runs, go, deleteFirst }: the start of the scene's check. busy (a task running, or one
+'     given up on and not yet stopped): no go, and pending, so the check runs again when it answers. Else go, and
+'     deleteFirst when a delete waits (the flag clears; pending and force stay, for the run after it).
+'   choose(runs, hasChannels, verdict) -> { runs, run, reason, forgetTimes }: past the gate. No channels: no run,
+'     the flags kept (the playlist's answer checks again). force: a run, reason "refresh", forgetTimes. Else
+'     verdict.due (GuideSources.isRunDue): a run for verdict.reason. Either way pending clears: this check is the
+'     one it asked for.
+'   checkAgain(runs) -> whether the scene checks again after a task answered or was let go.
+' The functions return new objects; the runs passed in aren't changed.
+namespace GuideRuns
+
+    function newState() as object
+        return { pending: false, force: false, deletePending: false }
+    end function
+
+    function sourcesChanged(runs as object) as object
+        result = GuideRuns.copied(runs)
+        result.pending = true
+        return result
+    end function
+
+    function refreshNow(runs as object) as object
+        result = GuideRuns.copied(runs)
+        result.force = true
+        return result
+    end function
+
+    function removeSource(runs as object) as object
+        result = GuideRuns.copied(runs)
+        result.deletePending = true
+        return result
+    end function
+
+    function gate(runs as object, busy as boolean) as object
+        result = { runs: GuideRuns.copied(runs), go: false, deleteFirst: false }
+        if busy
+            result.runs.pending = true
+            return result
+        end if
+        result.go = true
+        result.deleteFirst = result.runs.deletePending
+        result.runs.deletePending = false
+        return result
+    end function
+
+    function choose(runs as object, hasChannels as boolean, verdict as dynamic) as object
+        result = { runs: GuideRuns.copied(runs), run: false, reason: "", forgetTimes: false }
+        if not hasChannels then return result
+        result.runs.pending = false
+        if result.runs.force
+            result.runs.force = false
+            result.run = true
+            result.reason = "refresh"
+            result.forgetTimes = true
+            return result
+        end if
+        if type(verdict) = "roAssociativeArray"
+            if verdict.due = true
+                result.run = true
+                result.reason = verdict.reason
+            end if
+        end if
+        return result
+    end function
+
+    function checkAgain(runs as object) as boolean
+        return runs.pending or runs.force or runs.deletePending
+    end function
+
+    function copied(runs as object) as object
+        return { pending: runs.pending = true, force: runs.force = true, deletePending: runs.deletePending = true }
+    end function
+
+end namespace

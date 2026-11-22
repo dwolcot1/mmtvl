@@ -3,9 +3,9 @@ sub init()
     styleScreens()
     versionText = appVersionText()
     Log.info("App", "Showing " + versionText)
-    ' Step 11: the screens. m.screen is "guide", "player" or "settings" (Settings → Device's placeholder until step
-    ' 13); m.currentChannel the playing channel (M3U.makeChannels' shape) or invalid; m.launchPending until the first
-    ' playlist answer decides what opens (PlayerSession.launchTarget).
+    ' Step 11: the screens. m.screen is "guide", "player" or "settings" (step 13); m.currentChannel the playing
+    ' channel (M3U.makeChannels' shape) or invalid; m.launchPending until the first playlist answer decides what
+    ' opens (PlayerSession.launchTarget).
     m.screen = "guide"
     m.settingsReturn = "guide"
     m.currentChannel = invalid
@@ -18,12 +18,13 @@ sub init()
     m.player.observeField("action", "onPlayerAction")
     m.player.observeField("failed", "updatePlayback")
     #if DEBUG
-        ' M12 step 3 (L8, until the About page of step 13): DEBUG builds open the Probes screen with Replay in the
-        ' guide (step 12; * opens the channel menu now). Release builds (bs_const DEBUG=false) have none of this,
-        ' and no probe files (bsconfig.release.json).
+        ' M12 L8 (step 13): DEBUG builds open the Probes screen from Settings → About (three Replays). Release
+        ' builds (bs_const DEBUG=false) have none of this, and no probe files (bsconfig.release.json).
         m.probes = invalid
     #end if
     m.store = SettingsStore.load(SettingsStore.deviceRegistry())
+    ' L7: once per launch; the low-memory notice and Settings → Device read it.
+    m.caps = Capabilities.detectDevice()
     m.player.channelUpMovesUpList = m.store.settings.channelUpMovesUpList
     ' Step 12: the guide, the channel menu, the logos and the idle return.
     m.menu = m.top.findNode("channelMenu")
@@ -45,38 +46,38 @@ sub init()
     m.lastInputAt = invalid
     m.idleTimer = m.top.findNode("idleTimer")
     m.idleTimer.observeField("fire", "onIdle")
+    ' Step 13: Settings. m.keyboard is the open StandardKeyboardDialog (invalid when none) and m.keyboardField what
+    ' it edits ("playlist" or "guide"). m.playlistLoadedAt is the last playlist load's wall-clock time (for "Updated
+    ' 6:12 PM"), m.guideStatusByID the last guide run's GuideFetch.statusRows by cache id. m.deferredLaunchID: the
+    ' last channel, when the first playlist answer came while Settings showed (PlayerSession.launchRoute); it plays
+    ' when Settings closes. m.prefsRevision goes up with every prefs save, and m.playlistPrefsRevision is the one the
+    ' running PlaylistTask was given (QA 4: a lineup built from older prefs is built again).
+    m.settings = m.top.findNode("settings")
+    m.settings.observeField("action", "onSettingsAction")
+    m.keyboard = invalid
+    m.keyboardField = ""
+    m.playlistLoadedAt = invalid
+    m.guideStatusByID = {}
+    m.deferredLaunchID = ""
+    m.prefsRevision = 0
+    m.playlistPrefsRevision = 0
+    info = CreateObject("roAppInfo")
+    m.versionShort = info.GetValue("major_version") + "." + info.GetValue("minor_version")
+    m.buildNumber = info.GetValue("build_version")
     updatePlayback()
     openGuide(false)
     showLowMemoryNoticeIfDue()
     startPlaylist()
 end sub
 
-' The background and the Settings placeholder's look, from Theme.bs (step 10). The guide draws itself (step 12).
+' The background, from Theme.bs (step 10). The guide and Settings draw themselves (steps 12, 13).
 sub styleScreens()
-    colors = m.theme.colors
-    fonts = m.theme.fonts
     canvas = m.theme.canvas
-    for each id in ["background", "settingsBackground"]
-        poster = m.top.findNode(id)
-        poster.uri = m.theme.images.background
-        poster.loadDisplayMode = "scaleToFill"
-        poster.width = canvas.width
-        poster.height = canvas.height
-    end for
-    ' Step 13 replaces the placeholder, and these values with it.
-    placeLabel("settingsTitle", fonts.settingsTitle, colors.primaryText, 470)
-    placeLabel("settingsHint", fonts.settingsHint, colors.secondaryText, 560)
-end sub
-
-sub placeLabel(id as string, spec as object, color as string, y as integer)
-    label = m.top.findNode(id)
-    label.font = Theme.font(spec)
-    label.color = color
-    label.height = Theme.lineHeight(spec)
-    label.vertAlign = "center"
-    label.width = m.theme.canvas.width
-    label.horizAlign = "center"
-    label.translation = [0, y]
+    poster = m.top.findNode("background")
+    poster.uri = m.theme.images.background
+    poster.loadDisplayMode = "scaleToFill"
+    poster.width = canvas.width
+    poster.height = canvas.height
 end sub
 
 ' M12 step 8: the settings, then the playlist at launch and on a 15-minute timer (D40). The channels stay in m, so
@@ -132,9 +133,11 @@ sub loadPlaylist()
     m.playlistTask = CreateObject("roSGNode", "PlaylistTask")
     m.playlistTask.playlistURL = url
     m.playlistTask.prefs = m.store.prefs
+    m.playlistPrefsRevision = m.prefsRevision
     m.playlistTask.observeField("result", "onPlaylistResult")
     m.playlistTask.control = "run"
     m.playlistWatchdog.control = "start"
+    refreshSettings()
 end sub
 
 ' The task didn't answer in time: drop it (the next refresh may start another) and say so, with the host only.
@@ -148,6 +151,7 @@ sub onPlaylistWatchdog()
     m.top.playlistStatus = Log.withHost("Couldn't load the playlist", m.playlistHost)
     showPlaylistStatus(m.top.playlistStatus)
     resolveLaunch()
+    refreshSettings()
 end sub
 
 sub onPlaylistResult()
@@ -164,10 +168,16 @@ sub onPlaylistResult()
         m.guideChannelFields = result.matchFields
         m.guideState.channelsKey = result.channelsKey
         m.lastPlaylistLoad = UpTime(0)
-        m.lineup = result.lineup
-        m.top.lineup = result.lineup
-        m.guide.lineup = result.lineup
+        m.playlistLoadedAt = CreateObject("roDateTime").AsSeconds()
         m.top.playlistGuideURLs = result.guideURLs
+        if m.prefsRevision = m.playlistPrefsRevision
+            m.lineup = result.lineup
+            m.top.lineup = result.lineup
+            m.guide.lineup = result.lineup
+        else
+            ' QA 4: Groups or Hidden Channels changed while the task ran on the prefs it was given.
+            rebuildLineup()
+        end if
         m.top.playlistStatus = ""
         loaded = m.channels.Count().ToStr() + " channels"
         if result.host <> "" then loaded += " from " + result.host
@@ -181,6 +191,7 @@ sub onPlaylistResult()
     resolveLaunch()
     ' As MMTVL's refreshIfStale: the channels first, then the guides (with the last channels after a failure).
     refreshGuideIfDue()
+    refreshSettings()
 end sub
 
 ' M12 step 9: the guides. m.guideState is GuideSources.isRunDue's state: lastKey, fetchedAt, failures and
@@ -197,6 +208,8 @@ sub startGuides()
     m.guideChannelFields = []
     m.guideState = { lastKey: invalid, fetchedAt: invalid, failures: invalid, channelsKey: invalid, lastChannelsKey: invalid, channelRunAt: invalid, failedRunAt: invalid }
     m.guideRunChannelsKey = invalid
+    ' Step 13: what Settings asked of the guide runs (GuideRuns: pending, force, deletePending).
+    m.guideRuns = GuideRuns.newState()
     m.guideWatchdog = CreateObject("roSGNode", "Timer")
     m.guideWatchdog.duration = GuideSources.watchdogSeconds
     m.guideWatchdog.repeat = false
@@ -209,9 +222,11 @@ end sub
 ' on is still alive, for at most twice the watchdog (then that task is let go, so a stuck one can't block guide runs
 ' until a relaunch). Every run reads all guides (from cachefs: where fresh). The URLs stay in this function's
 ' locals and the task's playlistGuideURLs field.
+' Step 13 (GuideRuns): a check while a task is busy marks a run pending, checked again as soon as it answers or is
+' let go; Remove Live TV Source's delete happens first, once no task is alive; Refresh Now forces a run.
 sub refreshGuideIfDue()
-    if m.guideTask <> invalid then return
-    if m.abandonedGuideTask <> invalid
+    busy = m.guideTask <> invalid
+    if not busy and m.abandonedGuideTask <> invalid
         if isFinishedTask(m.abandonedGuideTask)
             releaseAbandonedGuideTask()
         else if UpTime(0) - m.abandonedSince > 2 * GuideSources.watchdogSeconds
@@ -222,18 +237,28 @@ sub refreshGuideIfDue()
                 m.abandonedLogged = true
                 Log.warn("Guide", "Waiting for the old guide task to stop")
             end if
-            return
+            busy = true
         end if
     end if
-    if m.channels.Count() = 0 then return
+    gated = GuideRuns.gate(m.guideRuns, busy)
+    m.guideRuns = gated.runs
+    if not gated.go then return
+    if gated.deleteFirst then deleteGuideFiles()
     urls = m.top.playlistGuideURLs
     if type(urls) <> "roArray" then urls = []
     sources = GuideSources.chooseSources(m.store.guides, urls, m.store.settings.usePlaylistGuide, m.store.source)
     now = CreateObject("roDateTime").AsSeconds()
-    verdict = GuideSources.isRunDue(sources, m.guideState, now)
-    if not verdict.due then return
-    if verdict.reason = "channels" then m.guideState.channelRunAt = now
-    Log.info("Guide", "Reading the guides (" + verdict.reason + ")")
+    hasChannels = m.channels.Count() > 0
+    verdict = invalid
+    if hasChannels and not m.guideRuns.force then verdict = GuideSources.isRunDue(sources, m.guideState, now)
+    chosen = GuideRuns.choose(m.guideRuns, hasChannels, verdict)
+    m.guideRuns = chosen.runs
+    if not chosen.run then return
+    ' Refresh Now: every guide is downloaded again (MMTVL's "Downloads the playlist and the guides again now"):
+    ' their download times and failure waits are forgotten, so GuideTask fetches them all.
+    if chosen.forgetTimes then forgetGuideTimes(sources)
+    if chosen.reason = "channels" then m.guideState.channelRunAt = now
+    Log.info("Guide", "Reading the guides (" + chosen.reason + ")")
     m.guideRunChannelsKey = m.guideState.channelsKey
     task = CreateObject("roSGNode", "GuideTask")
     task.channels = m.guideChannelFields
@@ -244,6 +269,20 @@ sub refreshGuideIfDue()
     m.guideTask = task
     task.control = "run"
     m.guideWatchdog.control = "start"
+    refreshSettings()
+end sub
+
+' Refresh Now: no run is alive (refreshGuideIfDue starts one only then), so nothing reads these files meanwhile.
+sub forgetGuideTimes(sources as object)
+    times = m.guideState.fetchedAt
+    failures = m.guideState.failures
+    for each source in sources
+        paths = GuideSources.cachePaths(source.url)
+        m.fs.Delete(paths.time)
+        m.fs.Delete(paths.fail)
+        if type(times) = "roAssociativeArray" then times.Delete(paths.id)
+        if type(failures) = "roAssociativeArray" then failures.Delete(paths.id)
+    end for
 end sub
 
 function isFinishedTask(task as object) as boolean
@@ -263,11 +302,15 @@ sub onGuideWatchdog()
     m.guideTask = invalid
     m.guideState.failedRunAt = CreateObject("roDateTime").AsSeconds()
     Log.error("Guide", "No answer from the guide task; keeping the last guide")
-    if isFinishedTask(task) then return
-    m.abandonedGuideTask = task
-    m.abandonedSince = UpTime(0)
-    m.abandonedLogged = false
-    task.observeField("state", "onAbandonedGuideTaskState")
+    if not isFinishedTask(task)
+        m.abandonedGuideTask = task
+        m.abandonedSince = UpTime(0)
+        m.abandonedLogged = false
+        task.observeField("state", "onAbandonedGuideTaskState")
+    end if
+    ' QA 3: Settings' requests aren't dropped. While the task is still alive the check only marks them pending;
+    ' the delete waits until it reads stop or done (onAbandonedGuideTaskState).
+    afterGuideRun()
 end sub
 
 sub onAbandonedGuideTaskState()
@@ -299,6 +342,7 @@ sub onGuideResult()
     if not ok
         m.guideState.failedRunAt = CreateObject("roDateTime").AsSeconds()
         Log.warn("Guide", "The guide run failed; keeping the last guide")
+        afterGuideRun()
         return
     end if
     m.guideState.failedRunAt = invalid
@@ -314,6 +358,27 @@ sub onGuideResult()
     m.guide.guideHolder = task
     m.guide.guideRevision = m.top.guideRevision
     pushProgrammes()
+    m.guideStatusByID = statusesByID(result.sourcesKey, result.statuses)
+    afterGuideRun()
+end sub
+
+' Step 13: Settings → Guides' lines, by cache id: the run's sourcesKey names its guides in the order of its status
+' rows ("p<id>" or "t<id>", GuideSources.sourcesKey), so a guide moved or added since still finds its own row.
+function statusesByID(key as dynamic, statuses as dynamic) as object
+    byID = {}
+    if not PlayerSession.isText(key) or type(statuses) <> "roArray" then return byID
+    parts = key.Split(",")
+    for i = 0 to parts.Count() - 1
+        if i < statuses.Count() and Len(parts[i]) > 1 then byID[Mid(parts[i], 2)] = statuses[i]
+    end for
+    return byID
+end function
+
+' After a guide run answered, failed or was given up on: what Settings asked for meanwhile (GuideRuns.checkAgain:
+' a delete, then a pending or forced run, which GuideSources.isRunDue still decides), then Settings' lines.
+sub afterGuideRun()
+    if GuideRuns.checkAgain(m.guideRuns) then refreshGuideIfDue()
+    refreshSettings()
 end sub
 
 ' Step 12: in the guide's info area while there are no channels.
@@ -338,8 +403,16 @@ sub resolveLaunch()
     m.launchPending = false
     if m.currentChannel <> invalid then return
     target = PlayerSession.launchTarget(m.channels, m.store.state.lastChannelID)
+    route = PlayerSession.launchRoute(target, m.screen)
+    if route.show = ""
+        ' QA 1: Settings (or its keyboard) stays; the launch target waits for Back.
+        m.settingsReturn = route.settingsReturn
+        m.deferredLaunchID = route.deferredID
+        Log.info("Live TV", "Settings is open; the " + target.screen + " opens when it closes")
+        return
+    end if
     Log.info("Live TV", "Opening the " + target.screen)
-    if target.screen = "player" then playChannel(target.channel) else openGuide(false)
+    if route.show = "player" then playChannel(target.channel) else openGuide(false)
 end sub
 
 ' Plays a channel full screen, remembers it in state (last channel, recents) and gives the player Replay's target,
@@ -475,10 +548,8 @@ sub onGuideAction()
     else if kind = "openTeamPicker"
         ' Step 18 builds Choose Teams.
         Log.info("Live TV", "Choose Teams comes with step 18")
-    else if kind = "openProbes"
-        #if DEBUG
-            openProbes()
-        #end if
+    else if kind = "openSettings"
+        openSettings("root")
     end if
 end sub
 
@@ -570,6 +641,12 @@ sub applyPrefs(chosen as object)
     prefs = ChannelMenu.prefsAfter(m.store.prefs, chosen, movableIDs())
     result = SettingsStore.save(m.store, "prefs", prefs)
     if not result.ok then m.store.prefs = SettingsStore.normalize("prefs", prefs)
+    m.prefsRevision = m.prefsRevision + 1
+    rebuildLineup()
+end sub
+
+' The lineup from the channels and the saved prefs (Lineup.build); the guide keeps its group and row.
+sub rebuildLineup()
     built = Lineup.build(m.channels, m.store.prefs, [])
     m.lineup = built
     m.top.lineup = built
@@ -603,18 +680,20 @@ end sub
 
 ' --- screens and focus ------------------------------------------------------------------------------------------
 
-' The player plays on under the guide, in the guide's preview place (and under the Settings placeholder).
+' The player plays on under the guide, in the guide's preview place (and under Settings, which covers it).
 sub showScreen(name as string)
     m.screen = name
     m.player.preview = name <> "player"
     m.player.visible = m.currentChannel <> invalid
     m.guide.visible = name = "guide"
-    m.top.findNode("settingsPlaceholder").visible = name = "settings"
+    m.settings.visible = name = "settings"
     focusCurrent()
 end sub
 
-' The notice first, then (DEBUG) the Probes screen, then the channel menu, then the screen.
+' The keyboard (the scene's dialog keeps its focus), the notice, then (DEBUG) the Probes screen, then the channel
+' menu, then the screen.
 sub focusCurrent()
+    if m.keyboard <> invalid then return
     if m.notice <> invalid
         m.notice.setFocus(true)
         return
@@ -631,6 +710,8 @@ sub focusCurrent()
         m.player.setFocus(true)
     else if m.screen = "guide"
         m.guide.callFunc("takeFocus")
+    else if m.screen = "settings"
+        m.settings.callFunc("takeFocus")
     else
         m.top.setFocus(true)
     end if
@@ -638,8 +719,7 @@ end sub
 
 ' L7 as amended 2026-11-21: on a Low Roku, once, over whatever opens first.
 sub showLowMemoryNoticeIfDue()
-    caps = Capabilities.detectDevice()
-    if not LowMemoryNotice.shouldShow(caps, m.store.state, m.store.settings) then return
+    if not LowMemoryNotice.shouldShow(m.caps, m.store.state, m.store.settings) then return
     m.notice = CreateObject("roSGNode", "LowMemoryNoticeView")
     m.notice.items = LowMemoryNotice.items(m.store.settings)
     m.notice.observeField("choice", "onNoticeChoice")
@@ -660,25 +740,333 @@ sub onNoticeChoice()
     if choice = "openSettings" then openDeviceSettings() else focusCurrent()
 end sub
 
-' Settings → Device (step 13); the placeholder until then.
+' The low-memory notice's Open Settings: Settings → Device (step 13).
 sub openDeviceSettings()
+    openSettings("device")
+end sub
+
+' Keys that reach the scene (the guide, the player, Settings, the menu and the notice handle theirs, and the
+' keyboard is the system's). Every key is handled, so Back never leaves the app (D49, L4); only Roku's Home does.
+function onKeyEvent(key as string, press as boolean) as boolean
+    ' None should get here; DEBUG builds say which did.
+    if press then Log.info("App", "Key " + key + " reached the scene")
+    return true
+end function
+
+' --- step 13: Settings -----------------------------------------------------------------------------------------
+
+' Settings on its root or on Device, over the screen it came from (Back on the root returns there).
+sub openSettings(page as string)
     if m.menuOpen then closeChannelMenu()
     if m.screen <> "settings" then m.settingsReturn = m.screen
+    m.settings.callFunc("open", { page: page })
+    updateSettingsModel()
     showScreen("settings")
 end sub
 
-' Keys that reach the scene: the Settings placeholder's (the guide, the player, the menu and the notice handle
-' theirs). Every key is handled, so Back never leaves the app (D49, L4); only Roku's Home does.
-function onKeyEvent(key as string, press as boolean) as boolean
-    if not press then return true
-    #if DEBUG
-        if m.probes <> invalid then return true
-    #end if
-    if m.screen = "settings"
-        if key = "back" or key = "OK" then showScreen(m.settingsReturn)
+sub closeSettings()
+    back = PlayerSession.returnFromSettings(m.settingsReturn, m.deferredLaunchID, m.channels, m.currentChannel <> invalid)
+    m.deferredLaunchID = ""
+    if back.playID <> ""
+        playChannel(PlayerSession.channelByID(m.channels, back.playID))
+        return
     end if
-    return true
+    showScreen(back.screen)
+    if back.screen = "guide" then noteInput()
+end sub
+
+' While Settings shows, after anything its pages show changed.
+sub refreshSettings()
+    if m.screen = "settings" then updateSettingsModel()
+end sub
+
+' What Settings shows (SettingsStatus.make): hosts, labels, counts and status lines; never a URL.
+sub updateSettingsModel()
+    urls = m.top.playlistGuideURLs
+    if type(urls) <> "roArray" then urls = []
+    updated = {}
+    times = m.guideState.fetchedAt
+    if type(times) = "roAssociativeArray"
+        for each id in times
+            updated[id] = clockText(times[id])
+        end for
+    end if
+    m.settings.model = SettingsStatus.make({
+        store: m.store,
+        channels: m.channels,
+        playlistGuideURLs: urls,
+        playlist: { loading: m.playlistTask <> invalid, status: m.top.playlistStatus, updated: clockText(m.playlistLoadedAt) },
+        guideStatuses: m.guideStatusByID,
+        guideUpdated: updated,
+        guideLoading: m.guideTask <> invalid,
+        caps: m.caps,
+        inflateEnabled: GuideSources.inflateEnabled,
+        version: m.versionShort,
+        build: m.buildNumber
+    })
+end sub
+
+' "6:12 PM" for wall-clock seconds, in local time; "" for none.
+function clockText(seconds as dynamic) as string
+    if not Refresh.isNumber(seconds) then return ""
+    date = CreateObject("roDateTime")
+    date.FromSeconds(Int(seconds))
+    date.ToLocalTime()
+    return BannerText.clock({ hours: date.GetHours(), minutes: date.GetMinutes() })
 end function
+
+' A row's action (SettingsPages' list); then Settings is shown again with what changed.
+sub onSettingsAction()
+    action = m.settings.action
+    if type(action) <> "roAssociativeArray" then return
+    kind = action.type
+    #if DEBUG
+        ' L8: three Replays on Settings → About.
+        if kind = "openProbes"
+            openProbes()
+            return
+        end if
+    #end if
+    if kind = "close"
+        closeSettings()
+        return
+    else if kind = "editURL"
+        openKeyboard(action.field)
+        return
+    else if kind = "toggle"
+        toggleSetting(action.setting)
+    else if kind = "moveGuide"
+        if PlayerSession.isText(action.id) and Refresh.isNumber(action.step) then saveGuides(SettingsEdits.moveGuide(m.store.guides, action.id, action.step))
+    else if kind = "removeGuide"
+        if PlayerSession.isText(action.id) then saveGuides(SettingsEdits.removeGuide(m.store.guides, action.id))
+    else if kind = "toggleGroupHidden"
+        if PlayerSession.isText(action.name) then savePrefs(SettingsEdits.groupToggled(m.store.prefs, action.name))
+    else if kind = "unhideChannel"
+        if PlayerSession.isText(action.id) then savePrefs(SettingsEdits.channelShown(m.store.prefs, action.id))
+    else if kind = "refresh"
+        refreshNow()
+    else if kind = "removeSource"
+        removeSource()
+    end if
+    updateSettingsModel()
+end sub
+
+sub settingsMessage(kind as string, text as string)
+    m.settings.message = { kind: kind, text: text }
+end sub
+
+' Every Settings change saves at once (SettingsStore.save, all or nothing). A refused save (too large, no space,
+' a failed write) changes nothing and says so in Settings' band.
+function saveSetting(key as string, value as dynamic) as boolean
+    result = SettingsStore.save(m.store, key, value)
+    if not result.ok then settingsMessage("band", result.message)
+    return result.ok
+end function
+
+' Channel Up goes to the player at once; Channel Logos to the guide (it draws its rows again) and the banner; the
+' guide source starts a guide run.
+sub toggleSetting(name as dynamic)
+    if not PlayerSession.isText(name) then return
+    if not saveSetting("settings", SettingsEdits.settingToggled(m.store.settings, name)) then return
+    Log.info("Settings", "Changed " + name)
+    if name = "channelUpMovesUpList" then m.player.channelUpMovesUpList = m.store.settings.channelUpMovesUpList
+    if name = "channelLogos"
+        m.guide.settings = m.store.settings
+        if m.currentChannel <> invalid then m.player.logo = playerLogo(m.currentChannel)
+    end if
+    if name = "usePlaylistGuide" then guidesChanged()
+end sub
+
+sub saveGuides(guides as object)
+    if saveSetting("guides", guides) then guidesChanged()
+end sub
+
+' Step 9's note: m.store now holds the new guides (or guide source), so the next run reads the same set the task
+' does (it loads the registry). A run starts now, or as soon as the one going answers.
+sub guidesChanged()
+    m.guideRuns = GuideRuns.sourcesChanged(m.guideRuns)
+    refreshGuideIfDue()
+end sub
+
+' Groups and hidden channels: the lineup is built again (the guide keeps its group and row).
+sub savePrefs(prefs as object)
+    if not saveSetting("prefs", prefs) then return
+    m.prefsRevision = m.prefsRevision + 1
+    rebuildLineup()
+end sub
+
+' "Change Playlist URL…" and "Add Guide…": Roku's keyboard as the scene's dialog. It starts empty: the saved URL is
+' never shown (M6b L2), and Roku's mobile app can type or paste into it (unverified).
+sub openKeyboard(field as dynamic)
+    if m.keyboard <> invalid then return
+    if field <> "playlist" and field <> "guide" then return
+    dialog = CreateObject("roSGNode", "StandardKeyboardDialog")
+    if field = "playlist"
+        dialog.title = "Playlist URL"
+        dialog.message = ["Type the M3U address of your playlist, starting with http:// or https://."]
+    else
+        dialog.title = "Add Guide"
+        dialog.message = ["Type the address of an XMLTV guide, starting with http:// or https://."]
+    end if
+    dialog.buttons = ["OK", "Cancel"]
+    dialog.observeField("buttonSelected", "onKeyboardButton")
+    dialog.observeField("wasClosed", "onKeyboardClosed")
+    m.keyboard = dialog
+    m.keyboardField = field
+    m.top.dialog = dialog
+end sub
+
+' OK takes the text (and clears it from the dialog); either button closes the keyboard.
+sub onKeyboardButton()
+    dialog = m.keyboard
+    if dialog = invalid then return
+    chosen = dialog.buttonSelected
+    typed = ""
+    if chosen = 0 then typed = dialog.text
+    dialog.text = ""
+    field = m.keyboardField
+    dialog.close = true
+    if chosen = 0 then applyTypedURL(field, typed)
+end sub
+
+sub onKeyboardClosed()
+    dialog = m.keyboard
+    if dialog = invalid then return
+    dialog.unobserveField("buttonSelected")
+    dialog.unobserveField("wasClosed")
+    dialog.text = ""
+    m.keyboard = invalid
+    m.keyboardField = ""
+    focusCurrent()
+end sub
+
+' A typed address: checked as PlaylistTask and GuideTask check typed URLs (SettingsEdits.checkURL: URLPolicy.allows
+' with no referrer); a refused one says why on its row. Logs show the host only (L6).
+sub applyTypedURL(field as string, typed as string)
+    checked = SettingsEdits.checkURL(typed)
+    typed = ""
+    if not checked.ok
+        settingsMessage(field, checked.message)
+        return
+    end if
+    host = Log.host(checked.url)
+    if field = "playlist"
+        if not saveSetting("source", checked.url) then return
+        settingsMessage("playlist", "")
+        Log.info("Settings", "Playlist set to " + host)
+        changePlaylist()
+    else
+        added = SettingsEdits.addGuide(m.store.guides, checked.url)
+        if not added.ok
+            settingsMessage("guide", added.message)
+            return
+        end if
+        if not saveSetting("guides", added.guides) then return
+        settingsMessage("guide", "")
+        Log.info("Settings", "Guide added from " + host)
+        guidesChanged()
+    end if
+    checked.url = ""
+    updateSettingsModel()
+end sub
+
+' A new playlist (MMTVL's setPlaylistURL): the old channels go, and the new list loads now; its guides follow
+' (a changed channel set reruns the match at once, not after the hourly wait).
+sub changePlaylist()
+    stopPlaylistTask()
+    m.channels = []
+    m.guideChannelFields = []
+    m.guideState.channelsKey = invalid
+    m.guideState.channelRunAt = invalid
+    m.top.playlistGuideURLs = []
+    m.playlistLoadedAt = invalid
+    m.lastPlaylistLoad = invalid
+    rebuildLineup()
+    updatePlayback()
+    ' QA 2: a guide run going now is for the old playlist; another follows it (after the new channels arrive).
+    m.guideRuns = GuideRuns.sourcesChanged(m.guideRuns)
+    loadPlaylist()
+end sub
+
+sub stopPlaylistTask()
+    task = m.playlistTask
+    if task = invalid then return
+    task.unobserveField("result")
+    task.control = "stop"
+    m.playlistTask = invalid
+    m.playlistWatchdog.control = "stop"
+end sub
+
+' MMTVL's Refresh Now: the playlist and every guide downloaded again now (the guides after the playlist, which then
+' calls refreshGuideIfDue; a load already going does the same).
+sub refreshNow()
+    Log.info("Settings", "Refresh Now")
+    m.guideRuns = GuideRuns.refreshNow(m.guideRuns)
+    if m.store.source = ""
+        refreshGuideIfDue()
+        return
+    end if
+    if m.playlistTask = invalid
+        m.lastPlaylistLoad = invalid
+        loadPlaylist()
+    end if
+end sub
+
+' MMTVL's Remove Live TV Source: the addresses are forgotten, the channels and the downloaded guides go, and the
+' playing channel stops. The other settings (favorites, hidden channels, state) are kept, as MMTVL's.
+sub removeSource()
+    ' QA 5: both addresses in one save, all or nothing.
+    result = SettingsStore.saveMany(m.store, { guides: [], source: "" })
+    if not result.ok
+        settingsMessage("band", result.message)
+        return
+    end if
+    Log.info("Settings", "Live TV source removed")
+    stopPlaylistTask()
+    if m.currentChannel <> invalid
+        m.player.control = "stop"
+        m.currentChannel = invalid
+        m.player.visible = false
+    end if
+    m.channels = []
+    m.guideChannelFields = []
+    m.top.playlistGuideURLs = []
+    m.playlistLoadedAt = invalid
+    m.lastPlaylistLoad = invalid
+    m.logoTask.playlistURL = ""
+    m.top.playlistStatus = "No Live TV source yet"
+    showPlaylistStatus(m.top.playlistStatus)
+    rebuildLineup()
+    updatePlayback()
+    forgetGuides()
+end sub
+
+' The downloaded guides and their results go (GuideRuns.removeSource): now, or once no guide task is alive to read
+' or write them, before any newer run (refreshGuideIfDue's gate).
+sub forgetGuides()
+    m.guideRuns = GuideRuns.removeSource(m.guideRuns)
+    refreshGuideIfDue()
+end sub
+
+' Only from refreshGuideIfDue's gate (no task alive). The pending and forced runs stay asked for (QA 2).
+sub deleteGuideFiles()
+    Log.info("Guide", "Deleting the downloaded guides")
+    directory = GuideSources.cacheDirectory
+    if m.fs.Exists(directory)
+        for each name in m.fs.GetDirectoryListing(directory)
+            m.fs.Delete(directory + "/" + name)
+        end for
+    end if
+    m.guideStatusByID = {}
+    ' As after a launch: no run has answered. The current channel set (from the last playlist load) stays.
+    m.guideState = { lastKey: invalid, fetchedAt: invalid, failures: invalid, channelsKey: m.guideState.channelsKey, lastChannelsKey: invalid, channelRunAt: invalid, failedRunAt: invalid }
+    m.top.guideHolder = invalid
+    m.top.guideStatuses = []
+    m.top.guideNote = ""
+    m.top.guideRevision = m.top.guideRevision + 1
+    m.guide.guideHolder = invalid
+    m.guide.guideRevision = m.top.guideRevision
+end sub
 
 #if DEBUG
     ' The probes play their own video: the player stops first.

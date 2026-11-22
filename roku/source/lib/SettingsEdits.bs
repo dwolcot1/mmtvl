@@ -1,0 +1,172 @@
+' Settings' edits (M12 step 13) as pure functions over SettingsStore's values; the scene saves what they return
+' with SettingsStore.save and applies it. Ports MMTVL's ClipboardURL.parse (IPTV/Sources/ClipboardURL.swift, for
+' typed text), IPTVLibrary's guide list (guideAddProblem, moveGuideSource, removeGuideSource:
+' IPTV/IPTVLibrary.swift:336-398) and the AppDelegate paste messages (App/AppDelegate.swift:1068-1088). Uses
+' URLPolicy, GuideSources (cacheID) and SettingsStore (limits). Never logs or returns a URL in a message.
+'
+'   checkURL(text) -> { ok, url, message }: the first non-empty line, trimmed; an http or https address with a host
+'     that URLPolicy.allows with no referrer (as PlaylistTask and GuideTask check typed URLs), at most
+'     SettingsStore.maximumURLLength characters. message is what the row shows when it isn't.
+'   addGuide(guides, url) -> { ok, guides, message }: appended, at most SettingsStore.maximumGuides (6), not twice.
+'   removeGuide(guides, id), moveGuide(guides, id, stepSize) -> the new list (id: GuideSources.cacheID of the URL);
+'     a move is clamped to the ends, an unknown id changes nothing.
+'   guideIndex(guides, id) -> its index, or -1.
+'   groupToggled(prefs, name) -> prefs with the group hidden or shown again; channelShown(prefs, id) -> prefs with the
+'     channel no longer hidden. Other fields are kept; the lists are new.
+'   settingToggled(settings, name) -> settings with that boolean flipped (only the settings Settings switches).
+namespace SettingsEdits
+
+    const emptyMessage = "Nothing was typed"
+    const notWebMessage = "That isn't a web address. It starts with http:// or https://"
+    const tooLongMessage = "That address is too long"
+    const duplicateGuideMessage = "That guide is already added"
+    const fullGuidesMessage = "Up to 6 guides; remove one first"
+
+    function checkURL(typed as dynamic) as object
+        result = { ok: false, url: "", message: "" }
+        line = SettingsEdits.firstLine(typed)
+        if line = ""
+            result.message = SettingsEdits.emptyMessage
+            return result
+        end if
+        if Len(line) > SettingsStore.maximumURLLength
+            result.message = SettingsEdits.tooLongMessage
+            return result
+        end if
+        lower = LCase(line)
+        if Left(lower, 7) <> "http://" and Left(lower, 8) <> "https://"
+            result.message = SettingsEdits.notWebMessage
+            return result
+        end if
+        if Log.host(line) = "" or not URLPolicy.allows(line).ok
+            result.message = SettingsEdits.notWebMessage
+            return result
+        end if
+        result.ok = true
+        result.url = line
+        return result
+    end function
+
+    ' The first line with anything but spaces and tabs in it, trimmed (MMTVL's ClipboardURL).
+    function firstLine(typed as dynamic) as string
+        if not SettingsStatus.isText(typed) then return ""
+        unified = typed.Replace(Chr(13), Chr(10))
+        for each part in unified.Split(Chr(10))
+            cleaned = SettingsEdits.trimmed(part)
+            if cleaned <> "" then return cleaned
+        end for
+        return ""
+    end function
+
+    function trimmed(value as string) as string
+        first = 1
+        last = Len(value)
+        while first <= last and SettingsEdits.isBlank(Mid(value, first, 1))
+            first += 1
+        end while
+        while last >= first and SettingsEdits.isBlank(Mid(value, last, 1))
+            last -= 1
+        end while
+        if last < first then return ""
+        return Mid(value, first, last - first + 1)
+    end function
+
+    function isBlank(character as string) as boolean
+        return character = " " or character = Chr(9)
+    end function
+
+    function addGuide(guides as object, url as string) as object
+        result = { ok: false, guides: guides, message: "" }
+        id = GuideSources.cacheID(url)
+        if SettingsEdits.guideIndex(guides, id) >= 0
+            result.message = SettingsEdits.duplicateGuideMessage
+            return result
+        end if
+        if guides.Count() >= SettingsStore.maximumGuides
+            result.message = SettingsEdits.fullGuidesMessage
+            return result
+        end if
+        added = []
+        added.Append(guides)
+        added.Push(url)
+        result.ok = true
+        result.guides = added
+        return result
+    end function
+
+    function removeGuide(guides as object, id as string) as object
+        kept = []
+        for each url in guides
+            if GuideSources.cacheID(url) <> id then kept.Push(url)
+        end for
+        return kept
+    end function
+
+    function moveGuide(guides as object, id as string, stepSize as integer) as object
+        result = []
+        result.Append(guides)
+        index = SettingsEdits.guideIndex(guides, id)
+        if index < 0 then return result
+        target = index + stepSize
+        if target < 0 then target = 0
+        if target > guides.Count() - 1 then target = guides.Count() - 1
+        if target = index then return result
+        ' The others in order, with the guide put back at target.
+        others = []
+        for i = 0 to guides.Count() - 1
+            if i <> index then others.Push(guides[i])
+        end for
+        result = []
+        for i = 0 to others.Count() - 1
+            if i = target then result.Push(guides[index])
+            result.Push(others[i])
+        end for
+        if target >= others.Count() then result.Push(guides[index])
+        return result
+    end function
+
+    function guideIndex(guides as object, id as string) as integer
+        for i = 0 to guides.Count() - 1
+            if GuideSources.cacheID(guides[i]) = id then return i
+        end for
+        return -1
+    end function
+
+    function groupToggled(prefs as object, name as string) as object
+        result = SettingsEdits.copied(prefs)
+        groups = []
+        found = false
+        for each group in prefs.hiddenGroups
+            if group = name then found = true else groups.Push(group)
+        end for
+        if not found then groups.Push(name)
+        result.hiddenGroups = groups
+        return result
+    end function
+
+    function channelShown(prefs as object, id as string) as object
+        result = SettingsEdits.copied(prefs)
+        channels = []
+        for each hidden in prefs.hiddenChannels
+            if hidden <> id then channels.Push(hidden)
+        end for
+        result.hiddenChannels = channels
+        return result
+    end function
+
+    function settingToggled(settings as object, name as string) as object
+        result = SettingsEdits.copied(settings)
+        if name <> "channelUpMovesUpList" and name <> "usePlaylistGuide" and name <> "channelLogos" then return result
+        result[name] = not SettingsStatus.isTrue(settings[name])
+        return result
+    end function
+
+    function copied(value as object) as object
+        result = {}
+        for each field in value
+            result[field] = value[field]
+        end for
+        return result
+    end function
+
+end namespace

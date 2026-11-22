@@ -1,0 +1,522 @@
+' Settings' pages (M12 step 13): SettingsStatus.make and SettingsPages, ported from MMTVL's SettingsModelTests where
+' they apply (rootListsCategories, pageWithoutPlaylistOnlyPastes, pageWithPlaylistAndTwoGuides, playlistGuideIsAnInfoRow,
+' guideSourceRowOnlyWithAChoice, unusedPastedGuideIsOffAndKeepsItsPage, noGuideExplainsHowToAddOne, noAddRowAtTheLimit,
+' channelsSection, groupsPage, hiddenChannelsPage, guidePage, removeConfirmFocusesCancelFirst,
+' channelUpRowTogglesTheDirection, aboutShowsTheVersionAndBuild), plus the Roku's Device page (L7), the registry
+' warning (L5) and the URL display rule (M6b L2: never a whole URL). Off-device.
+namespace SettingsPageTests
+
+    ' --- the root ---
+
+    sub test_rootListsTheCategories(t as object)
+        model = SettingsStatus.make(SettingsPageTests.fixture({}))
+        list = SettingsPages.sections("root", model)
+        t.assertEqual(SettingsPages.focusableIDs(list), ["liveTV", "remoteInput", "device", "import", "about"])
+        liveTV = SettingsPages.rowWithID(list, "liveTV")
+        t.assertEqual(liveTV.value, "3 Channels")
+        t.assertTrue(liveTV.disclosure)
+        t.assertEqual(liveTV.action, { type: "push", page: "liveTV" })
+        t.assertEqual(liveTV.description, "The playlist, antenna and guides, channel groups, hidden channels and teams.", "the frame's text")
+        t.assertEqual(SettingsPages.rowWithID(list, "device").value, "Roku Express")
+        t.assertEqual(SettingsPages.rowWithID(list, "about").value, "1.0")
+        t.assertEqual(SettingsPages.rowWithID(list, "remoteInput").value, "")
+        t.assertEqual(SettingsPages.pageTitle("root", model), "Settings")
+        for each id in SettingsPages.focusableIDs(list)
+            t.assertTrue(SettingsPages.description(list, id) <> "", id + " has a description")
+        end for
+    end sub
+
+    sub test_rootSaysNotSetUpWithoutAPlaylist(t as object)
+        input = SettingsPageTests.fixture({})
+        input.store.source = ""
+        input.channels = []
+        model = SettingsStatus.make(input)
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("root", model), "liveTV").value, "Not Set Up")
+        input = SettingsPageTests.fixture({})
+        input.channels = [SettingsPageTests.channel("id:a", 1, "A", "News")]
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("root", SettingsStatus.make(input)), "liveTV").value, "1 Channel")
+    end sub
+
+    ' --- Live TV ---
+
+    sub test_pageWithoutPlaylistOnlyHasTheKeyboardRow(t as object)
+        input = SettingsPageTests.fixture({})
+        input.store.source = ""
+        input.store.guides = []
+        input.channels = []
+        list = SettingsPages.sections("liveTV", SettingsStatus.make(input))
+        t.assertEqual(SettingsPages.focusableIDs(list), ["playlist.edit"])
+        edit = SettingsPages.rowWithID(list, "playlist.edit")
+        t.assertEqual(edit.title, "Add Playlist URL…")
+        t.assertEqual(edit.detail, "Type the M3U address on the Roku's keyboard")
+        t.assertEqual(edit.action, { type: "editURL", field: "playlist" })
+        t.assertInvalid(SettingsPages.rowWithID(list, "playlist.info"))
+        t.assertInvalid(SettingsPages.rowWithID(list, "guide.add"), "no guides without a source")
+    end sub
+
+    sub test_pageWithPlaylistAndTwoGuides(t as object)
+        input = SettingsPageTests.fixture({})
+        ids = SettingsPageTests.cacheIDs(input.store.guides)
+        input.guideStatuses[ids[0]] = { index: 1, host: "iptv.example", status: "OK, 2 channels matched", problem: "", matched: 2, programmes: 48210, fromPlaylist: false, stale: false }
+        input.guideUpdated[ids[0]] = "6:12 PM"
+        input.guideLoading = true
+        model = SettingsStatus.make(input)
+        list = SettingsPages.sections("liveTV", model)
+        t.assertEqual(SettingsPages.focusableIDs(list), ["playlist.edit", "guide." + ids[0], "guide." + ids[1], "guide.add", "groups", "hiddenChannels", "refresh", "removeSource"])
+        t.assertEqual(SettingsPageTests.sectionTitles(list), ["Playlist", "Guides", "Channels", ""], "MMTVL's sections; Manage has no title")
+        info = SettingsPages.rowWithID(list, "playlist.info")
+        t.assertEqual(info.title, "iptv.example")
+        t.assertEqual(info.value, "3 Channels")
+        t.assertEqual(info.detail, "Updated 6:12 PM")
+        t.assertInvalid(info.action, "an info row")
+        t.assertEqual(SettingsPages.rowWithID(list, "playlist.edit").title, "Change Playlist URL…")
+        first = SettingsPages.rowWithID(list, "guide." + ids[0])
+        t.assertEqual(first.title, "iptv.example " + Chr(183) + " guide.xml")
+        t.assertEqual(first.value, "1")
+        t.assertEqual(first.detail, "48,210 programmes " + Chr(183) + " 2 channels " + Chr(183) + " Updated 6:12 PM", "frame wjg72's line")
+        t.assertTrue(first.disclosure)
+        t.assertEqual(first.action, { type: "push", page: "guide:" + ids[0] })
+        second = SettingsPages.rowWithID(list, "guide." + ids[1])
+        t.assertEqual(second.value, "2")
+        t.assertEqual(second.detail, "Loading…", "no result yet while a run goes")
+        t.assertEqual(SettingsPages.rowWithID(list, "guide.add").detail, "Type an XMLTV address on the Roku's keyboard")
+        guides = SettingsPageTests.section(list, "guides")
+        t.assertEqual(guides.footer, "Guide data for 2 of 3 channels. A channel uses the first guide in this list that has it.")
+        manage = SettingsPageTests.section(list, "manage")
+        t.assertEqual(manage.footer, "Addresses are kept on this Roku and never shown in full.", "frame wjg72")
+        t.assertEqual(SettingsPages.rowWithID(list, "refresh").action, { type: "refresh" })
+        t.assertEqual(SettingsPages.rowWithID(list, "removeSource").action, { type: "push", page: "confirmRemoveSource" })
+    end sub
+
+    ' Done-when (SettingsPageTests cover the URL display rule): hosts only, plus a guide file's name (M6b L2);
+    ' never a scheme, a user, a port, a query, a token or another part of the path, anywhere in the model.
+    sub test_urlsAreNeverShownWhole(t as object)
+        input = SettingsPageTests.fixture({})
+        input.store.source = "http://user:secret@IPTV.example:8080/get.php?username=me&password=pw&type=m3u_plus"
+        input.store.guides = ["https://epg.example/a/b/sports.xml.gz?token=abc123", "https://tv.example/api/xmltv?u=me&p=pw", "http://guide.example/listings/"]
+        input.playlistGuideURLs = ["https://named.example/x/epg.xml?k=secret"]
+        model = SettingsStatus.make(input)
+        list = SettingsPages.sections("liveTV", model)
+        t.assertEqual(SettingsPages.rowWithID(list, "playlist.info").title, "iptv.example", "the host, lowercased")
+        ids = SettingsPageTests.cacheIDs(input.store.guides)
+        t.assertEqual(SettingsPages.rowWithID(list, "guide." + ids[0]).title, "epg.example " + Chr(183) + " sports.xml.gz")
+        t.assertEqual(SettingsPages.rowWithID(list, "guide." + ids[1]).title, "tv.example", "no guide file name: the host only")
+        t.assertEqual(SettingsPages.rowWithID(list, "guide." + ids[2]).title, "guide.example")
+        t.assertEqual(SettingsPages.pageTitle("guide:" + ids[0], model), "epg.example " + Chr(183) + " sports.xml.gz")
+        text = FormatJson(model)
+        for each page in ["root", "liveTV", "guide:" + ids[0], "groups", "hiddenChannels", "device", "import", "about"]
+            text += FormatJson(SettingsPages.sections(page, model)) + SettingsPages.pageTitle(page, model)
+        end for
+        for each piece in ["://", "secret", "username", "password", "token", "abc123", "8080", "get.php", "xmltv?", "u=me", "/a/b", "listings", "named.example", "k="]
+            t.assertEqual(Instr(1, text, piece), 0, "no " + piece)
+        end for
+        refused = SettingsPageTests.fixture({})
+        refused.store.source = "http://bad host.example/x.m3u"
+        t.assertEqual(SettingsStatus.make(refused).playlist.host, "Playlist", "a host Log.host won't read shows MMTVL's Playlist")
+    end sub
+
+    sub test_guideSourceRowOnlyWithAChoice(t as object)
+        input = SettingsPageTests.fixture({})
+        list = SettingsPages.sections("liveTV", SettingsStatus.make(input))
+        t.assertInvalid(SettingsPages.rowWithID(list, "guideSource"), "the playlist names no guide")
+        input.playlistGuideURLs = ["https://iptv.example/epg.xml"]
+        list = SettingsPages.sections("liveTV", SettingsStatus.make(input))
+        row = SettingsPages.rowWithID(list, "guideSource")
+        t.assertEqual(row.value, "Added Guides")
+        t.assertEqual(row.detail, "")
+        t.assertEqual(row.description, "Use the guide the playlist names, or the guides you added. The guides you added are kept either way.")
+        t.assertEqual(row.action, { type: "toggle", setting: "usePlaylistGuide" })
+        input.store.settings = SettingsEdits.settingToggled(input.store.settings, "usePlaylistGuide")
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("liveTV", SettingsStatus.make(input)), "guideSource").value, "Playlist")
+        input.store.guides = []
+        t.assertInvalid(SettingsPages.rowWithID(SettingsPages.sections("liveTV", SettingsStatus.make(input)), "guideSource"), "no guide added")
+    end sub
+
+    sub test_unusedTypedGuideIsOffAndKeepsItsPage(t as object)
+        input = SettingsPageTests.fixture({})
+        input.store.guides = ["https://epg.example/us2.xml.gz"]
+        input.store.settings.usePlaylistGuide = true
+        input.playlistGuideURLs = ["https://iptv.example/epg.xml"]
+        model = SettingsStatus.make(input)
+        list = SettingsPages.sections("liveTV", model)
+        named = SettingsPages.rowWithID(list, "guide." + GuideSources.cacheID("https://iptv.example/epg.xml"))
+        t.assertEqual(named.value, "From Playlist")
+        t.assertInvalid(named.action)
+        t.assertFalse(named.disclosure)
+        id = GuideSources.cacheID("https://epg.example/us2.xml.gz")
+        unused = SettingsPages.rowWithID(list, "guide." + id)
+        t.assertEqual(unused.value, "Off")
+        t.assertTrue(unused.dimmed)
+        t.assertEqual(unused.detail, "Not in use (kept)")
+        t.assertEqual(unused.action, { type: "push", page: "guide:" + id })
+        t.assertTrue(SettingsPages.rowWithID(SettingsPages.sections("guide:" + id, model), "guidePage.remove") <> invalid)
+    end sub
+
+    sub test_playlistGuideIsAnInfoRow(t as object)
+        input = SettingsPageTests.fixture({})
+        input.store.guides = []
+        input.playlistGuideURLs = ["https://guide.example/epg.xml"]
+        list = SettingsPages.sections("liveTV", SettingsStatus.make(input))
+        t.assertEqual(SettingsPages.focusableIDs(list), ["playlist.edit", "guide.add", "groups", "hiddenChannels", "refresh", "removeSource"])
+        row = SettingsPages.rowWithID(list, "guide." + GuideSources.cacheID("https://guide.example/epg.xml"))
+        t.assertEqual(row.value, "From Playlist")
+        t.assertEqual(row.detail, "Not loaded yet")
+        t.assertInvalid(row.action)
+    end sub
+
+    sub test_noGuideExplainsHowToAddOne(t as object)
+        input = SettingsPageTests.fixture({})
+        input.store.guides = []
+        list = SettingsPages.sections("liveTV", SettingsStatus.make(input))
+        t.assertEqual(SettingsPages.rowWithID(list, "guide.none").title, "No guide")
+        t.assertEqual(SettingsPages.rowWithID(list, "guide.none").detail, "Type an XMLTV guide address below")
+        t.assertTrue(SettingsPages.rowWithID(list, "guide.add") <> invalid)
+    end sub
+
+    sub test_noAddRowAtTheLimit(t as object)
+        input = SettingsPageTests.fixture({})
+        input.store.guides = ["https://a.example/1.xml", "https://a.example/2.xml", "https://a.example/3.xml", "https://a.example/4.xml", "https://a.example/5.xml", "https://a.example/6.xml"]
+        list = SettingsPages.sections("liveTV", SettingsStatus.make(input))
+        t.assertInvalid(SettingsPages.rowWithID(list, "guide.add"))
+        t.assertEqual(SettingsPages.rowWithID(list, "guide." + GuideSources.cacheID("https://a.example/6.xml")).value, "6", "priority numbers 1 to 6")
+    end sub
+
+    ' A refused address shows on its own row (MMTVL's pasteMessage); the other keeps its hint.
+    sub test_aRefusedAddressShowsOnItsRowOnly(t as object)
+        model = SettingsStatus.make(SettingsPageTests.fixture({}))
+        list = SettingsPages.sections("liveTV", model, { playlist: "", guide: "That guide is already added" })
+        t.assertEqual(SettingsPages.rowWithID(list, "guide.add").detail, "That guide is already added")
+        t.assertEqual(SettingsPages.rowWithID(list, "playlist.edit").detail, "Type the M3U address on the Roku's keyboard")
+    end sub
+
+    sub test_guideLines(t as object)
+        dot = " " + Chr(183) + " "
+        ok = { status: "OK, 398 channels matched", problem: "", matched: 398, programmes: 48210 }
+        t.assertEqual(SettingsStatus.guideLine(ok, "6:12 PM", false, true), "48,210 programmes" + dot + "398 channels" + dot + "Updated 6:12 PM", "frame wjg72")
+        t.assertEqual(SettingsStatus.guideLine(ok, invalid, false, true), "48,210 programmes" + dot + "398 channels")
+        one = { status: "OK, 1 channel matched", problem: "", matched: 1, programmes: 1 }
+        t.assertEqual(SettingsStatus.guideLine(one, "", true, true), "1 programme" + dot + "1 channel", "a run going doesn't hide the last result")
+        cut = { status: "OK, 1,234 channels matched (guide shortened)", problem: "", matched: 1234, programmes: 25000 }
+        t.assertEqual(SettingsStatus.guideLine(cut, "9:00 AM", false, true), "25,000 programmes" + dot + "1,234 channels (guide shortened)" + dot + "Updated 9:00 AM")
+        noCount = { status: "OK, 3 channels matched", problem: "", matched: 3 }
+        t.assertEqual(SettingsStatus.guideLine(noCount, "", false, true), "0 programmes" + dot + "3 channels", "a row without a count reads 0")
+        gzip = { status: "Can't read .gz on this Roku", problem: "gzip", matched: 0 }
+        t.assertEqual(SettingsStatus.guideLine(gzip, "6:12 PM", false, true), "Can't read .gz on this Roku")
+        failed = { status: "Failed: epg.example", problem: "failed", matched: 12, stale: true }
+        t.assertEqual(SettingsStatus.guideLine(failed, "6:12 PM", false, true), "Failed: epg.example")
+        t.assertEqual(SettingsStatus.guideLine(invalid, "", true, true), "Loading…")
+        t.assertEqual(SettingsStatus.guideLine(invalid, "", false, true), "Not loaded yet")
+        t.assertEqual(SettingsStatus.guideLine(ok, "6:12 PM", false, false), "Not in use (kept)")
+    end sub
+
+    sub test_playlistLines(t as object)
+        t.assertEqual(SettingsStatus.playlistLine({ loading: true, status: "", updated: "6:12 PM" }), "Loading…")
+        t.assertEqual(SettingsStatus.playlistLine({ loading: false, status: "Couldn't load the playlist (iptv.example)", updated: "6:12 PM" }), "Couldn't load the playlist (iptv.example)")
+        t.assertEqual(SettingsStatus.playlistLine({ loading: false, status: "", updated: "6:12 PM" }), "Updated 6:12 PM")
+        t.assertEqual(SettingsStatus.playlistLine({ loading: false, status: "", updated: "" }), "")
+        t.assertEqual(SettingsStatus.playlistLine(invalid), "")
+    end sub
+
+    sub test_counts(t as object)
+        t.assertEqual(SettingsStatus.grouped(0), "0")
+        t.assertEqual(SettingsStatus.grouped(999), "999")
+        t.assertEqual(SettingsStatus.grouped(1000), "1,000")
+        t.assertEqual(SettingsStatus.grouped(48210), "48,210")
+        t.assertEqual(SettingsStatus.grouped(1234567), "1,234,567")
+        t.assertEqual(SettingsStatus.countText(1, "Channel", "Channels"), "1 Channel")
+        t.assertEqual(SettingsStatus.countText(424, "Channel", "Channels"), "424 Channels")
+    end sub
+
+    ' --- Channels ---
+
+    sub test_channelsSection(t as object)
+        input = SettingsPageTests.fixture({})
+        list = SettingsPages.sections("liveTV", SettingsStatus.make(input))
+        t.assertEqual(SettingsPages.rowWithID(list, "groups").value, "All Shown")
+        t.assertEqual(SettingsPages.rowWithID(list, "hiddenChannels").value, "None")
+        t.assertEqual(SettingsPageTests.section(list, "channels").footer, "To favorite or hide one channel: in the guide, press * on it.")
+        input.store.prefs.hiddenGroups = ["Sports"]
+        input.store.prefs.hiddenChannels = ["id:a", "id:b", "id:gone"]
+        list = SettingsPages.sections("liveTV", SettingsStatus.make(input))
+        t.assertEqual(SettingsPages.rowWithID(list, "groups").value, "1 Hidden")
+        t.assertEqual(SettingsPages.rowWithID(list, "hiddenChannels").value, "2", "ids the playlist doesn't have aren't counted")
+    end sub
+
+    sub test_groupsPage(t as object)
+        input = SettingsPageTests.fixture({})
+        input.store.prefs.hiddenGroups = ["Sports"]
+        model = SettingsStatus.make(input)
+        list = SettingsPages.sections("groups", model)
+        t.assertEqual(SettingsPages.pageTitle("groups", model), "Groups")
+        t.assertEqual(SettingsPages.focusableIDs(list), ["group.News", "group.Sports"], "playlist order")
+        news = SettingsPages.rowWithID(list, "group.News")
+        t.assertEqual([news.value, news.detail, news.dimmed], ["Shown", "2 channels", false])
+        sports = SettingsPages.rowWithID(list, "group.Sports")
+        t.assertEqual([sports.value, sports.detail, sports.dimmed], ["Hidden", "1 channel", true])
+        t.assertEqual(sports.action, { type: "toggleGroupHidden", name: "Sports" })
+        t.assertEqual(list[0].footer, "Hidden groups and their channels don't show in the guide or when changing channels.")
+    end sub
+
+    sub test_hiddenChannelsPage(t as object)
+        input = SettingsPageTests.fixture({})
+        input.store.prefs.hiddenChannels = ["id:c", "id:a"]
+        list = SettingsPages.sections("hiddenChannels", SettingsStatus.make(input))
+        t.assertEqual(SettingsPages.focusableIDs(list), ["hidden.id:a", "hidden.id:c"], "playlist order")
+        row = SettingsPages.rowWithID(list, "hidden.id:a")
+        t.assertEqual([row.title, row.value, row.detail], ["101  Alpha", "Show", "News"])
+        t.assertEqual(row.action, { type: "unhideChannel", id: "id:a" })
+        input.store.prefs.hiddenChannels = []
+        list = SettingsPages.sections("hiddenChannels", SettingsStatus.make(input))
+        t.assertEqual(SettingsPages.focusableIDs(list), [])
+        t.assertEqual(SettingsPages.rowWithID(list, "hidden.none").title, "No hidden channels")
+        t.assertEqual(list[0].footer, "Select a channel to show it again.")
+    end sub
+
+    ' --- one guide ---
+
+    sub test_guidePage(t as object)
+        input = SettingsPageTests.fixture({})
+        ids = SettingsPageTests.cacheIDs(input.store.guides)
+        input.guideStatuses[ids[0]] = { status: "Can't read .gz on this Roku", problem: "gzip", matched: 0 }
+        model = SettingsStatus.make(input)
+        page = "guide:" + ids[0]
+        list = SettingsPages.sections(page, model)
+        t.assertEqual(SettingsPages.pageTitle(page, model), "iptv.example " + Chr(183) + " guide.xml")
+        t.assertEqual(SettingsPages.rowWithID(list, "guidePage.status").detail, "Can't read .gz on this Roku")
+        t.assertEqual(SettingsPages.focusableIDs(list), ["guidePage.moveDown", "guidePage.remove"])
+        t.assertEqual(SettingsPages.rowWithID(list, "guidePage.moveDown").action, { type: "moveGuide", id: ids[0], step: 1 })
+        t.assertEqual(SettingsPages.rowWithID(list, "guidePage.remove").action, { type: "removeGuide", id: ids[0] })
+        t.assertEqual(list[0].footer, "When two guides have the same channel, the higher one wins.")
+        t.assertEqual(SettingsPages.focusableIDs(SettingsPages.sections("guide:" + ids[1], model)), ["guidePage.moveUp", "guidePage.remove"])
+        t.assertEqual(SettingsPages.sections("guide:gone", model), [], "an id no longer listed shows nothing")
+        t.assertEqual(SettingsPages.pageTitle("guide:gone", model), "Guide")
+    end sub
+
+    sub test_removeConfirmHasCancelFirst(t as object)
+        model = SettingsStatus.make(SettingsPageTests.fixture({}))
+        list = SettingsPages.sections("confirmRemoveSource", model)
+        t.assertEqual(SettingsPages.focusableIDs(list), ["confirm.cancel", "confirm.remove"])
+        t.assertEqual(SettingsPages.rowWithID(list, "confirm.cancel").action, { type: "pop" })
+        t.assertEqual(SettingsPages.rowWithID(list, "confirm.remove").action, { type: "removeSource" })
+        t.assertEqual(SettingsPages.pageTitle("confirmRemoveSource", model), "Remove Live TV Source?")
+    end sub
+
+    ' --- Remote & Input ---
+
+    sub test_channelUpRowTogglesTheDirection(t as object)
+        input = SettingsPageTests.fixture({})
+        list = SettingsPages.sections("remoteInput", SettingsStatus.make(input))
+        t.assertEqual(SettingsPages.focusableIDs(list), ["channelUp"])
+        row = SettingsPages.rowWithID(list, "channelUp")
+        t.assertEqual(row.value, "Up the List")
+        t.assertEqual(row.detail, "")
+        t.assertEqual(Left(row.description, 27), "Changes channel in Live TV.")
+        t.assertEqual(row.action, { type: "toggle", setting: "channelUpMovesUpList" })
+        input.store.settings = SettingsEdits.settingToggled(input.store.settings, "channelUpMovesUpList")
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("remoteInput", SettingsStatus.make(input)), "channelUp").value, "Higher Number")
+    end sub
+
+    ' --- Device (L7, frame B94oz) ---
+
+    sub test_deviceShowsWhatCapabilitiesDecides(t as object)
+        model = SettingsStatus.make(SettingsPageTests.fixture({}))
+        list = SettingsPages.sections("device", model)
+        t.assertEqual(SettingsPageTests.sectionTitles(list), ["This Roku", "Features"])
+        dot = " " + Chr(183) + " "
+        t.assertEqual(SettingsPages.rowWithID(list, "device.model").value, "Roku Express" + dot + "Roku OS 15.0")
+        t.assertEqual(SettingsPages.rowWithID(list, "device.memory").value, "512 MB" + dot + "Low")
+        t.assertEqual(SettingsPages.rowWithID(list, "device.guideWindow").value, "24 Hours")
+        logos = SettingsPages.rowWithID(list, "device.channelLogos")
+        t.assertEqual(logos.value, "On")
+        t.assertEqual(logos.action, { type: "toggle", setting: "channelLogos" })
+        t.assertEqual(logos.description, "Shows channel logos in the guide and the banner. On at first. On Rokus with 512 MB or less, logos can slow the guide: turn them off if it feels slow.")
+        t.assertEqual(SettingsPages.rowWithID(list, "device.compressedGuides").value, "On: Up to 2 MB")
+        t.assertEqual(SettingsPages.rowWithID(list, "device.mpeg2").value, "Off: No MPEG-2")
+        t.assertEqual(SettingsPages.rowWithID(list, "device.ac3").value, "On")
+        t.assertEqual(SettingsPages.focusableIDs(list), ["device.channelLogos"], "only Channel Logos is a switch")
+        t.assertEqual(list[0].footer, "")
+        t.assertFalse(list[0].warning)
+    end sub
+
+    sub test_aHighRokusFeatures(t as object)
+        input = SettingsPageTests.fixture({})
+        input.caps = Capabilities.detect(CapabilitiesTests.device({ mpeg2: true }), CapabilitiesTests.monitor(1024))
+        input.store.settings.channelLogos = false
+        list = SettingsPages.sections("device", SettingsStatus.make(input))
+        dot = " " + Chr(183) + " "
+        t.assertEqual(SettingsPages.rowWithID(list, "device.model").value, "Roku Ultra" + dot + "Roku OS 15.1")
+        t.assertEqual(SettingsPages.rowWithID(list, "device.memory").value, "1,024 MB" + dot + "High")
+        t.assertEqual(SettingsPages.rowWithID(list, "device.guideWindow").value, "36 Hours")
+        t.assertEqual(SettingsPages.rowWithID(list, "device.channelLogos").value, "Off")
+        t.assertEqual(SettingsPages.rowWithID(list, "device.compressedGuides").value, "On")
+        t.assertEqual(SettingsPages.rowWithID(list, "device.mpeg2").value, "On")
+        t.assertEqual(SettingsPages.rowWithID(list, "device.ac3").value, "Off: No AC-3")
+        unknown = SettingsStatus.deviceOf(invalid)
+        t.assertEqual([unknown.modelName, unknown.memory, unknown.os], ["Roku", "Unknown", ""])
+    end sub
+
+    ' L5: under 4 KB left, Settings → Device warns.
+    sub test_lowRegistrySpaceWarnsOnTheDevicePage(t as object)
+        input = SettingsPageTests.fixture({})
+        input.store = SettingsStore.load(SettingsStoreTests.fakeRegistry(3000))
+        list = SettingsPages.sections("device", SettingsStatus.make(input))
+        t.assertTrue(list[0].warning)
+        t.assertEqual(list[0].footer, "This Roku is almost out of room for settings (3,000 bytes left). Guide matches aren't saved until some favorites, hidden channels or guide matches are removed.")
+    end sub
+
+    ' --- Import, About ---
+
+    sub test_importAndAboutPages(t as object)
+        model = SettingsStatus.make(SettingsPageTests.fixture({}))
+        importList = SettingsPages.sections("import", model)
+        t.assertEqual(SettingsPages.focusableIDs(importList), [], "text only")
+        t.assertEqual(SettingsPages.rowWithID(importList, "import.run").detail, "python3 -I scripts/roku-export-settings.py")
+        about = SettingsPages.sections("about", model)
+        t.assertEqual(SettingsPages.rowWithID(about, "about.version").value, "1.0")
+        t.assertEqual(SettingsPages.rowWithID(about, "about.build").value, "7")
+        t.assertEqual(SettingsPages.focusableIDs(about), [])
+        t.assertEqual(SettingsPages.pageTitle("import", model), "Import from MMTVL")
+        t.assertEqual(SettingsPages.pageTitle("about", model), "About")
+        t.assertEqual(SettingsPages.sections("nowhere", model), [])
+    end sub
+
+    ' Done-when, off-device: every change goes through SettingsStore and is there after a relaunch (a new load
+    ' from the same registry).
+    sub test_changesSurviveARelaunch(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        checked = SettingsEdits.checkURL("  https://iptv.example/get.php?u=me  ")
+        t.assertTrue(SettingsStore.save(store, "source", checked.url).ok)
+        added = SettingsEdits.addGuide(store.guides, "https://epg.example/a.xml")
+        t.assertTrue(SettingsStore.save(store, "guides", added.guides).ok)
+        added = SettingsEdits.addGuide(store.guides, "https://epg.example/b.xml.gz")
+        t.assertTrue(SettingsStore.save(store, "guides", added.guides).ok)
+        moved = SettingsEdits.moveGuide(store.guides, GuideSources.cacheID("https://epg.example/b.xml.gz"), -1)
+        t.assertTrue(SettingsStore.save(store, "guides", moved).ok)
+        t.assertTrue(SettingsStore.save(store, "prefs", SettingsEdits.groupToggled(store.prefs, "Sports")).ok)
+        for each name in ["channelUpMovesUpList", "usePlaylistGuide", "channelLogos"]
+            t.assertTrue(SettingsStore.save(store, "settings", SettingsEdits.settingToggled(store.settings, name)).ok)
+        end for
+        relaunched = SettingsStore.load(registry)
+        t.assertEqual(relaunched.source, "https://iptv.example/get.php?u=me")
+        t.assertEqual(relaunched.guides, ["https://epg.example/b.xml.gz", "https://epg.example/a.xml"])
+        t.assertEqual(relaunched.prefs.hiddenGroups, ["Sports"])
+        t.assertFalse(relaunched.settings.channelUpMovesUpList)
+        t.assertTrue(relaunched.settings.usePlaylistGuide)
+        t.assertFalse(relaunched.settings.channelLogos)
+        input = SettingsPageTests.fixture({})
+        input.store = relaunched
+        list = SettingsPages.sections("liveTV", SettingsStatus.make(input))
+        t.assertEqual(SettingsPages.rowWithID(list, "guide." + GuideSources.cacheID("https://epg.example/b.xml.gz")).value, "1")
+    end sub
+
+    ' A refused save keeps the old value and says why (the scene shows the message on the page).
+    sub test_aRefusedSaveKeepsTheOldValue(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        registry.space = 10
+        result = SettingsStore.save(store, "guides", ["https://epg.example/a-long-enough-guide-address.xml"])
+        t.assertFalse(result.ok)
+        t.assertEqual(result.message, SettingsStore.tooLargeMessage)
+        t.assertEqual(store.guides, [])
+    end sub
+
+    ' QA of step 13: with the playlist's guide in use, its url-tvg guide shows host and file, never its query.
+    sub test_urlsAreNeverShownWholeWithThePlaylistsGuide(t as object)
+        input = SettingsPageTests.fixture({})
+        input.store.settings.usePlaylistGuide = true
+        input.playlistGuideURLs = ["https://named.example/x/epg.xml?k=secret"]
+        model = SettingsStatus.make(input)
+        list = SettingsPages.sections("liveTV", model)
+        named = SettingsPages.rowWithID(list, "guide." + GuideSources.cacheID("https://named.example/x/epg.xml?k=secret"))
+        t.assertEqual(named.title, "named.example " + Chr(183) + " epg.xml")
+        t.assertEqual(named.value, "From Playlist")
+        t.assertEqual(SettingsPages.rowWithID(list, "guideSource").value, "Playlist")
+        text = FormatJson(model)
+        pages = ["root", "liveTV", "groups", "hiddenChannels", "device", "import", "about"]
+        for each guide in model.guides
+            pages.Push("guide:" + guide.id)
+        end for
+        for each page in pages
+            text += FormatJson(SettingsPages.sections(page, model)) + SettingsPages.pageTitle(page, model)
+        end for
+        for each piece in ["k=", "secret", "://", "/x/", "username", "password"]
+            t.assertEqual(Instr(1, text, piece), 0, "no " + piece)
+        end for
+    end sub
+
+    ' QA 6: with inflate off (GuideSources.inflateEnabled), Compressed Guides says so on every class.
+    sub test_compressedGuidesOffWhenInflateIsOff(t as object)
+        input = SettingsPageTests.fixture({})
+        input.inflateEnabled = false
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("device", SettingsStatus.make(input)), "device.compressedGuides").value, "Off: Can't read .gz")
+        input.caps = Capabilities.detect(CapabilitiesTests.device({ mpeg2: true }), CapabilitiesTests.monitor(1024))
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("device", SettingsStatus.make(input)), "device.compressedGuides").value, "Off: Can't read .gz", "High too")
+        input.inflateEnabled = GuideSources.inflateEnabled
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("device", SettingsStatus.make(input)), "device.compressedGuides").value, "On", "the app's own setting")
+        t.assertEqual(SettingsStatus.deviceOf(invalid, false).compressed, "Off: Can't read .gz")
+    end sub
+
+    ' A Roku with memory to spare that is Low only for its 720p UI says why (classReason).
+    sub test_lowOnlyFor720pSaysSo(t as object)
+        dot = " " + Chr(183) + " "
+        input = SettingsPageTests.fixture({})
+        input.caps = Capabilities.detect(CapabilitiesTests.device({ ui: { name: "HD", width: 1280, height: 720 } }), CapabilitiesTests.monitor(1024))
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("device", SettingsStatus.make(input)), "device.memory").value, "1,024 MB" + dot + "Low (720p UI)")
+        input.caps = Capabilities.detect(CapabilitiesTests.device({ ui: { name: "HD", width: 1280, height: 720 } }), CapabilitiesTests.monitor(512))
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("device", SettingsStatus.make(input)), "device.memory").value, "512 MB" + dot + "Low", "low on memory too: the memory says it")
+        input.caps = Capabilities.detect(CapabilitiesTests.device({}), CapabilitiesTests.monitor(1024))
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("device", SettingsStatus.make(input)), "device.memory").value, "1,024 MB" + dot + "High")
+    end sub
+
+    ' --- fixtures ---
+
+    ' A store with a playlist and two typed guides, three channels in two groups, a Low Roku, version 1.0 build 7.
+    function fixture(overrides as object) as object
+        store = SettingsStore.load(SettingsStoreTests.fakeRegistry(30000))
+        store.source = "https://iptv.example/get.php?username=me&password=pw"
+        store.guides = ["https://iptv.example/guide.xml", "https://tv.example/listings?k=1"]
+        made = {
+            store: store,
+            channels: [SettingsPageTests.channel("id:a", 101, "Alpha", "News"), SettingsPageTests.channel("id:b", 102, "Bravo", "Sports"), SettingsPageTests.channel("id:c", 103, "Charlie", "News")],
+            playlistGuideURLs: [],
+            playlist: { loading: false, status: "", updated: "6:12 PM" },
+            guideStatuses: {},
+            guideUpdated: {},
+            guideLoading: false,
+            caps: { modelName: "Roku Express", model: "3930X", osVersion: "15.0.4.1234", memoryMB: 512, deviceClass: "Low", guideHours: 24, inflateMaxCompressedBytes: 2097152, mpeg2: false, ac3: true },
+            version: "1.0",
+            build: "7"
+        }
+        made.Append(overrides)
+        return made
+    end function
+
+    function channel(id as string, number as integer, name as string, group as string) as object
+        return { id: id, number: number, name: name, group: group, url: "https://iptv.example/live/me/pw/" + id + ".m3u8" }
+    end function
+
+    function cacheIDs(urls as object) as object
+        result = []
+        for each url in urls
+            result.Push(GuideSources.cacheID(url))
+        end for
+        return result
+    end function
+
+    function section(list as object, id as string) as dynamic
+        for each item in list
+            if item.id = id then return item
+        end for
+        return invalid
+    end function
+
+    function sectionTitles(list as object) as object
+        result = []
+        for each item in list
+            result.Push(item.title)
+        end for
+        return result
+    end function
+
+end namespace

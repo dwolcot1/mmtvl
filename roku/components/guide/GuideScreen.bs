@@ -143,15 +143,21 @@ sub setIfPresent(node as object, field as string, value as dynamic)
     if node.hasField(field) then node.setField(field, value)
 end sub
 
+' Frame LMTqH's hint; step 13: with the group column open, or with no channels, * opens Settings, and the hint says so.
 function hintText() as string
     dot = " " + Chr(183) + " "
-    text = "OK: watch" + dot + "*: channel menu" + dot + "Left: groups" + dot + "Rewind/Fast Forward: page"
-    #if DEBUG
-        ' M12 L8 until the About page (step 13): the probe build opens the Probes screen with Replay.
-        text = text + dot + "Replay: Probes"
-    #end if
-    return text
+    if m.column <> invalid
+        if m.column.visible then return "OK: choose" + dot + "*: Settings" + dot + "Back: close"
+    end if
+    if m.state <> invalid
+        if m.state.rows.Count() = 0 then return "*: Settings"
+    end if
+    return "OK: watch" + dot + "*: channel menu" + dot + "Left: groups" + dot + "Rewind/Fast Forward: page"
 end function
+
+sub showHint()
+    m.top.findNode("hint").text = hintText()
+end sub
 
 function noGuideText() as string
     return "No guide"
@@ -238,6 +244,12 @@ sub onGuideRevision()
     if m.top.visible then rebuildGrid() else m.stale = true
 end sub
 
+' Step 13: Channel Logos turned on or off in Settings: the rows are drawn again (now when shown, else when shown).
+sub onSettings()
+    if not m.opened then return
+    if m.top.visible then rebuildGrid() else m.stale = true
+end sub
+
 ' Shown again (from Settings) after a new guide arrived while hidden.
 sub onVisible()
     if m.top.visible and m.stale and m.opened then rebuildGrid()
@@ -304,6 +316,7 @@ sub rebuildGrid()
     jumpToFocus()
     m.rebuilding = false
     showGroupName()
+    showHint()
     showInfo()
 end sub
 
@@ -462,12 +475,6 @@ end sub
 
 ' The keys TimeGrid didn't take, and every key while the column is open (D49: every GuideKeys key is handled).
 function onKeyEvent(key as string, press as boolean) as boolean
-    #if DEBUG
-        if key = "replay"
-            if press then m.top.action = { type: "openProbes" }
-            return true
-        end if
-    #end if
     if press then m.top.input = true
     result = GuideKeys.handle(key, press, keyState())
     if press and result.handled then apply(result)
@@ -512,6 +519,7 @@ sub apply(result as object)
         afterMove()
     end if
     showGroupName()
+    showHint()
     report(chosen)
 end sub
 

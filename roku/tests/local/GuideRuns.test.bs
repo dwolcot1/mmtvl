@@ -1,0 +1,127 @@
+' GuideRuns (M12 step 13, QA 2 and 3): Settings changes made while a guide task runs (or while one the watchdog gave
+' up on is still alive) start their run as soon as it answers, and a removed source's guides are deleted only when
+' no task is alive, before any newer run. GuideRunsTests.check plays MainScene.refreshGuideIfDue's part. Off-device.
+namespace GuideRunsTests
+
+    sub test_nothingAskedNothingBusyFollowsTheVerdict(t as object)
+        runs = GuideRuns.newState()
+        result = GuideRunsTests.check(runs, false, true, { due: true, reason: "guides" })
+        t.assertEqual([result.run, result.reason, result.deleted], [true, "guides", false])
+        result = GuideRunsTests.check(runs, false, true, { due: false, reason: "" })
+        t.assertFalse(result.run)
+        t.assertFalse(GuideRuns.checkAgain(result.runs))
+    end sub
+
+    ' A tick (or anything) checking while a task runs: checked again when it answers; isRunDue still decides.
+    sub test_aCheckWhileBusyIsCheckedAgainAfter(t as object)
+        result = GuideRunsTests.check(GuideRuns.newState(), true, true, { due: true, reason: "sources" })
+        t.assertFalse(result.run)
+        t.assertTrue(GuideRuns.checkAgain(result.runs))
+        after = GuideRunsTests.check(result.runs, false, true, { due: false, reason: "" })
+        t.assertFalse(after.run, "nothing due after all")
+        t.assertFalse(GuideRuns.checkAgain(after.runs))
+    end sub
+
+    ' A new playlist while a guide run goes: the run follows the old one's answer, once the new channels are in.
+    sub test_aPlaylistChangeDuringARun(t as object)
+        runs = GuideRuns.sourcesChanged(GuideRuns.newState())
+        ' The scene's playlist load hasn't answered: no channels yet, and the task is still busy.
+        result = GuideRunsTests.check(runs, true, false, invalid)
+        t.assertFalse(result.run)
+        ' The old task answers before the playlist: checked, but no channels, so nothing; the playlist's answer checks.
+        result = GuideRunsTests.check(result.runs, false, false, invalid)
+        t.assertFalse(result.run)
+        t.assertTrue(result.runs.pending, "kept for the playlist's answer")
+        ' The playlist answers: the channel set changed (isRunDue's "channels": changePlaylist clears channelRunAt).
+        sources = [{ url: "https://epg.example/a.xml", index: 1, fromPlaylist: false, referrerURL: "" }]
+        state = { lastKey: GuideSources.sourcesKey(sources), fetchedAt: {}, failures: {}, channelsKey: "new", lastChannelsKey: "old", channelRunAt: invalid, failedRunAt: invalid }
+        state.fetchedAt[GuideSources.cacheID("https://epg.example/a.xml")] = 999
+        verdict = GuideSources.isRunDue(sources, state, 1000)
+        t.assertEqual(verdict.reason, "channels")
+        result = GuideRunsTests.check(result.runs, false, true, verdict)
+        t.assertEqual([result.run, result.reason], [true, "channels"])
+    end sub
+
+    ' Remove Live TV Source, then Add Guide, both while a task runs: nothing is deleted under the task; when it
+    ' answers, the delete comes first, then the run for the new sources.
+    sub test_removeThenAddDuringARun(t as object)
+        runs = GuideRuns.removeSource(GuideRuns.newState())
+        result = GuideRunsTests.check(runs, true, false, invalid)
+        t.assertFalse(result.deleted, "the task may still read the files")
+        runs = GuideRuns.sourcesChanged(result.runs)
+        result = GuideRunsTests.check(runs, true, false, invalid)
+        t.assertFalse(result.deleted)
+        t.assertTrue(GuideRuns.checkAgain(result.runs))
+        ' The task answers; a playlist was added again meanwhile and has channels.
+        result = GuideRunsTests.check(result.runs, false, true, { due: true, reason: "first" })
+        t.assertTrue(result.deleted, "deleted before the newer run")
+        t.assertEqual([result.run, result.reason], [true, "first"])
+        t.assertFalse(GuideRuns.checkAgain(result.runs))
+        ' With no channels yet, the delete still happens and the run waits for the playlist.
+        late = GuideRunsTests.check(GuideRuns.sourcesChanged(GuideRuns.removeSource(GuideRuns.newState())), false, false, invalid)
+        t.assertTrue(late.deleted)
+        t.assertFalse(late.run)
+    end sub
+
+    sub test_addGuideDuringARun(t as object)
+        runs = GuideRuns.sourcesChanged(GuideRuns.newState())
+        result = GuideRunsTests.check(runs, true, true, { due: true, reason: "sources" })
+        t.assertFalse(result.run)
+        t.assertTrue(GuideRuns.checkAgain(result.runs), "after the answer")
+        result = GuideRunsTests.check(result.runs, false, true, { due: true, reason: "sources" })
+        t.assertEqual([result.run, result.reason, result.deleted], [true, "sources", false])
+    end sub
+
+    ' Refresh Now while a run goes: forced when it answers, whatever isRunDue says, and the times are forgotten.
+    sub test_refreshNowDuringARun(t as object)
+        runs = GuideRuns.refreshNow(GuideRuns.newState())
+        result = GuideRunsTests.check(runs, true, true, invalid)
+        t.assertFalse(result.run)
+        t.assertTrue(GuideRuns.checkAgain(result.runs))
+        result = GuideRunsTests.check(result.runs, false, true, { due: false, reason: "" })
+        t.assertEqual([result.run, result.reason, result.forgetTimes], [true, "refresh", true])
+        t.assertFalse(GuideRuns.checkAgain(result.runs))
+        ' Without channels the force waits.
+        waiting = GuideRunsTests.check(GuideRuns.refreshNow(GuideRuns.newState()), false, false, invalid)
+        t.assertFalse(waiting.run)
+        t.assertTrue(waiting.runs.force)
+    end sub
+
+    ' QA 3: the watchdog gave up on a task that hasn't stopped: still busy, so nothing is deleted or started and the
+    ' requests stay; once it stops, the delete, then the run.
+    sub test_theWatchdogPathKeepsTheRequests(t as object)
+        runs = GuideRuns.refreshNow(GuideRuns.sourcesChanged(GuideRuns.removeSource(GuideRuns.newState())))
+        t.assertTrue(GuideRuns.checkAgain(runs))
+        alive = GuideRunsTests.check(runs, true, true, invalid)
+        t.assertFalse(alive.deleted)
+        t.assertFalse(alive.run)
+        t.assertEqual(alive.runs, { pending: true, force: true, deletePending: true })
+        stopped = GuideRunsTests.check(alive.runs, false, true, invalid)
+        t.assertTrue(stopped.deleted)
+        t.assertEqual([stopped.run, stopped.reason], [true, "refresh"])
+        t.assertEqual(stopped.runs, GuideRuns.newState())
+    end sub
+
+    sub test_theRunsPassedInArentChanged(t as object)
+        runs = GuideRuns.newState()
+        GuideRuns.sourcesChanged(runs)
+        GuideRuns.refreshNow(runs)
+        GuideRuns.removeSource(runs)
+        GuideRuns.gate({ pending: false, force: false, deletePending: true }, false)
+        t.assertEqual(runs, GuideRuns.newState())
+    end sub
+
+    ' MainScene.refreshGuideIfDue's decision: the gate, the delete, then choose. verdict: isRunDue's (or invalid).
+    function check(runs as object, busy as boolean, hasChannels as boolean, verdict as dynamic) as object
+        gated = GuideRuns.gate(runs, busy)
+        result = { runs: gated.runs, deleted: gated.deleteFirst, run: false, reason: "", forgetTimes: false }
+        if not gated.go then return result
+        chosen = GuideRuns.choose(gated.runs, hasChannels, verdict)
+        result.runs = chosen.runs
+        result.run = chosen.run
+        result.reason = chosen.reason
+        result.forgetTimes = chosen.forgetTimes
+        return result
+    end function
+
+end namespace

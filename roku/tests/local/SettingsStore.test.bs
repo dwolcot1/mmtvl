@@ -678,4 +678,40 @@ namespace SettingsStoreTests
         return result
     end function
 
+    ' Step 13 (QA 5): several keys in one save, all or nothing (Remove Live TV Source).
+    sub test_saveManySavesEveryKeyOrNone(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        t.assertTrue(SettingsStore.save(store, "source", "https://iptv.example/a.m3u").ok)
+        t.assertTrue(SettingsStore.save(store, "guides", ["https://epg.example/a.xml"]).ok)
+        registry.failWriteNumber = registry.writes + 2
+        failed = SettingsStore.saveMany(store, { guides: [], source: "" })
+        t.assertFalse(failed.ok)
+        t.assertEqual(failed.message, SettingsStore.saveFailedMessage)
+        t.assertEqual(store.source, "https://iptv.example/a.m3u", "the store keeps both")
+        t.assertEqual(store.guides, ["https://epg.example/a.xml"])
+        reloaded = SettingsStore.load(registry)
+        t.assertEqual(reloaded.source, "https://iptv.example/a.m3u", "the guides written first were put back")
+        t.assertEqual(reloaded.guides, ["https://epg.example/a.xml"])
+        registry.failWriteNumber = -1
+        saved = SettingsStore.saveMany(store, { guides: [], source: "" })
+        t.assertTrue(saved.ok)
+        t.assertEqual([store.source, store.guides], ["", []])
+        reloaded = SettingsStore.load(registry)
+        t.assertEqual([reloaded.source, reloaded.guides], ["", []])
+    end sub
+
+    sub test_saveManyRefusesUnknownKeysAndWhatWontFit(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        t.assertFalse(SettingsStore.saveMany(store, { source: "https://iptv.example/a.m3u", nonsense: 1 }).ok)
+        t.assertEqual(store.source, "", "nothing saved")
+        t.assertTrue(SettingsStore.saveMany(store, {}).ok, "nothing to save")
+        registry.space = 10
+        tooLarge = SettingsStore.saveMany(store, { source: "https://iptv.example/a-long-playlist-address.m3u", guides: ["https://epg.example/a.xml"] })
+        t.assertFalse(tooLarge.ok)
+        t.assertEqual(tooLarge.message, SettingsStore.tooLargeMessage)
+        t.assertEqual([store.source, store.guides], ["", []])
+    end sub
+
 end namespace

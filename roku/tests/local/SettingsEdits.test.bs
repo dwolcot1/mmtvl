@@ -1,0 +1,111 @@
+' Settings' edits (M12 step 13): typed addresses (MMTVL's ClipboardURL, with the URLPolicy check PlaylistTask and
+' GuideTask apply), the guide list (MMTVL's guideAddProblem, moveGuideSource and removeGuideSource: add up to 6,
+' never twice, remove, reorder), groups and hidden channels, and the switches. Off-device.
+namespace SettingsEditsTests
+
+    sub test_aTypedAddressIsTrimmedToItsFirstLine(t as object)
+        result = SettingsEdits.checkURL("   https://iptv.example/get.php?u=1" + Chr(9) + "  ")
+        t.assertTrue(result.ok)
+        t.assertEqual(result.url, "https://iptv.example/get.php?u=1")
+        t.assertEqual(result.message, "")
+        pasted = SettingsEdits.checkURL(Chr(10) + "  " + Chr(13) + Chr(10) + "http://epg.example/guide.xml" + Chr(10) + "second line")
+        t.assertEqual(pasted.url, "http://epg.example/guide.xml", "the first non-empty line")
+        t.assertTrue(SettingsEdits.checkURL("HTTPS://IPTV.example/x.m3u").ok, "any case")
+    end sub
+
+    sub test_whatIsntAWebAddressIsRefused(t as object)
+        t.assertEqual(SettingsEdits.checkURL("").message, "Nothing was typed")
+        t.assertEqual(SettingsEdits.checkURL("   ").message, "Nothing was typed")
+        t.assertEqual(SettingsEdits.checkURL(invalid).message, "Nothing was typed")
+        for each text in ["iptv.example/get.php", "ftp://iptv.example/x.m3u", "file:///etc/passwd", "https://", "http:///path", "http://bad host.example/x"]
+            result = SettingsEdits.checkURL(text)
+            t.assertFalse(result.ok, text)
+            t.assertEqual(result.url, "", text)
+            t.assertEqual(result.message, "That isn't a web address. It starts with http:// or https://", text)
+        end for
+    end sub
+
+    sub test_anAddressPastTheStoresLimitIsRefused(t as object)
+        longText = "https://iptv.example/" + String(SettingsStore.maximumURLLength, "a")
+        result = SettingsEdits.checkURL(longText)
+        t.assertFalse(result.ok)
+        t.assertEqual(result.message, "That address is too long")
+        fits = "https://iptv.example/" + String(SettingsStore.maximumURLLength - 21, "a")
+        t.assertTrue(SettingsEdits.checkURL(fits).ok, "exactly the limit")
+    end sub
+
+    ' A typed address is the user's, as in PlaylistTask: a LAN playlist (Threadfin, xTeVe) is fine.
+    sub test_aLANAddressTheUserTypedIsAllowed(t as object)
+        t.assertEqual(SettingsEdits.checkURL("http://192.168.1.20:34400/m3u/hdhr.m3u").ok, URLPolicy.allows("http://192.168.1.20:34400/m3u/hdhr.m3u").ok, "the same check as PlaylistTask")
+    end sub
+
+    sub test_guidesAddUpToSixNeverTwice(t as object)
+        guides = []
+        for i = 1 to 6
+            result = SettingsEdits.addGuide(guides, "https://epg.example/" + i.ToStr() + ".xml")
+            t.assertTrue(result.ok, i.ToStr())
+            guides = result.guides
+        end for
+        t.assertEqual(guides.Count(), 6)
+        t.assertEqual(guides[5], "https://epg.example/6.xml", "appended: the lowest priority")
+        full = SettingsEdits.addGuide(guides, "https://epg.example/7.xml")
+        t.assertFalse(full.ok)
+        t.assertEqual(full.message, "Up to 6 guides; remove one first")
+        t.assertEqual(full.guides.Count(), 6)
+        twice = SettingsEdits.addGuide(["https://epg.example/1.xml"], "https://epg.example/1.xml")
+        t.assertFalse(twice.ok)
+        t.assertEqual(twice.message, "That guide is already added")
+        t.assertEqual(twice.guides, ["https://epg.example/1.xml"])
+        before = ["https://epg.example/1.xml"]
+        SettingsEdits.addGuide(before, "https://epg.example/2.xml")
+        t.assertEqual(before, ["https://epg.example/1.xml"], "the old list isn't changed")
+    end sub
+
+    sub test_guidesRemoveAndMove(t as object)
+        guides = ["https://a.example/1.xml", "https://b.example/2.xml", "https://c.example/3.xml"]
+        idB = GuideSources.cacheID(guides[1])
+        t.assertEqual(SettingsEdits.removeGuide(guides, idB), ["https://a.example/1.xml", "https://c.example/3.xml"])
+        t.assertEqual(SettingsEdits.removeGuide(guides, "gone"), guides, "an unknown id")
+        t.assertEqual(SettingsEdits.moveGuide(guides, idB, -1), ["https://b.example/2.xml", "https://a.example/1.xml", "https://c.example/3.xml"])
+        t.assertEqual(SettingsEdits.moveGuide(guides, idB, 1), ["https://a.example/1.xml", "https://c.example/3.xml", "https://b.example/2.xml"])
+        idA = GuideSources.cacheID(guides[0])
+        t.assertEqual(SettingsEdits.moveGuide(guides, idA, -1), guides, "clamped at the top")
+        idC = GuideSources.cacheID(guides[2])
+        t.assertEqual(SettingsEdits.moveGuide(guides, idC, 1), guides, "clamped at the end")
+        t.assertEqual(SettingsEdits.moveGuide(guides, idC, -5), ["https://c.example/3.xml", "https://a.example/1.xml", "https://b.example/2.xml"])
+        t.assertEqual(SettingsEdits.moveGuide(guides, "gone", 1), guides)
+        t.assertEqual(guides[0], "https://a.example/1.xml", "the old list isn't changed")
+        t.assertEqual(SettingsEdits.guideIndex(guides, idC), 2)
+        t.assertEqual(SettingsEdits.guideIndex(guides, "gone"), -1)
+    end sub
+
+    sub test_groupsHideAndShow(t as object)
+        prefs = SettingsStore.defaultValue("prefs")
+        prefs.favorites = ["id:a"]
+        hidden = SettingsEdits.groupToggled(prefs, "Sports")
+        t.assertEqual(hidden.hiddenGroups, ["Sports"])
+        t.assertEqual(hidden.favorites, ["id:a"], "the other fields are kept")
+        t.assertEqual(prefs.hiddenGroups, [], "the old prefs aren't changed")
+        shown = SettingsEdits.groupToggled(hidden, "Sports")
+        t.assertEqual(shown.hiddenGroups, [])
+        t.assertEqual(SettingsEdits.groupToggled({ favorites: [], hiddenChannels: [], hiddenGroups: ["News", "Sports"], teams: [] }, "News").hiddenGroups, ["Sports"])
+    end sub
+
+    sub test_aHiddenChannelIsShownAgain(t as object)
+        prefs = SettingsStore.defaultValue("prefs")
+        prefs.hiddenChannels = ["id:a", "id:b", "id:c"]
+        t.assertEqual(SettingsEdits.channelShown(prefs, "id:b").hiddenChannels, ["id:a", "id:c"])
+        t.assertEqual(SettingsEdits.channelShown(prefs, "id:gone").hiddenChannels, ["id:a", "id:b", "id:c"])
+        t.assertEqual(prefs.hiddenChannels.Count(), 3, "the old prefs aren't changed")
+    end sub
+
+    sub test_onlySettingsSwitchesToggle(t as object)
+        settings = SettingsStore.defaultSettings()
+        t.assertFalse(SettingsEdits.settingToggled(settings, "channelUpMovesUpList").channelUpMovesUpList)
+        t.assertTrue(SettingsEdits.settingToggled(settings, "usePlaylistGuide").usePlaylistGuide)
+        t.assertFalse(SettingsEdits.settingToggled(settings, "channelLogos").channelLogos)
+        t.assertEqual(SettingsEdits.settingToggled(settings, "antennaEnabled"), settings, "not Settings' switch (yet)")
+        t.assertTrue(settings.channelLogos, "the old settings aren't changed")
+    end sub
+
+end namespace
