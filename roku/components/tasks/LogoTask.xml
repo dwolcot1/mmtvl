@@ -14,7 +14,8 @@
              each playlist change (security L-3: another URL-bearing field, on a node outside the scene tree). -->
         <field id="playlistURL" type="string" />
         <!-- In: { url, path }, path = LogoCache.path(url) (anything else is refused). alwaysNotify: every set is a
-             request. -->
+             request. Step 22: { clear: true } empties the queue (a memory alert turned the logos off); each path
+             dropped is answered as not loaded. -->
         <field id="request" type="assocarray" alwaysNotify="true" />
         <!-- Out: { path, ok } once per request that was tried (ok: path now holds the logo), and { path, ok: false }
              for one dropped from the full queue (not remembered as failed: it may be asked for again). -->

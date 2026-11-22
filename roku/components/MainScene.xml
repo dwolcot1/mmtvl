@@ -39,7 +39,10 @@
      unreachable tuner or a channel gone from it is searched for or read again and played once more. Settings →
      Antenna (Use Antenna, the tuners, Find Tuners, Address, Guide from SiliconDust). No DeviceID, DeviceAuth or
      tuner address reaches the scene's fields or Settings (the stream URLs in the lineup are on the tuner, as the
-     playlist's are on the provider). Back never leaves the app (D49): the scene handles every key that reaches it. -->
+     playlist's are on the provider). Step 22: memory alerts (main.bs hands them to memoryAlert): MemoryRelief.apply
+     says what goes until the next launch (the logos, Search's title index, a shorter guide window read again from the
+     files there are, and at a critical level My Teams' copy of the guide); Settings → Device says why. Back never
+     leaves the app (D49): the scene handles every key that reaches it. -->
 <component name="MainScene" extends="Scene">
     <interface>
         <!-- Lineup.build's result for the last playlist that loaded (kept when a later load fails). -->
@@ -70,6 +73,11 @@
              { host, port, secret }). The scene hands it to an ImportTask and clears the field at once; it is never
              logged or shown. -->
         <field id="importRequest" type="assocarray" onChange="onImportRequest" />
+        <!-- Step 22 (D45): set by main for each memory alert (MemoryRelief.appAlert's { source: "app", percent,
+             multiLevel } or generalAlert's { source: "general", general }); onMemoryAlert drops what
+             MemoryRelief.apply says. alwaysNotify: two alerts at the same level both count. QA round 1: observed in
+             init with a handler that reads each event's own data, so two alerts set back to back are both applied. -->
+        <field id="memoryAlert" type="assocarray" alwaysNotify="true" />
     </interface>
     <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/SettingsStore.bs" />
@@ -106,6 +114,8 @@
     <script type="text/brighterscript" uri="pkg:/source/lib/MatchGuide.bs" />
     <!-- Step 21: the antenna's switches and file paths (constants only); the antenna's logic runs in AntennaTask. -->
     <script type="text/brighterscript" uri="pkg:/source/lib/AntennaConfig.bs" />
+    <!-- Step 22: what memory alerts drop (pure decisions; main.bs subscribes to the alerts). -->
+    <script type="text/brighterscript" uri="pkg:/source/lib/MemoryRelief.bs" />
     <children>
         <!-- The guide's background too: the guide has none, so the player's Video shows through in its preview place. -->
         <Poster id="background" />

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Search's folding for typed text that isn't ASCII (M12 step 22, D19). SearchView doesn't load the fold tables
+     (EPGMatcher.bs); its folder (LiveSearch.newTypingFolder) makes one of these nodes the first time such text is
+     typed (the Roku mobile app's keyboard can send it; the on-screen keyboard types ASCII only) and asks it, so the
+     tables load on the render thread only then. fold(text) is LiveSearch.folded with the Tasks' folder, so the view
+     narrows exactly as SearchTask matches. -->
+<component name="SearchFolder" extends="Node">
+    <interface>
+        <function name="fold" />
+    </interface>
+    <!-- QA round 1 (D53): the folding only (LiveSearchFold.bs, with EPGMatcher's fold table and Unicode). -->
+    <script type="text/brighterscript" uri="pkg:/source/lib/Unicode.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/EPGMatcher.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/LiveSearchFold.bs" />
+</component>

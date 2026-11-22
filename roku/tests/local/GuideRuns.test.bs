@@ -111,6 +111,22 @@ namespace GuideRunsTests
         t.assertEqual(runs, GuideRuns.newState())
     end sub
 
+    ' Step 22 (QA round 1): a memory alert's shorter window runs at once, even within the hour after a failed run; a
+    ' rematch for Match Guide still waits.
+    sub test_aMemoryShrinkSkipsTheFailureWait(t as object)
+        now = 50000
+        failedAt = now - 60
+        shrink = GuideRuns.overridesChanged(GuideRuns.newState())
+        t.assertFalse(GuideRuns.rematchWaits(failedAt, now, true))
+        chosen = GuideRuns.choose(GuideRuns.gate(shrink, false).runs, true, { due: false, reason: "" }, GuideRuns.rematchWaits(failedAt, now, true))
+        t.assertEqual([chosen.run, chosen.reason, chosen.cachedOnly], [true, "match", true], "a shrink pending, a recent failure: a run")
+        t.assertTrue(GuideRuns.rematchWaits(failedAt, now, false))
+        held = GuideRuns.choose(GuideRuns.gate(shrink, false).runs, true, { due: false, reason: "" }, GuideRuns.rematchWaits(failedAt, now, false))
+        t.assertFalse(held.run, "no shrink: the wait stays")
+        t.assertTrue(held.runs.rematch)
+        t.assertFalse(GuideRuns.rematchWaits(invalid, now, false), "no failure, no wait")
+    end sub
+
     ' MainScene.refreshGuideIfDue's decision: the gate, the delete, then choose. verdict: isRunDue's (or invalid).
     function check(runs as object, busy as boolean, hasChannels as boolean, verdict as dynamic) as object
         gated = GuideRuns.gate(runs, busy)

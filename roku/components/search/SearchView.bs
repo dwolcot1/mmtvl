@@ -7,7 +7,8 @@ sub init()
     fonts = m.theme.fonts
     layout = m.theme.layout
     canvas = m.theme.canvas
-    m.folder = LiveSearch.newFolder()
+    ' Step 22 (D19): ASCII is lowercased here; other text goes to a SearchFolder node, made on first use.
+    m.folder = LiveSearch.newTypingFolder()
     m.state = LiveSearch.newState()
     m.picked = []
     shade = m.top.findNode("dim")

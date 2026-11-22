@@ -1,0 +1,200 @@
+' Memory alerts (M12 step 22, D45-D48): the level of each alert, what each level drops and that it stays dropped, the
+' Roku OS that alerts once, the device-memory fallback, the guards for a Roku OS without the calls, and the DEBUG
+' console line. Fake monitor and device-info objects only.
+namespace MemoryReliefTests
+
+    sub test_eachThresholdIsALevel(t as object)
+        cases = [[79, 0], [80, 1], [84, 1], [85, 2], [89, 2], [90, 3], [95, 3], [100, 3]]
+        for each pair in cases
+            t.assertEqual(MemoryRelief.levelOf(MemoryRelief.appAlert({ memoryUsagePercent: pair[0] }, invalid, true)), pair[1], pair[0].ToStr() + " %")
+        end for
+        t.assertEqual(MemoryRelief.levelOf(invalid), 0)
+        t.assertEqual(MemoryRelief.levelOf({ source: "other" }), 0)
+    end sub
+
+    ' Before Roku OS 15.2 the only alert is at 80 %: no 85 % alert will follow, so it shrinks the guide at once.
+    sub test_aRokuThatAlertsOnceTakesTheSecondLevelAtOnce(t as object)
+        once = MemoryRelief.appAlert({ memoryUsagePercent: 80 }, invalid, false)
+        t.assertEqual(MemoryRelief.levelOf(once), 2)
+        t.assertEqual(MemoryRelief.levelOf(MemoryRelief.appAlert({ memoryUsagePercent: 92 }, invalid, false)), 3)
+        t.assertEqual(MemoryRelief.levelOf(MemoryRelief.appAlert({ memoryUsagePercent: 70 }, invalid, false)), 0, "a use under 80 % (as read) drops nothing")
+        t.assertEqual(MemoryRelief.levelOf(MemoryRelief.appAlert({}, invalid, false)), 2, "no number: its one threshold")
+        t.assertEqual(MemoryRelief.levelOf(MemoryRelief.appAlert({}, invalid, true)), 1, "no number: the first threshold")
+    end sub
+
+    sub test_theAlertReadsTheHigherOfTheEventAndTheMonitor(t as object)
+        t.assertEqual(MemoryRelief.appAlert({ memoryUsagePercent: 81 }, 86, true).percent, 86)
+        t.assertEqual(MemoryRelief.appAlert({ memoryUsagePercent: 91 }, 86, true).percent, 91)
+        t.assertEqual(MemoryRelief.appAlert({ MemoryUsagePercent: "88" }, invalid, true).percent, 88, "any key case; a numeric string")
+        t.assertEqual(MemoryRelief.appAlert(invalid, 83.6, true).percent, 83, "no info: the monitor's")
+        t.assertInvalid(MemoryRelief.appAlert({ memoryUsagePercent: "high" }, invalid, true).percent)
+        t.assertEqual(MemoryRelief.appAlert({}, invalid, true), { source: "app", percent: invalid, multiLevel: true })
+    end sub
+
+    sub test_theDeviceMemoryFallback(t as object)
+        t.assertEqual(MemoryRelief.levelOf(MemoryRelief.generalAlert({ generalMemoryLevel: "low" })), 2)
+        t.assertEqual(MemoryRelief.levelOf(MemoryRelief.generalAlert({ generalMemoryLevel: "CRITICAL" })), 3)
+        t.assertEqual(MemoryRelief.levelOf(MemoryRelief.generalAlert({ generalMemoryLevel: "normal" })), 0)
+        t.assertInvalid(MemoryRelief.generalAlert({ linkStatus: true }), "another kind of device-info event")
+        t.assertInvalid(MemoryRelief.generalAlert(invalid))
+    end sub
+
+    sub test_whatEachLevelDrops(t as object)
+        first = MemoryRelief.apply(MemoryRelief.newState(), MemoryRelief.appAlert({ memoryUsagePercent: 80 }, invalid, true))
+        t.assertEqual(first.level, 1)
+        t.assertTrue(first.dropLogos)
+        t.assertTrue(first.dropSearchIndex)
+        t.assertFalse(first.shrinkGuide)
+        t.assertFalse(first.skipTeamsGuide)
+        second = MemoryRelief.apply(first.state, MemoryRelief.appAlert({ memoryUsagePercent: 85 }, invalid, true))
+        t.assertFalse(second.dropLogos, "already off")
+        t.assertTrue(second.dropSearchIndex, "the index may have been built again since")
+        t.assertTrue(second.shrinkGuide)
+        t.assertEqual(second.state.guideHours, 12)
+        t.assertFalse(second.skipTeamsGuide)
+        third = MemoryRelief.apply(second.state, MemoryRelief.appAlert({ memoryUsagePercent: 90 }, invalid, true))
+        t.assertFalse(third.shrinkGuide, "once")
+        t.assertTrue(third.skipTeamsGuide)
+        t.assertEqual(third.state.level, 3)
+        t.assertEqual(third.state.alerts, 3)
+        t.assertEqual(third.state.highestPercent, 90)
+    end sub
+
+    ' D45: what went stays gone until the app opens again; a fall below a threshold brings nothing back.
+    sub test_droppedThingsStayDroppedWhenMemoryFalls(t as object)
+        high = MemoryRelief.apply(MemoryRelief.newState(), MemoryRelief.appAlert({ memoryUsagePercent: 91 }, invalid, true))
+        t.assertTrue(high.dropLogos and high.shrinkGuide and high.skipTeamsGuide, "every level's at once")
+        falling = MemoryRelief.apply(high.state, MemoryRelief.appAlert({ memoryUsagePercent: 78 }, invalid, true))
+        t.assertEqual(falling.level, 0)
+        t.assertFalse(falling.dropLogos or falling.dropSearchIndex or falling.shrinkGuide or falling.skipTeamsGuide)
+        t.assertEqual(falling.state.level, 3, "the highest level stays")
+        t.assertTrue(falling.state.logos)
+        t.assertEqual(falling.state.guideHours, 12)
+        t.assertTrue(falling.state.teamsGuide)
+        t.assertEqual(falling.state.highestPercent, 91)
+        t.assertFalse(MemoryRelief.newState().logos, "apply doesn't change the state it was given")
+        t.assertEqual(high.state.alerts, 1)
+    end sub
+
+    sub test_theWindowTheLogosAndMyTeamsAfterAlerts(t as object)
+        fresh = MemoryRelief.newState()
+        t.assertEqual(MemoryRelief.windowHours(36, fresh), 36)
+        t.assertEqual(MemoryRelief.windowHours(24, fresh), 24)
+        shrunk = MemoryRelief.apply(fresh, MemoryRelief.appAlert({ memoryUsagePercent: 86 }, invalid, true)).state
+        t.assertEqual(MemoryRelief.windowHours(36, shrunk), 12)
+        t.assertEqual(MemoryRelief.windowHours(24, shrunk), 12)
+        t.assertEqual(MemoryRelief.windowHours(6, shrunk), 6, "never longer than the class's")
+        t.assertEqual(MemoryRelief.windowHours(24, { guideHours: 0 }), 24, "GuideTask's 0: the class's")
+        t.assertEqual(MemoryRelief.windowHours(invalid, invalid), 24)
+        settings = { channelLogos: true, channelUpMovesUpList: true }
+        t.assertEqual(MemoryRelief.settingsWith(settings, fresh), settings)
+        t.assertEqual(MemoryRelief.settingsWith(settings, shrunk), { channelLogos: false, channelUpMovesUpList: true })
+        t.assertTrue(settings.channelLogos, "the saved settings are unchanged")
+        t.assertEqual(LogoCache.wanted({ logo: "https://logos.example/a.png" }, MemoryRelief.settingsWith(settings, shrunk)), "", "no logo is asked for")
+        t.assertTrue(MemoryRelief.teamsReadGuide(shrunk))
+        critical = MemoryRelief.apply(shrunk, MemoryRelief.generalAlert({ generalMemoryLevel: "critical" })).state
+        t.assertFalse(MemoryRelief.teamsReadGuide(critical))
+        t.assertTrue(MemoryRelief.teamsReadGuide(invalid))
+    end sub
+
+    sub test_onlyRokuOS152AndLaterAlertMoreThanOnce(t as object)
+        t.assertTrue(MemoryRelief.isMultiLevel("15.2.4.1234"))
+        t.assertTrue(MemoryRelief.isMultiLevel("15.3"))
+        t.assertTrue(MemoryRelief.isMultiLevel("16.0.0.1"))
+        t.assertFalse(MemoryRelief.isMultiLevel("15.1.4.1234"))
+        t.assertFalse(MemoryRelief.isMultiLevel("14.6"))
+        t.assertFalse(MemoryRelief.isMultiLevel(""))
+        t.assertFalse(MemoryRelief.isMultiLevel(invalid))
+    end sub
+
+    ' Roku's own example: the monitor's alerts, else the device's low general memory event, else none (guarded).
+    sub test_subscribingFallsBackAndNeverCrashes(t as object)
+        port = { name: "port" }
+        good = MemoryReliefTests.monitor(true)
+        t.assertEqual(MemoryRelief.subscribe(good, MemoryReliefTests.deviceInfo(), port), "app")
+        t.assertEqual(good.port, port)
+        refused = MemoryReliefTests.monitor(false)
+        info = MemoryReliefTests.deviceInfo()
+        t.assertEqual(MemoryRelief.subscribe(refused, info, port), "general")
+        t.assertTrue(info.lowGeneral)
+        t.assertEqual(MemoryRelief.subscribe(invalid, MemoryReliefTests.deviceInfo(), port), "general", "no monitor on this Roku")
+        t.assertEqual(MemoryRelief.subscribe({}, MemoryReliefTests.deviceInfo(), port), "general", "a monitor without the calls")
+        t.assertEqual(MemoryRelief.subscribe(invalid, {}, port), "none", "neither call")
+        t.assertEqual(MemoryRelief.subscribe(invalid, invalid, port), "none")
+    end sub
+
+    sub test_theSampleReadsWhatThisRokuOSHas(t as object)
+        full = MemoryReliefTests.monitor(true)
+        sampled = MemoryRelief.sample(full)
+        t.assertEqual(sampled, { limitMB: 512, percent: 43, availableKB: 297000 })
+        t.assertEqual(MemoryRelief.sample(invalid), { limitMB: invalid, percent: invalid, availableKB: invalid })
+        t.assertEqual(MemoryRelief.sample({}), { limitMB: invalid, percent: invalid, availableKB: invalid }, "no calls: unknown, no crash")
+    end sub
+
+    sub test_theWarningLineSaysWhatWent(t as object)
+        alert = MemoryRelief.appAlert({ memoryUsagePercent: 86 }, invalid, true)
+        outcome = MemoryRelief.apply(MemoryRelief.newState(), alert)
+        t.assertEqual(MemoryRelief.logLine(alert, outcome), "Memory alert: 86 % of the app's limit, level 2; channel logos off until the next launch, search index dropped, guide window 12 hours")
+        general = MemoryRelief.generalAlert({ generalMemoryLevel: "critical" })
+        again = MemoryRelief.apply(outcome.state, general)
+        t.assertEqual(MemoryRelief.logLine(general, again), "Memory alert (the Roku's memory is critical), level 3; search index dropped, My Teams reads game entries only")
+        quiet = MemoryRelief.apply(again.state, MemoryRelief.appAlert({ memoryUsagePercent: 79 }, invalid, true))
+        t.assertEqual(MemoryRelief.logLine(MemoryRelief.appAlert({ memoryUsagePercent: 79 }, invalid, true), quiet), "Memory alert: 79 % of the app's limit, level 0; nothing more to drop")
+    end sub
+
+    ' The done-when's console line (DEBUG builds only; the release build has none of it, tools/roku.mjs checks).
+    sub test_theDebugConsoleLine(t as object)
+        sampled = { limitMB: 512, percent: 43, availableKB: 297000 }
+        t.assertEqual(MemoryRelief.consoleLine(sampled, 61, 0), "Using 43 % of the limit (GetChannelMemoryLimit 512 MB, available 290 MB); highest since launch 61 % (under 80 %); alerts 0")
+        t.assertEqual(MemoryRelief.consoleLine({ limitMB: invalid, percent: invalid, availableKB: invalid }, invalid, 2), "Using unknown of the limit (GetChannelMemoryLimit unknown, available unknown); highest since launch unknown (unknown); alerts 2")
+        t.assertEqual(MemoryRelief.consoleLine(sampled, 82, 1), "Using 43 % of the limit (GetChannelMemoryLimit 512 MB, available 290 MB); highest since launch 82 % (reached 80 %); alerts 1")
+        t.assertEqual(MemoryRelief.highestOf(invalid, 40), 40)
+        t.assertEqual(MemoryRelief.highestOf(61, 40), 61)
+        t.assertEqual(MemoryRelief.highestOf(61, invalid), 61)
+        t.assertEqual(MemoryRelief.consoleEveryMs, 300000, "every 5 minutes")
+    end sub
+
+    ' --- fakes (methods run with m = the fake) ---
+
+    function monitor(alerts as boolean) as object
+        return {
+            alerts: alerts,
+            port: invalid,
+            SetMessagePort: MemoryReliefTests.fakeSetPort,
+            EnableMemoryWarningEvent: MemoryReliefTests.fakeEnableWarnings,
+            GetChannelMemoryLimit: MemoryReliefTests.fakeLimit,
+            GetMemoryLimitPercent: MemoryReliefTests.fakePercent,
+            GetChannelAvailableMemory: MemoryReliefTests.fakeAvailable
+        }
+    end function
+
+    function deviceInfo() as object
+        return { port: invalid, lowGeneral: false, SetMessagePort: MemoryReliefTests.fakeSetPort, EnableLowGeneralMemoryEvent: MemoryReliefTests.fakeEnableGeneral }
+    end function
+
+    sub fakeSetPort(port as object)
+        m.port = port
+    end sub
+
+    function fakeEnableWarnings(enable as boolean) as boolean
+        return m.alerts and enable
+    end function
+
+    function fakeEnableGeneral(enable as boolean) as boolean
+        m.lowGeneral = enable
+        return true
+    end function
+
+    function fakeLimit() as object
+        return { maxForegroundMemory: 536870912, maxBackgroundMemory: 0, maxRokuManagedHeapMemory: 0 }
+    end function
+
+    function fakePercent() as integer
+        return 43
+    end function
+
+    function fakeAvailable() as integer
+        return 297000
+    end function
+
+end namespace

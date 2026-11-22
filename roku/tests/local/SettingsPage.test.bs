@@ -334,7 +334,7 @@ namespace SettingsPageTests
         logos = SettingsPages.rowWithID(list, "device.channelLogos")
         t.assertEqual(logos.value, "On")
         t.assertEqual(logos.action, { type: "toggle", setting: "channelLogos" })
-        t.assertEqual(logos.description, "Shows channel logos in the guide and the banner. On at first. On Rokus with 512 MB or less, logos can slow the guide: turn them off if it feels slow.")
+        t.assertEqual(logos.description, "Shows channel logos in the guide and the banner. On at first. On a Low Roku (see Memory above), logos can slow the guide: turn them off if it feels slow.")
         t.assertEqual(SettingsPages.rowWithID(list, "device.compressedGuides").value, "On: Up to 2 MB")
         t.assertEqual(SettingsPages.rowWithID(list, "device.mpeg2").value, "Off: No MPEG-2")
         t.assertEqual(SettingsPages.rowWithID(list, "device.ac3").value, "On")
@@ -358,6 +358,57 @@ namespace SettingsPageTests
         t.assertEqual(SettingsPages.rowWithID(list, "device.ac3").value, "Off: No AC-3")
         unknown = SettingsStatus.deviceOf(invalid)
         t.assertEqual([unknown.modelName, unknown.memory, unknown.os], ["Roku", "Unknown", ""])
+    end sub
+
+    ' Step 22 (D45, D46): after memory alerts the page says what went and why; the switch keeps the saved choice.
+    sub test_memoryAlertsShowOnTheDevicePage(t as object)
+        input = SettingsPageTests.fixture({})
+        input.memoryRelief = MemoryRelief.apply(MemoryRelief.newState(), MemoryRelief.appAlert({ memoryUsagePercent: 86 }, invalid, true)).state
+        list = SettingsPages.sections("device", SettingsStatus.make(input))
+        window = SettingsPages.rowWithID(list, "device.guideWindow")
+        t.assertEqual(window.value, "12 Hours: Low Memory")
+        t.assertEqual(window.detail, "Shorter until MMTVL Live TV opens again")
+        logos = SettingsPages.rowWithID(list, "device.channelLogos")
+        t.assertEqual(logos.value, "Off: Low Memory")
+        t.assertEqual(logos.description, "This Roku ran low on memory, so logos are off until MMTVL Live TV opens again. This switch keeps your choice for next time.")
+        t.assertEqual(logos.action, { type: "toggle", setting: "channelLogos" })
+        input.store.settings.channelLogos = false
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("device", SettingsStatus.make(input)), "device.channelLogos").value, "Off", "turned off by hand: plain Off")
+        input.store.settings.channelLogos = true
+        input.memoryRelief = MemoryRelief.apply(MemoryRelief.newState(), MemoryRelief.appAlert({ memoryUsagePercent: 81 }, invalid, true)).state
+        list = SettingsPages.sections("device", SettingsStatus.make(input))
+        t.assertEqual(SettingsPages.rowWithID(list, "device.guideWindow").value, "24 Hours", "80 %: the window stays")
+        t.assertEqual(SettingsPages.rowWithID(list, "device.guideWindow").detail, "")
+        t.assertEqual(SettingsPages.rowWithID(list, "device.channelLogos").value, "Off: Low Memory")
+        input.memoryRelief = MemoryRelief.newState()
+        list = SettingsPages.sections("device", SettingsStatus.make(input))
+        t.assertEqual(SettingsPages.rowWithID(list, "device.guideWindow").value, "24 Hours")
+        t.assertEqual(SettingsPages.rowWithID(list, "device.channelLogos").value, "On")
+    end sub
+
+    ' Step 22 (D56): the Device texts for each class: Low by memory, Low by its 720p UI only, Low with an unknown
+    ' limit, and High.
+    sub test_theDeviceTextsForEachClass(t as object)
+        dot = " " + Chr(183) + " "
+        cases = [
+            { name: "Low by memory", device: {}, limit: 512, memory: "512 MB" + dot + "Low", window: "24 Hours", compressed: "On: Up to 2 MB" },
+            { name: "Low by its 720p UI", device: { ui: { name: "HD", width: 1280, height: 720 } }, limit: 2048, memory: "2,048 MB" + dot + "Low (720p UI)", window: "24 Hours", compressed: "On: Up to 2 MB" },
+            { name: "Low, limit unknown", device: {}, limit: invalid, memory: "Unknown" + dot + "Low", window: "24 Hours", compressed: "On: Up to 2 MB" },
+            { name: "High", device: {}, limit: 1024, memory: "1,024 MB" + dot + "High", window: "36 Hours", compressed: "On" }
+        ]
+        for each spec in cases
+            input = SettingsPageTests.fixture({})
+            monitor = invalid
+            if spec.limit <> invalid then monitor = CapabilitiesTests.monitor(spec.limit)
+            input.caps = Capabilities.detect(CapabilitiesTests.device(spec.device), monitor)
+            list = SettingsPages.sections("device", SettingsStatus.make(input))
+            t.assertEqual(SettingsPages.rowWithID(list, "device.memory").value, spec.memory, spec.name)
+            t.assertEqual(SettingsPages.rowWithID(list, "device.guideWindow").value, spec.window, spec.name)
+            t.assertEqual(SettingsPages.rowWithID(list, "device.compressedGuides").value, spec.compressed, spec.name)
+            t.assertEqual(SettingsPages.rowWithID(list, "device.channelLogos").value, "On", spec.name + ": logos on everywhere (L7 as amended)")
+            t.assertEqual(SettingsPages.rowWithID(list, "device.channelLogos").description, SettingsPages.channelLogosDescription, spec.name)
+            t.assertEqual(LowMemoryNotice.shouldShow(input.caps, {}, input.store.settings), spec.name <> "High", spec.name + ": the notice on Low Rokus only")
+        end for
     end sub
 
     ' L5: under 4 KB left, Settings → Device warns.

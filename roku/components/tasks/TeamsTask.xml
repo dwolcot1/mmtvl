@@ -7,7 +7,8 @@
      own m: nothing but ids, team names and game records ever leaves it (setting an index on a field would copy it).
      Requests (TeamsWork's): the newest match supersedes the one waiting and the one running (checked before each
      upcoming programme), and a menu request waiting during a match is answered between programmes. The guide data is
-     read from guideHolder's guideData for each match with teams picked, and let go when the match ends.
+     read from guideHolder's guideData for each match with teams picked, and let go when the match ends; step 22: not
+     for a match with skipGuide true (after a critical memory alert, MemoryRelief), which reads game entries only.
      Step 19: Search's teams (LiveSearch.teamsMatching) over the catalog this task holds: the search entries are made
      once, at the first search (text "" only makes them, as Search opens); a search waiting during a match is
      answered between programmes, like a menu.
@@ -51,4 +52,7 @@
     <script type="text/brighterscript" uri="pkg:/source/lib/BannerText.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/MyTeams.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/LiveSearch.bs" />
+    <!-- Step 22 (D19): the folding, the entries and the title index (the view loads LiveSearch.bs only). -->
+    <script type="text/brighterscript" uri="pkg:/source/lib/LiveSearchIndex.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/LiveSearchFold.bs" />
 </component>

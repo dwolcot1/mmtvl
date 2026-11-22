@@ -35,6 +35,16 @@ end sub
 
 sub enqueue(request as dynamic)
     if type(request) <> "roAssociativeArray" then return
+    ' Step 22 (D45): a memory alert turned the logos off; nothing waiting is fetched.
+    clearing = request.clear
+    if (type(clearing) = "Boolean" or type(clearing) = "roBoolean") and clearing
+        dropped = LogoCache.clearQueue(m.queue)
+        for each droppedPath in dropped
+            m.top.ready = { path: droppedPath, ok: false }
+        end for
+        Log.info("Logos", "Memory alert: " + dropped.Count().ToStr() + " waiting logos dropped")
+        return
+    end if
     if not LogoCache.isOwnPath(request.url, request.path) then return
     if m.failed.DoesExist(request.path) or m.queue.paths.DoesExist(request.path) then return
     if m.fs.Exists(request.path)

@@ -2,33 +2,22 @@
 ' L12, M7m L29), IPTVLibrary.searchProgrammes and EPGStore.searchProgrammes (IPTV/IPTVLibrary.swift:651-675,
 ' IPTV/EPG/EPGStore.swift:137-154) and LiveSearchView's texts (IPTV/Search/LiveSearchView.swift), as pure functions.
 ' No nodes: SearchView holds the state and Roku's DynamicMiniKeyboard; SearchTask (channels, programmes) and TeamsTask
-' (teams) run the queries. Uses EPGMatcher (the fold table), TeamCatalog (titles) and BannerText (clock).
+' (teams) run the queries. Step 22 (D19): this file is the view's half (the model, the texts, typing); the folding
+' (LiveSearchFold.bs), the entries, the title index and searchProgrammes (LiveSearchIndex.bs) are in the same
+' namespace in files the Tasks load too and SearchView doesn't, so the fold tables (EPGMatcher.bs) stay off the render thread. Uses Unicode (the non-ASCII
+' test), TeamPicker and TeamCatalog (picked teams), BannerText and MyTeams (clock texts).
 '
-' Folding (folded): Foundation's folding([.caseInsensitive, .diacriticInsensitive]) as EPGMatcher's generated table
-' gives it: each non-ASCII character its mapping, a combining mark nothing, anything else itself; then LCase. Code
-' points above U+FFFF stay as they are. queryWords(text): the folded text split at whitespace (MMTVL's words(in:)).
-' tokenList(text): folded and split at everything that isn't a letter or digit ("Texas A&M" → texas, a, m).
-'
-'   Channels (SearchTask): channelIndex(channels, n) -> [{ id, name, number, group, folded }] from the scene's visible
-'     channels ([{ id, name, number (the shown number), group }], lineup order). channelsMatching(index, words) -> the
-'     first maxChannelResults whose folded name holds every word.
-'   Teams (TeamsTask): teamIndex(teams, n) -> the catalog's search entries, made once (MMTVL's teamSearchTexts).
-'     teamsMatching(index, words, n) -> at most maxTeamResults entries { id, title, detail, text } whose text holds
-'     every word, ranked as MMTVL: 0 the words are the school, an alias or an abbreviation; 1 every word is a whole
-'     word of the name or school; 2 every word starts one; 3 the rest; catalog order within a rank. Words found in the
-'     league title or conference don't count for the rank. Aliases and abbreviations always count (whatever the
-'     Matching switches say).
-'   Programmes (SearchTask): newTitleIndex(data, now, n, cancel) -> the compact title index of one guide load
-'     (GuideFetch.guideData's shape): { titles: [folded, unique], occurrences: [[ref, start, stop, …]] (a flat list
-'     per title), channelRefs: { channel id: ref }, programmeCount, titleCount }; programmes that ended by now are
-'     left out. invalid when cancel said so. searchProgrammes(index, words, channelIDs, now, limit, cancel) -> MMTVL's
-'     searchProgrammes: of the given channels (lineup order) the programmes overlapping [now, now + 24 h) whose folded
-'     title holds every word, soonest first (ties in index order), at most limit programmes, then one result per
-'     channel that shares the guide channel, at most limit: [{ channelID, start, stop, folded }]. invalid when
-'     cancel said so.
-'   The model: newState(firstSerial) -> { text, focus ("keyboard" | "results"), index, first, channels, teams,
-'     programmes, serial, waiting: { guide, teams } }. serial starts at firstSerial: the scene seeds each Search
-'     session one past every serial it has used, so a late answer from an earlier session never matches. channels are channelsMatching's entries, teams teamsMatching's, programmes
+'   typedWords(text, n) -> queryWords' result for typed text: ASCII text is lowercased here, other text is folded by
+'     n.fold (LiveSearchIndex's newFolder in the Tasks and tests; newTypingFolder in SearchView). Without n, other
+'     text is only lowercased. containsAll(haystack, words), spaceSplitter() as before.
+'   newTypingFolder() -> SearchView's folder: { nonASCII, node, nodeType, fold }. Its fold makes a SearchFolder node (which
+'     loads the fold tables) the first time non-ASCII text is typed (from the Roku mobile app's keyboard; the
+'     on-screen keyboard types ASCII only), and asks it; so the view loads them only when they are needed.
+'   The model: newState(firstSerial) -> { text, searching, focus ("keyboard" | "results"), index, first, channels,
+'     teams, programmes, serial, waiting: { guide, teams } }; searching (step 22): whether text's folded words hold
+'     at least minimumCharacters, as isSearching(text) says (set by textChanged). serial starts at firstSerial: the
+'     scene seeds each Search session one past every serial it has used, so a late answer from an earlier session
+'     never matches. channels are channelsMatching's entries, teams teamsMatching's, programmes
 '     { channelID, channelName, channelNumber, start, stop, folded, title, subtitle } (the scene adds the title and
 '     subtitle from the guide screen).
 '     textChanged(state, text, n) -> the state for a new text: under minimumCharacters (spaces aside) no results and
@@ -45,7 +34,7 @@
 '       channelup/channeldown page by visibleResults, Left and Back go to the keyboard, OK on a team "toggleTeam"
 '       (search stays open), on a channel or programme "choose". outcome "none" otherwise.
 '     results(state): channels, then teams, then programmes: [{ kind, entry }]. firstResult(state): the first that
-'       isn't a team (MMTVL's phone Return), or invalid. isSearching(text, n).
+'       isn't a team (MMTVL's phone Return), or invalid. (isSearching(text, n) is in LiveSearchIndex.bs.)
 '     chooseAction(result, now) -> { type: "watch", channelID } for a channel or a programme on now (it plays),
 '       { type: "showInGuide", channelID, start } for a later one (the guide at its start).
 '     lines(state) -> the result window drawn: up to visibleResults rows, each section's header ("CHANNELS",
@@ -74,56 +63,34 @@ namespace LiveSearch
     const searchingText = "Searching…"
     const onNowText = "On Now"
 
-    ' --- folding ---
+    ' --- typing (step 22, D19) ---
 
-    function newFolder() as object
-        return EPGMatcher.newNormalizer()
-    end function
-
-    function folded(text as dynamic, n = invalid as dynamic) as string
-        if not LiveSearch.isText(text) then return ""
-        if n = invalid then n = EPGMatcher.newNormalizer()
-        if not n.nonASCII.IsMatch(text) then return LCase(text)
-        if n.mappings = invalid then EPGMatcher.loadFoldTable(n)
-        parts = []
-        for i = 1 to Len(text)
-            piece = Mid(text, i, 1)
-            code = Asc(piece)
-            if code >= 128
-                mapped = n.mappings[piece]
-                if mapped <> invalid
-                    piece = mapped
-                else if code <= 65535
-                    if EPGMatcher.inRanges(code, n.drops) then piece = ""
-                end if
-            end if
-            parts.Push(piece)
-        end for
-        return LCase(parts.Join(""))
-    end function
-
-    function queryWords(text as dynamic, n = invalid as dynamic) as object
+    function typedWords(text as dynamic, n = invalid as dynamic) as object
+        plain = LiveSearch.textOf(text)
+        lowered = invalid
+        if n <> invalid
+            if n.nonASCII.IsMatch(plain) then lowered = n.fold(plain)
+        end if
+        if not LiveSearch.isText(lowered) then lowered = LCase(plain)
         found = []
-        for each piece in LiveSearch.spaceSplitter().Split(LiveSearch.folded(text, n))
+        for each piece in LiveSearch.spaceSplitter().Split(lowered)
             if piece <> "" then found.Push(piece)
         end for
         return found
     end function
 
-    function isSearching(text as dynamic, n = invalid as dynamic) as boolean
-        return Len(LiveSearch.queryWords(text, n).Join("")) >= LiveSearch.minimumCharacters
+    function newTypingFolder() as object
+        ' nodeType: components/search/SearchFolder.xml (a field, since this file is also built without components).
+        return { nonASCII: Unicode.newNonASCIIFinder(), node: invalid, nodeType: "SearchFolder", fold: LiveSearch.foldByNode }
     end function
 
-    function tokenList(text as dynamic, n = invalid as dynamic) as object
-        found = []
-        if not LiveSearch.isText(text) then return found
-        if n = invalid then n = EPGMatcher.newNormalizer()
-        plain = text
-        if n.nonASCII.IsMatch(plain) then plain = EPGMatcher.foldNonASCII(plain, n)
-        for each piece in n.separator.Split(LCase(plain))
-            if piece <> "" then found.Push(piece)
-        end for
-        return found
+    ' fold(text) of newTypingFolder (m is the folder): the SearchFolder node's fold, made on first use.
+    function foldByNode(text as dynamic) as string
+        if m.node = invalid then m.node = CreateObject("roSGNode", m.nodeType)
+        if m.node = invalid then return LCase(LiveSearch.textOf(text))
+        answer = m.node.callFunc("fold", LiveSearch.textOf(text))
+        if LiveSearch.isText(answer) then return answer
+        return LCase(LiveSearch.textOf(text))
     end function
 
     function containsAll(haystack as string, wordList as object) as boolean
@@ -139,255 +106,10 @@ namespace LiveSearch
         return CreateObject("roRegex", "[\x09-\x0D ]+", "")
     end function
 
-    ' --- channels ---
-
-    function channelIndex(channels as dynamic, n = invalid as dynamic) as object
-        entries = []
-        if LCase(type(channels)) <> "roarray" then return entries
-        if n = invalid then n = EPGMatcher.newNormalizer()
-        for each channel in channels
-            if LCase(type(channel)) = "roassociativearray"
-                if LiveSearch.isText(channel.id) and LiveSearch.isText(channel.name)
-                    entries.Push({ id: channel.id, name: channel.name, number: LiveSearch.textOf(channel.number), group: LiveSearch.textOf(channel.group), folded: LiveSearch.folded(channel.name, n) })
-                end if
-            end if
-        end for
-        return entries
-    end function
-
-    function channelsMatching(entries as object, wordList as object) as object
-        found = []
-        if wordList.Count() = 0 then return found
-        for each entry in entries
-            if LiveSearch.containsAll(entry.folded, wordList)
-                found.Push(entry)
-                if found.Count() >= LiveSearch.maxChannelResults then exit for
-            end if
-        end for
-        return found
-    end function
-
-    ' --- teams ---
-
-    function teamIndex(catalog as dynamic, n = invalid as dynamic) as object
-        entries = []
-        if LCase(type(catalog)) <> "roarray" then return { entries: entries }
-        if n = invalid then n = EPGMatcher.newNormalizer()
-        for each team in catalog
-            school = LiveSearch.textOf(team.school)
-            conference = LiveSearch.textOf(team.conference)
-            leagueName = TeamCatalog.leagueTitle(team.league)
-            pieces = [team.name, school, leagueName, conference]
-            pieces.Append(LiveSearch.listOf(team.aliases))
-            pieces.Append(LiveSearch.listOf(team.abbreviations))
-            names = []
-            if school <> "" then names.Push(school)
-            names.Append(LiveSearch.listOf(team.aliases))
-            names.Append(LiveSearch.listOf(team.abbreviations))
-            schoolKeys = []
-            for each name in names
-                key = LiveSearch.tokenList(name, n).Join(" ")
-                if key <> "" then schoolKeys.Push(key)
-            end for
-            detail = leagueName
-            if team.conference <> invalid then detail = conference
-            entries.Push({
-                id: team.id,
-                title: TeamCatalog.pickTitle(team),
-                detail: detail,
-                text: LiveSearch.folded(pieces.Join(" "), n),
-                groupText: LiveSearch.folded(leagueName + " " + conference, n),
-                nameWords: " " + LiveSearch.tokenList(team.name + " " + school, n).Join(" ") + " ",
-                schoolNames: "|" + schoolKeys.Join("|") + "|"
-            })
-        end for
-        return { entries: entries }
-    end function
-
-    function teamsMatching(index as dynamic, wordList as object, n = invalid as dynamic) as object
-        found = []
-        if LCase(type(index)) <> "roassociativearray" or wordList.Count() = 0 then return found
-        if n = invalid then n = EPGMatcher.newNormalizer()
-        wordTokens = []
-        for each word in wordList
-            wordTokens.Push(LiveSearch.tokenList(word, n))
-        end for
-        buckets = [[], [], [], []]
-        limit = LiveSearch.maxTeamResults
-        for each entry in index.entries
-            if LiveSearch.containsAll(entry.text, wordList)
-                parts = []
-                for i = 0 to wordList.Count() - 1
-                    if Instr(1, entry.groupText, wordList[i]) = 0 then parts.Append(wordTokens[i])
-                end for
-                buckets[LiveSearch.rank(parts, entry)].Push(entry)
-                if buckets[0].Count() >= limit then exit for
-            end if
-        end for
-        for each bucket in buckets
-            for each entry in bucket
-                if found.Count() >= limit then exit for
-                found.Push({ id: entry.id, title: entry.title, detail: entry.detail, text: entry.text })
-            end for
-        end for
-        return found
-    end function
-
-    function rank(parts as object, entry as object) as integer
-        if parts.Count() > 0
-            if Instr(1, entry.schoolNames, "|" + parts.Join(" ") + "|") > 0 then return 0
-        end if
-        whole = true
-        for each part in parts
-            if Instr(1, entry.nameWords, " " + part + " ") = 0
-                whole = false
-                exit for
-            end if
-        end for
-        if whole then return 1
-        for each part in parts
-            if Instr(1, entry.nameWords, " " + part) = 0 then return 3
-        end for
-        return 2
-    end function
-
-    ' --- programmes ---
-
-    function newTitleIndex(data as dynamic, now as dynamic, n = invalid as dynamic, cancel = invalid as dynamic) as dynamic
-        index = { titles: [], occurrences: [], channelRefs: {}, programmeCount: 0, titleCount: 0 }
-        index.channelRefs.SetModeCaseSensitive()
-        if LCase(type(data)) <> "roassociativearray" or not LiveSearch.isNumber(now) then return index
-        if LCase(type(data.guides)) <> "roarray" or LCase(type(data.matches)) <> "roassociativearray" then return index
-        if n = invalid then n = EPGMatcher.newNormalizer()
-        seen = {}
-        seen.SetModeCaseSensitive()
-        refs = {}
-        refs.SetModeCaseSensitive()
-        refCount = 0
-        scanned = 0
-        for g = 0 to data.guides.Count() - 1
-            guide = data.guides[g]
-            if LCase(type(guide)) = "roassociativearray"
-                if LCase(type(guide.programmes)) = "roassociativearray"
-                    for each epgID in guide.programmes
-                        list = guide.programmes[epgID]
-                        ref = -1
-                        if LCase(type(list)) = "roarray"
-                            for each programme in list
-                                scanned++
-                                if cancel <> invalid and scanned mod LiveSearch.cancelEvery = 0
-                                    if cancel.isCancelled() then return invalid
-                                end if
-                                if LiveSearch.isTimed(programme)
-                                    if programme.stop > now and LiveSearch.isText(programme.title)
-                                        if ref < 0
-                                            ref = refCount
-                                            refCount++
-                                            refs[g.ToStr() + Chr(10) + epgID] = ref
-                                        end if
-                                        key = LiveSearch.folded(programme.title, n)
-                                        position = seen[key]
-                                        if position = invalid
-                                            position = index.titles.Count()
-                                            seen[key] = position
-                                            index.titles.Push(key)
-                                            index.occurrences.Push([])
-                                        end if
-                                        occurrence = index.occurrences[position]
-                                        occurrence.Push(ref)
-                                        occurrence.Push(programme.start)
-                                        occurrence.Push(programme.stop)
-                                        index.programmeCount++
-                                    end if
-                                end if
-                            end for
-                        end if
-                    end for
-                end if
-            end if
-        end for
-        for each channelID in data.matches
-            match = data.matches[channelID]
-            if LCase(type(match)) = "roassociativearray"
-                if LiveSearch.isNumber(match.guide) and LiveSearch.isText(match.epgID)
-                    ref = refs[match.guide.ToStr() + Chr(10) + match.epgID]
-                    if ref <> invalid then index.channelRefs[channelID] = ref
-                end if
-            end if
-        end for
-        index.titleCount = index.titles.Count()
-        return index
-    end function
-
-    function searchProgrammes(index as dynamic, wordList as object, channelIDs as dynamic, now as dynamic, limit as integer, cancel = invalid as dynamic) as dynamic
-        found = []
-        if LCase(type(index)) <> "roassociativearray" or wordList.Count() = 0 or limit <= 0 then return found
-        if LCase(type(channelIDs)) <> "roarray" or not LiveSearch.isNumber(now) then return found
-        byRef = {}
-        for each channelID in channelIDs
-            if LiveSearch.isText(channelID)
-                ref = index.channelRefs[channelID]
-                if ref <> invalid
-                    key = ref.ToStr()
-                    if not byRef.DoesExist(key) then byRef[key] = []
-                    byRef[key].Push(channelID)
-                end if
-            end if
-        end for
-        if byRef.Count() = 0 then return found
-        horizonEnd = now + LiveSearch.programmeHorizon
-        best = []
-        titles = index.titles
-        for t = 0 to titles.Count() - 1
-            if cancel <> invalid and t mod LiveSearch.cancelEvery = 0 and t > 0
-                if cancel.isCancelled() then return invalid
-            end if
-            if LiveSearch.containsAll(titles[t], wordList)
-                occurrence = index.occurrences[t]
-                k = 0
-                while k + 2 < occurrence.Count()
-                    start = occurrence[k + 1]
-                    stopsAt = occurrence[k + 2]
-                    if start < horizonEnd and stopsAt > now and byRef.DoesExist(occurrence[k].ToStr())
-                        LiveSearch.keepSoonest(best, { ref: occurrence[k], start: start, stop: stopsAt, title: t }, limit)
-                    end if
-                    k += 3
-                end while
-            end if
-        end for
-        for each candidate in best
-            for each channelID in byRef[candidate.ref.ToStr()]
-                if found.Count() >= limit then return found
-                found.Push({ channelID: channelID, start: candidate.start, stop: candidate.stop, folded: titles[candidate.title] })
-            end for
-        end for
-        return found
-    end function
-
-    ' Inserts item into list (sorted by start, at most limit) after any with the same start.
-    sub keepSoonest(list as object, item as object, limit as integer)
-        count = list.Count()
-        if count >= limit
-            if item.start >= list[count - 1].start then return
-        end if
-        position = count
-        while position > 0 and list[position - 1].start > item.start
-            position--
-        end while
-        list.Push(item)
-        i = list.Count() - 1
-        while i > position
-            list[i] = list[i - 1]
-            i--
-        end while
-        list[position] = item
-        if list.Count() > limit then list.Pop()
-    end sub
-
     ' --- the model ---
 
     function newState(firstSerial = 0 as integer) as object
-        return { text: "", focus: "keyboard", index: 0, first: 0, channels: [], teams: [], programmes: [], serial: firstSerial, waiting: { guide: false, teams: false } }
+        return { text: "", searching: false, focus: "keyboard", index: 0, first: 0, channels: [], teams: [], programmes: [], serial: firstSerial, waiting: { guide: false, teams: false } }
     end function
 
     function copyState(state as object) as object
@@ -425,8 +147,9 @@ namespace LiveSearch
         updated = LiveSearch.copyState(state)
         updated.text = LiveSearch.textOf(text)
         updated.serial = state.serial + 1
-        wordList = LiveSearch.queryWords(updated.text, n)
-        if Len(wordList.Join("")) < LiveSearch.minimumCharacters
+        wordList = LiveSearch.typedWords(updated.text, n)
+        updated.searching = Len(wordList.Join("")) >= LiveSearch.minimumCharacters
+        if not updated.searching
             updated.channels = []
             updated.teams = []
             updated.programmes = []
@@ -455,7 +178,7 @@ namespace LiveSearch
 
     function applyAnswer(state as object, answer as dynamic) as object
         if LCase(type(answer)) <> "roassociativearray" then return state
-        if answer.serial <> state.serial or not LiveSearch.isSearching(state.text) then return state
+        if answer.serial <> state.serial or not LiveSearch.isTrue(state.searching) then return state
         updated = LiveSearch.copyState(state)
         failed = answer.ok = false
         if answer.part = "guide"
@@ -628,7 +351,7 @@ namespace LiveSearch
     end function
 
     function message(state as object) as string
-        if not LiveSearch.isSearching(state.text) then return LiveSearch.notSearchingText
+        if not LiveSearch.isTrue(state.searching) then return LiveSearch.notSearchingText
         if LiveSearch.resultCount(state) > 0 then return ""
         if LiveSearch.needsQuery(state) then return LiveSearch.searchingText
         return LiveSearch.noResultsText
@@ -670,6 +393,12 @@ namespace LiveSearch
     function textOf(value as dynamic) as string
         if LiveSearch.isText(value) then return value
         return ""
+    end function
+
+    function isTrue(value as dynamic) as boolean
+        kind = LCase(type(value))
+        if kind <> "boolean" and kind <> "roboolean" then return false
+        return value
     end function
 
     function isText(value as dynamic) as boolean

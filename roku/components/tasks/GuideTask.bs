@@ -125,7 +125,7 @@ function fetchAll(sources as object) as object
     return fetched
 end function
 
-' GuidePipeline.process over the files, window [now - 2 h, now + the class's guide hours), with the observer's
+' GuidePipeline.process over the files, window [now - 2 h, now + the class's guide hours, or windowHours), with the observer's
 ' cancel check, size cap, time limit and memory guard, the class's programme limit, and what's left of the
 ' cachefs: budget for inflating. Then the unreadable files (QA minor) and the rows. { rows, note, programmeCount,
 ' data, matchData }.
@@ -133,7 +133,8 @@ function readGuides(sources as object, fetched as object, overrides as object, s
     deviceCaps = Capabilities.detectDevice()
     nowSeconds = wallClock()
     windowStart = nowSeconds - 7200
-    windowEnd = nowSeconds + deviceCaps.guideHours * 3600
+    ' Step 22 (D46): after a memory alert the scene asks for a shorter window (windowHours, 0: the class's).
+    windowEnd = nowSeconds + MemoryRelief.windowHours(deviceCaps.guideHours, { guideHours: m.top.windowHours }) * 3600
     observer = GuideFetch.newObserver({
         limitMB: deviceCaps.memoryMB,
         maxBytes: GuideFetch.maximumBytes,

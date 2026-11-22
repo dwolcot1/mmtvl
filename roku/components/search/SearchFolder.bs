@@ -1,0 +1,10 @@
+' Search's folding for non-ASCII typed text (fields in SearchFolder.xml).
+
+sub init()
+    m.folder = LiveSearch.newFolder()
+end sub
+
+' The folded text (LiveSearch.folded), "" for anything that isn't text.
+function fold(text as dynamic) as string
+    return LiveSearch.folded(text, m.folder)
+end function

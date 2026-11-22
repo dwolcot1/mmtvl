@@ -1,0 +1,107 @@
+' The 720p layout check, off the device (M12 step 22). The app is designed on the 1920 x 1080 canvas only
+' (manifest ui_resolutions=fhd), so an HD Roku scales every position, size and font by 2/3 (Roku, "Specifying display
+' resolution"). Nothing clips at 1280 x 720 when the FHD layout fits 1920 x 1080, and nothing lands between pixels
+' when every value is a multiple of 3. Text widths in the system font, which only a Roku can measure, are step 23's.
+namespace Layout720pTests
+
+    sub test_theManifestDesignsForFHDOnly(t as object)
+        manifest = ReadAsciiFile("pkg:/manifest")
+        t.assertTrue(Len(manifest) > 0, "the staged manifest")
+        found = ""
+        for each line in manifest.Split(Chr(10))
+            trimmed = line.Trim()
+            if Left(trimmed, 15) = "ui_resolutions=" then found = LCase(Mid(trimmed, 16))
+        end for
+        t.assertEqual(found, "fhd", "FHD only: HD Rokus scale it by 2/3")
+    end sub
+
+    ' Every layout number lands on a whole pixel at 2/3 (floats are opacities and the focus scale; counts of rows and
+    ' lines aren't pixels).
+    sub test_everyLayoutValueIsOnTheThreePixelGrid(t as object)
+        look = Theme.make()
+        t.assertEqual(look.canvas, { width: 1920, height: 1080 })
+        bad = []
+        Layout720pTests.collectOffGrid(look.layout, "layout", bad)
+        t.assertEqual(bad, [], "values that aren't multiples of 3")
+    end sub
+
+    ' Nothing under 24 px (16 px at 720p), and every size on the grid too.
+    sub test_fontsStayLegibleAt720p(t as object)
+        fonts = Theme.make().fonts
+        for each name in fonts
+            size = fonts[name].size
+            t.assertTrue(size >= 24, name + " is " + size.ToStr() + " px")
+            t.assertEqual(size mod 3, 0, name)
+            t.assertEqual(Theme.lineHeight(fonts[name]) mod 3, 0, name + "'s line height")
+        end for
+    end sub
+
+    ' Each screen's boxes inside the canvas: at 2/3 they are inside 1280 x 720.
+    sub test_theScreensFitTheCanvas(t as object)
+        look = Theme.make()
+        l = look.layout
+        w = look.canvas.width
+        h = look.canvas.height
+        for each name in ["guideInfoRect", "guidePreviewRect", "searchResultsRect"]
+            r = l[name]
+            t.assertTrue(r.x >= 0 and r.y >= 0 and r.x + r.width <= w and r.y + r.height <= h, name)
+        end for
+        ' The guide: the grid's right edge, its rows above the key hint, the hint on screen.
+        t.assertTrue(l.guideGridLeading + l.guideGridWidth <= w - l.sideMargin, "the grid's right edge")
+        t.assertEqual(l.sideMargin + l.guideChannelColumnWidth + l.guideInfoGridGap, l.guideGridLeading, "the channel column and the gap")
+        gridBottom = l.guideGridTop + l.guideTimeHeaderHeight + l.guideVisibleRows * l.guideRowHeight
+        t.assertTrue(gridBottom <= l.guideHintTop, "the grid's rows above the hint (" + gridBottom.ToStr() + ")")
+        t.assertTrue(l.guideHintTop + Theme.lineHeight(look.fonts.settingsHint) <= h, "the guide's hint")
+        groupBottom = l.guideGroupPanelOrigin.y + 2 * l.guideGroupPanelPadding + l.guideGroupVisibleRows * l.guideGroupRowHeight
+        t.assertTrue(groupBottom <= h, "the group column (" + groupBottom.ToStr() + ")")
+        t.assertTrue(l.guideGroupPanelOrigin.x + l.guideGroupPanelWidth <= w, "the group column's width")
+        ' Search: six rows and the three section headers inside the results' box, the hint under it.
+        rows = l.searchRowHeight + l.searchRowSpacing
+        headers = l.searchSectionTopPadding + Theme.lineHeight(look.fonts.settingsSection) + l.searchSectionBottomPadding + l.searchRowSpacing
+        t.assertTrue(LiveSearch.visibleResults * rows + 3 * headers <= l.searchResultsRect.height, "Search's results")
+        t.assertTrue(l.searchResultsRect.y + l.searchResultsRect.height <= l.searchHintTop, "Search's hint below the results")
+        t.assertTrue(l.searchHintTop + Theme.lineHeight(look.fonts.settingsHint) <= h, "Search's hint")
+        ' Choose Teams: the columns side by side inside the margins, the rows above the hint.
+        columns = l.chooseTeamsColumns
+        for i = 0 to columns.Count() - 1
+            t.assertTrue(columns[i].x + columns[i].width <= w - l.sideMargin, "column " + i.ToStr())
+            if i > 0 then t.assertTrue(columns[i - 1].x + columns[i - 1].width <= columns[i].x, "columns " + i.ToStr() + " overlap")
+        end for
+        t.assertTrue(l.chooseTeamsListTop + l.chooseTeamsVisibleRows * l.liveMenuRowHeight <= l.chooseTeamsHintTop, "Choose Teams' rows above the hint")
+        ' Settings: two columns and the gaps fill the width exactly; the track and the band on screen.
+        t.assertEqual(2 * l.settingsSideMargin + 2 * l.settingsColumnWidth + l.settingsColumnGap, w, "Settings' columns")
+        t.assertTrue(l.settingsRootColumnLeading + l.settingsColumnWidth <= w, "the root column")
+        t.assertTrue(l.settingsListTop + l.settingsListHeight <= l.settingsBandTop, "the track above the band")
+        t.assertTrue(l.settingsBandTop + l.settingsBandHeight <= h, "the band")
+        t.assertTrue(l.settingsBandMaxWidth <= w, "the band's width")
+        ' The menus: eight rows, the padding, the title and the hint fit the height.
+        menuHeight = 2 * l.menuPanelPadding + Theme.lineHeight(look.fonts.liveMenuTitle) + Theme.lineHeight(look.fonts.liveMenuValue) + l.liveMenuHeaderSpacing + 2 * l.menuTitleSpacing + l.liveMenuVisibleRows * l.liveMenuRowHeight + Theme.lineHeight(look.fonts.settingsHint)
+        t.assertTrue(menuHeight <= h, "the channel menu (" + menuHeight.ToStr() + ")")
+        t.assertTrue(l.liveMenuWideWidth <= w - 2 * l.sideMargin, "the wide menu")
+        ' The player: the banner panel inside the margins; the badge on screen.
+        t.assertTrue(2 * l.sideMargin < w and l.liveBannerBottom + 2 * l.liveBannerPadding + l.liveBannerLogoSize <= h, "the banner")
+        t.assertTrue(l.timeshiftBadgeTop + l.timeshiftBadgeHeight <= h, "the behind-live badge")
+    end sub
+
+    sub collectOffGrid(value as dynamic, path as string, bad as object)
+        kind = LCase(type(value))
+        if kind = "roassociativearray"
+            for each key in value
+                Layout720pTests.collectOffGrid(value[key], path + "." + key, bad)
+            end for
+        else if kind = "roarray"
+            for i = 0 to value.Count() - 1
+                Layout720pTests.collectOffGrid(value[i], path + "[" + i.ToStr() + "]", bad)
+            end for
+        else if kind = "integer" or kind = "roint" or kind = "rointeger"
+            ' Counts (visible rows, line limits) aren't pixels.
+            lowered = LCase(path)
+            isCount = Right(lowered, 4) = "rows" or Right(lowered, 5) = "lines"
+            if not isCount and value mod 3 <> 0 then bad.Push(path + " = " + value.ToStr())
+        else if kind = "float" or kind = "rofloat" or kind = "double" or kind = "rodouble"
+            lowered = LCase(path)
+            if Right(lowered, 7) <> "opacity" and Right(lowered, 5) <> "scale" then bad.Push(path + " is a fraction")
+        end if
+    end sub
+
+end namespace
