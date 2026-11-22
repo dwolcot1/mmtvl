@@ -1,0 +1,402 @@
+' SiliconDust's guide (M12 step 21): MMTVL's AntennaGuideTests (URL, schedule, matching: all 11 cases), the
+' download's DeviceAuth handling with a fake network (fresh from discover.json, never in a log or a result), both
+' formats (D27), the pipeline's antenna guide and Match Guide's antenna-first suggestions. Fake tokens and ids only.
+namespace AntennaGuideTests
+
+    ' --- URL ---
+
+    sub test_urlConcatenatesAuthsInDeviceOrder(t as object)
+        t.assertEqual(AntennaGuide.url("xmltv", ["AAAAbbbb1111", "CCCCdddd2222"]), "https://api.hdhomerun.com/api/xmltv?DeviceAuth=AAAAbbbb1111CCCCdddd2222")
+        t.assertEqual(AntennaGuide.url("xmltv", ["CCCCdddd2222", "AAAAbbbb1111"]), "https://api.hdhomerun.com/api/xmltv?DeviceAuth=CCCCdddd2222AAAAbbbb1111")
+    end sub
+
+    ' + would read as a space: everything but ASCII letters and digits is percent-encoded.
+    sub test_urlPercentEncodesPlusSlashAndEquals(t as object)
+        t.assertEqual(AntennaGuide.url("xmltv", ["ab+cd/ef==1234"]), "https://api.hdhomerun.com/api/xmltv?DeviceAuth=ab%2Bcd%2Fef%3D%3D1234")
+        t.assertEqual(AntennaGuide.url("xmltv", ["ab_cd-ef12345"]), "https://api.hdhomerun.com/api/xmltv?DeviceAuth=ab%5Fcd%2Def12345")
+    end sub
+
+    sub test_urlIsHTTPSToApiHdhomerunCom(t as object)
+        url = AntennaGuide.url("xmltv", [AntennaGuideTests.fakeAuth()])
+        t.assertEqual(Left(url, 8), "https://")
+        t.assertEqual(Log.host(url), "api.hdhomerun.com")
+        t.assertEqual(Log.host(url), AntennaGuide.host)
+        t.assertEqual(Mid(url, 1, Instr(1, url, "?") - 1), AntennaGuide.xmltvEndpoint)
+        ' The JSON guide (D27): its own endpoint, and the page's start.
+        t.assertEqual(AntennaGuide.url("json", ["AAAAbbbb1111"], 1791200000), "https://api.hdhomerun.com/api/guide.php?DeviceAuth=AAAAbbbb1111&Start=1791200000")
+        t.assertEqual(AntennaGuide.url("json", ["AAAAbbbb1111"]), "https://api.hdhomerun.com/api/guide.php?DeviceAuth=AAAAbbbb1111")
+    end sub
+
+    ' Swift's sourceIDHasNoToken: the guide's files are named without a token, and its pipeline id is its index.
+    sub test_theGuidesFilesHoldNoToken(t as object)
+        for each path in [AntennaConfig.guideDataPath, AntennaConfig.guidePartPath, AntennaConfig.guideInflatedPath, AntennaConfig.guideTimePath, AntennaConfig.guideDuePath, AntennaConfig.guideAttemptPath]
+            t.assertEqual(Left(path, Len(AntennaConfig.guideDirectory) + 1), AntennaConfig.guideDirectory + "/")
+            t.assertEqual(Instr(1, path, "DeviceAuth"), 0)
+        end for
+        t.assertTrue(Left(AntennaConfig.guideDirectory, Len(GuideSources.cacheDirectory)) <> GuideSources.cacheDirectory, "not where GuideTask prunes")
+    end sub
+
+    ' Step 2 security L5: a missing, short, long or odd-character DeviceAuth means no URL (so no download).
+    sub test_badDeviceAuthsGiveNoURL(t as object)
+        t.assertEqual(AntennaGuide.url("xmltv", []), "")
+        for each bad in ["", "short", String(65, "a"), "abcd efgh1234", "abcd&x=1234", "abcd%2B1234", "abcd" + Chr(10) + "12345678", "abcd" + Chr(233) + "1234567", "abcd?1234567", "abcd#1234567", "abcd.1234567", 12345678, invalid]
+            t.assertFalse(AntennaGuide.isValidDeviceAuth(bad), FormatJson(bad))
+            t.assertEqual(AntennaGuide.url("xmltv", [bad]), "")
+            t.assertEqual(AntennaGuide.url("xmltv", [AntennaGuideTests.fakeAuth(), bad]), "")
+        end for
+        t.assertTrue(AntennaGuide.isValidDeviceAuth(String(64, "a")))
+        t.assertTrue(AntennaGuide.isValidDeviceAuth("abcdefgh"))
+        t.assertTrue(AntennaGuide.isValidDeviceAuth(AntennaGuideTests.fakeAuth()))
+    end sub
+
+    ' --- schedule ---
+
+    sub test_nextDueIsBetween20And28Hours(t as object)
+        now = 1791200000
+        t.assertEqual(AntennaGuide.nextDue(now, 0), now + 20 * 3600)
+        t.assertEqual(AntennaGuide.nextDue(now, 0.5), now + 24 * 3600)
+        t.assertEqual(AntennaGuide.nextDue(now, 1), now + 28 * 3600)
+        t.assertEqual(AntennaGuide.nextDue(now, 7), now + 28 * 3600)
+        t.assertEqual(AntennaGuide.nextDue(now, -1), now + 20 * 3600)
+        for i = 1 to 200
+            due = AntennaGuide.nextDue(now, Rnd(0)) - now
+            t.assertTrue(due >= 20 * 3600 and due <= 28 * 3600)
+        end for
+    end sub
+
+    ' At most daily (MMTVL L10): never within an hour of the last download or attempt (Refresh Now too); else when due,
+    ' or whenever the file is gone (cachefs: lost it).
+    sub test_downloadsAtMostDaily(t as object)
+        now = 1791200000
+        t.assertEqual(AntennaGuide.downloadStep(now, { hasFile: false }, false), "download", "never downloaded")
+        t.assertEqual(AntennaGuide.downloadStep(now, { hasFile: true, time: now - 7200, due: now + 3600 }, false), "notDue")
+        t.assertEqual(AntennaGuide.downloadStep(now, { hasFile: true, time: now - 7200, due: now + 3600 }, true), "download", "Refresh Now")
+        t.assertEqual(AntennaGuide.downloadStep(now, { hasFile: true, time: now - 7200, due: now - 1 }, false), "download", "due")
+        t.assertEqual(AntennaGuide.downloadStep(now, { hasFile: false, time: now - 7200, due: now + 3600 }, false), "download", "the file went")
+        t.assertEqual(AntennaGuide.downloadStep(now, { hasFile: true, time: now - 3600, due: now - 1 }, true), "tooSoon", "an hour after a download")
+        t.assertEqual(AntennaGuide.downloadStep(now, { hasFile: false, attempt: now - 600 }, true), "tooSoon", "an hour after an attempt")
+        t.assertEqual(AntennaGuide.downloadStep(now, { hasFile: false, attempt: now + 600 }, false), "tooSoon", "a clock set back")
+        t.assertEqual(AntennaGuide.downloadStep(now, { hasFile: false, attempt: now - 3601 }, false), "download")
+        t.assertEqual(AntennaGuide.readSeconds(" 1791200000" + Chr(10)), 1791200000)
+        for each bad in ["", "17912x", "-5", invalid, "1234567890123"]
+            t.assertInvalid(AntennaGuide.readSeconds(bad), FormatJson(bad))
+        end for
+    end sub
+
+    ' --- matching (MMTVL L10, L12) ---
+
+    sub test_matchesByGuideNumber(t as object)
+        channels = [AntennaGuideTests.channel("2.1", "WSB-HD"), AntennaGuideTests.channel("5.1", "WAGA-HD"), AntennaGuideTests.channel("11.1", "WXIA-HD"), AntennaGuideTests.channel("4.3", "WGCL-D3")]
+        t.assertEqual(AntennaGuide.match(channels, AntennaGuideTests.guide(), {}), { "antenna:2.1": "us10001.hdhomerun.com", "antenna:5.1": "us10002.hdhomerun.com", "antenna:11.1": "us10003.hdhomerun.com" })
+        ' The prefix form ("2.1 WSB-HD") alone doesn't match: rule 2 is the exact number only.
+        prefixOnly = [{ id: "US1.hdhomerun.com", names: ["WSBDT", "2.1 WSB-HD"] }]
+        t.assertEqual(AntennaGuide.match([AntennaGuideTests.channel("2.1", "Something")], prefixOnly, {}), {})
+    end sub
+
+    sub test_uniqueNameMatchesRepeatedNameDoesnt(t as object)
+        listing = [{ id: "US20001.hdhomerun.com", names: ["JTV", "99.9 JTV", "99.9"] }, { id: "US20002.hdhomerun.com", names: ["WYGA-CD"] }]
+        channels = [AntennaGuideTests.channel("30.1", "JTV"), AntennaGuideTests.channel("40.1", "WYGA-CD"), AntennaGuideTests.channel("40.2", "WYGA-CD")]
+        t.assertEqual(AntennaGuide.match(channels, listing, {}), { "antenna:30.1": "us20001.hdhomerun.com" })
+    end sub
+
+    sub test_nameRuleSkipsClaimedGuideChannels(t as object)
+        channels = [AntennaGuideTests.channel("2.1", "WSB-HD"), AntennaGuideTests.channel("4.3", "ABC")]
+        t.assertEqual(AntennaGuide.match(channels, AntennaGuideTests.guide(), {}), { "antenna:2.1": "us10001.hdhomerun.com" })
+        t.assertEqual(AntennaGuide.match([AntennaGuideTests.channel("4.3", "ABC")], AntennaGuideTests.guide(), {}), { "antenna:4.3": "us10001.hdhomerun.com" })
+    end sub
+
+    sub test_twoNumbersShareARepeatedGuideChannel(t as object)
+        merged = [{ id: "US30001.hdhomerun.com", names: ["WATLDT4", "11.11 WATLDT4", "11.11", "36.4 WATLDT4", "36.4"] }]
+        channels = [AntennaGuideTests.channel("11.11", "WATLDT4"), AntennaGuideTests.channel("36.4", "WATLDT4")]
+        t.assertEqual(AntennaGuide.match(channels, merged, {}), { "antenna:11.11": "us30001.hdhomerun.com", "antenna:36.4": "us30001.hdhomerun.com" })
+    end sub
+
+    sub test_overrideByAntennaKeyWins(t as object)
+        wsb = AntennaGuideTests.channel("2.1", "WSB-HD")
+        waga = AntennaGuideTests.channel("5.1", "WAGA-HD")
+        wxia = AntennaGuideTests.channel("11.1", "WXIA-HD")
+        overrides = { "ANTENNA:5.1": "US10003.hdhomerun.com", "WAGA-HD": "us10001.hdhomerun.com", "wxia-hd": "", "antenna:2.1": "missing.id" }
+        t.assertEqual(AntennaGuide.match([wsb, waga, wxia], AntennaGuideTests.guide(), overrides), { "antenna:5.1": "us10003.hdhomerun.com", "antenna:2.1": "us10001.hdhomerun.com" })
+        t.assertEqual(AntennaGuide.match([waga], AntennaGuideTests.guide(), { "WAGA-HD": "US10001.hdhomerun.com" }), { "antenna:5.1": "us10001.hdhomerun.com" })
+    end sub
+
+    ' MMTVL's antennaMatches: kept, the antenna guide's rules (at its index) and an override naming a pasted guide's
+    ' channel wins; not kept, the pasted guides by EPGMatcher's rules.
+    sub test_antennaMatchesUseTheirOwnGuideOrThePastedOnes(t as object)
+        channels = [AntennaGuideTests.channel("2.1", "WSB-HD"), AntennaGuideTests.channel("5.1", "WAGA-HD")]
+        pasted = [{ sourceID: "0", channels: [{ id: "wsb.example", names: ["WSB-HD"] }, { id: "fox5.example", names: ["FOX 5"] }] }]
+        kept = AntennaGuide.matches(channels, AntennaGuideTests.guide(), pasted, { "antenna:5.1": "FOX5.example" }, 1)
+        t.assertEqual(kept["antenna:2.1"], { guide: 1, sourceID: "1", epgID: "us10001.hdhomerun.com" })
+        t.assertEqual(kept["antenna:5.1"], { guide: 0, sourceID: "0", epgID: "fox5.example" }, "the override to a pasted guide")
+        notKept = AntennaGuide.matches(channels, invalid, pasted, {}, invalid)
+        t.assertEqual(notKept["antenna:2.1"], { guide: 0, sourceID: "0", epgID: "wsb.example" }, "by name, as playlist channels")
+        t.assertInvalid(notKept["antenna:5.1"])
+        t.assertEqual(AntennaGuide.matches(channels, [], pasted, {}, 1), {}, "kept but not loaded yet: nothing, as MMTVL")
+    end sub
+
+    ' --- the download (DeviceAuth read fresh, in locals only) ---
+
+    sub test_theDownloadReadsEachDeviceAuthFreshAndNeverLogsIt(t as object)
+        io = AntennaGuideTests.network()
+        devices = [AntennaGuideTests.device("1000AAAA", "10.0.0.9"), AntennaGuideTests.device("2000BBBB", "10.0.0.11")]
+        io.answers["http://10.0.0.9/discover.json"] = AntennaGuideTests.discoverAnswer("1000AAAA", "FAKEauthONE1111")
+        io.answers["http://10.0.0.11/discover.json"] = AntennaGuideTests.discoverAnswer("2000BBBB", "FAKEauthTWO2222")
+        result = AntennaGuide.fetch(io, devices, { format: "xmltv", gzip: false, now: 1791200000, windowEnd: 1791372800, partPath: "tmp:/antenna-test.part" })
+        t.assertTrue(result.ok)
+        t.assertEqual(io.downloads.Count(), 1)
+        t.assertEqual(io.downloads[0].url, "https://api.hdhomerun.com/api/xmltv?DeviceAuth=FAKEauthONE1111FAKEauthTWO2222", "every tuner's, in DeviceID order")
+        t.assertFalse(io.downloads[0].gzip)
+        t.assertEqual(io.downloads[0].maxBytes, 67108864, "MMTVL's 64 MB")
+        t.assertEqual(io.downloads[0].path, "tmp:/antenna-test.part")
+        t.assertEqual(io.limits[0], [16384, 2000])
+        t.assertEqual(io.asked, ["http://10.0.0.9/discover.json", "http://10.0.0.11/discover.json"])
+        AntennaGuideTests.assertNoAuth(t, io, result)
+    end sub
+
+    ' D28's switch on: the download asks for HTTP gzip decoding (EnableEncodings); off (the default) it doesn't.
+    sub test_theGzipSwitchReachesTheDownload(t as object)
+        for each gzip in [true, false]
+            io = AntennaGuideTests.network()
+            io.answers["http://10.0.0.9/discover.json"] = AntennaGuideTests.discoverAnswer("1000AAAA", "FAKEauthONE1111")
+            AntennaGuide.fetch(io, [AntennaGuideTests.device("1000AAAA", "10.0.0.9")], { format: "xmltv", gzip: gzip, partPath: "tmp:/antenna-test.part" })
+            t.assertEqual(io.downloads[0].gzip, gzip)
+            AntennaGuideTests.assertNoAuth(t, io, {})
+        end for
+        t.assertFalse(AntennaConfig.guideHTTPGzip, "D28's default")
+    end sub
+
+    ' Another device answering at the address, a missing or bad DeviceAuth, or a transfer that reached elsewhere:
+    ' no download, MMTVL's "The tuner didn't give a guide key", and still no token anywhere.
+    sub test_noUsableKeyMeansNoDownload(t as object)
+        cases = [
+            AntennaGuideTests.discoverAnswer("9999ZZZZ", "FAKEauthONE1111"),
+            AntennaGuideTests.discoverAnswer("1000AAAA", "short"),
+            AntennaGuideTests.discoverAnswer("1000AAAA", invalid),
+            { ok: true, code: 200, text: FormatJson({ DeviceID: "1000AAAA", DeviceAuth: "FAKEauthONE1111" }), peer: "10.0.0.66" },
+            { ok: false, code: 0, text: "", peer: "" }
+        ]
+        for each item in cases
+            io = AntennaGuideTests.network()
+            io.answers["http://10.0.0.9/discover.json"] = item
+            result = AntennaGuide.fetch(io, [AntennaGuideTests.device("1000AAAA", "10.0.0.9")], { format: "xmltv", partPath: "tmp:/antenna-test.part" })
+            t.assertFalse(result.ok)
+            t.assertEqual(result.message, "The tuner didn't give a guide key")
+            t.assertEqual(io.downloads.Count(), 0)
+            AntennaGuideTests.assertNoAuth(t, io, result)
+        end for
+        t.assertEqual(AntennaGuide.fetch(AntennaGuideTests.network(), [], { format: "xmltv" }).ok, false)
+    end sub
+
+    ' What a failed download says (never the URL or the server's text).
+    sub test_aFailedDownloadSaysWhy(t as object)
+        t.assertEqual(AntennaGuide.outcomeOf({ ok: false, code: 503, reason: "" }).message, "Server error (HTTP 503)")
+        t.assertEqual(AntennaGuide.outcomeOf({ ok: false, code: 401, reason: "" }).message, "Refused (HTTP 401)")
+        t.assertEqual(AntennaGuide.outcomeOf({ ok: false, code: -28, reason: "network" }).message, "Couldn't reach api.hdhomerun.com")
+        t.assertEqual(AntennaGuide.outcomeOf({ ok: false, code: 200, reason: "tooLarge" }).message, "Too large for this Roku")
+        t.assertEqual(AntennaGuide.outcomeOf({ ok: false, code: 200, reason: "refused" }).message, "It reached an address a guide may not use")
+        t.assertTrue(AntennaGuide.outcomeOf({ ok: true, code: 200, reason: "" }).ok)
+        io = AntennaGuideTests.network()
+        io.answers["http://10.0.0.9/discover.json"] = AntennaGuideTests.discoverAnswer("1000AAAA", "FAKEauthONE1111")
+        io.downloadResult = { ok: false, code: 503, reason: "" }
+        result = AntennaGuide.fetch(io, [AntennaGuideTests.device("1000AAAA", "10.0.0.9")], { format: "xmltv", partPath: "tmp:/antenna-test.part" })
+        t.assertEqual(result.message, "Server error (HTTP 503)")
+        t.assertEqual(io.logs, ["error: Guide from api.hdhomerun.com failed: Server error (HTTP 503)"])
+        AntennaGuideTests.assertNoAuth(t, io, result)
+    end sub
+
+    ' D27's other path (unverified format): guide.php a page at a time from now, written out as XMLTV.
+    sub test_theJSONGuideIsPagedAndWrittenAsXMLTV(t as object)
+        io = AntennaGuideTests.network()
+        io.answers["http://10.0.0.9/discover.json"] = AntennaGuideTests.discoverAnswer("1000AAAA", "FAKEauthONE1111")
+        start = 1791200000
+        page1 = [{ GuideNumber: "5.1", GuideName: "WAGA-HD", Affiliate: "FOX", Guide: [{ StartTime: start, EndTime: start + 1800, Title: "News & <Weather>", EpisodeTitle: "Late", Synopsis: "Tonight.", EpisodeNumber: "S01E02", Filter: ["News"] }] }]
+        page2 = [{ GuideNumber: "5.1", GuideName: "WAGA-HD", Guide: [{ StartTime: start + 1800, EndTime: start + 3600, Title: "Movie" }, { StartTime: start, EndTime: start + 1800, Title: "Repeat" }] }]
+        io.answers[AntennaGuide.url("json", ["FAKEauthONE1111"], start)] = { ok: true, code: 200, text: FormatJson(page1), peer: "" }
+        io.answers[AntennaGuide.url("json", ["FAKEauthONE1111"], start + 1800)] = { ok: true, code: 200, text: FormatJson(page2), peer: "" }
+        t.assertEqual(AntennaGuide.url("json", ["FAKEauthONE1111"], start + 1800), "https://api.hdhomerun.com/api/guide.php?DeviceAuth=FAKEauthONE1111&Start=1791201800")
+        result = AntennaGuide.fetch(io, [AntennaGuideTests.device("1000AAAA", "10.0.0.9")], { format: "json", now: start, windowEnd: start + 86400, partPath: "tmp:/antenna-test.xml" })
+        t.assertTrue(result.ok)
+        t.assertEqual(io.asked.Count(), 4, "discover.json, two pages, then a page that adds nothing")
+        AntennaGuideTests.assertNoAuth(t, io, result)
+        text = io.written["tmp:/antenna-test.xml"]
+        ' XMLTVScan reads it back as a guide: the channel by its number, the programmes once per start time.
+        WriteAsciiFile("tmp:/antenna-test.xml", text)
+        channelPass = XMLTVScan.newChannelPass()
+        t.assertTrue(XMLTVScan.scanFile("tmp:/antenna-test.xml", channelPass, 4096, invalid).ok)
+        listed = XMLTVScan.channelList(channelPass)
+        t.assertEqual(listed.Count(), 1)
+        t.assertEqual(listed[0].names, ["5.1", "WAGA-HD", "FOX"])
+        wanted = EPGMatcher.newSet()
+        wanted[listed[0].id] = true
+        programmePass = XMLTVScan.newProgrammePass(wanted, start - 3600, start + 86400, invalid)
+        t.assertTrue(XMLTVScan.scanFile("tmp:/antenna-test.xml", programmePass, 4096, invalid).ok)
+        shows = programmePass.programmes[listed[0].id]
+        t.assertEqual(shows.Count(), 2)
+        t.assertEqual(shows[0].title, "News & <Weather>")
+        t.assertEqual(shows[0].subtitle, "Late")
+        t.assertEqual(shows[0].summary, "Tonight.")
+        t.assertEqual(shows[0].category, "News")
+        t.assertEqual(shows[0].episode, "S01E02")
+        t.assertEqual(shows[0].start, start)
+        t.assertEqual(shows[1].title, "Movie")
+        t.assertEqual(shows[1].stop, start + 3600)
+        ' The match rule 2 finds it by number.
+        t.assertEqual(AntennaGuide.match([AntennaGuideTests.channel("5.1", "WAGA-HD")], listed, {}), { "antenna:5.1": listed[0].id })
+        CreateObject("roFileSystem").Delete("tmp:/antenna-test.xml")
+    end sub
+
+    sub test_xmltvTimesAreUTC(t as object)
+        t.assertEqual(AntennaGuide.xmltvTime(0), "19700101000000 +0000")
+        t.assertEqual(AntennaGuide.xmltvTime(951782400), "20000229000000 +0000")
+        t.assertEqual(AntennaGuide.xmltvTime(1791200000), "20261005113320 +0000")
+        for each seconds in [0, 951782400, 1791200000, 1704067199, 2147483647]
+            t.assertEqual(XMLTVDate.parse(AntennaGuide.xmltvTime(seconds)), seconds)
+        end for
+        t.assertEqual(AntennaGuide.escaped("a&b<c>" + Chr(34)), "a&amp;b&lt;c&gt;&quot;")
+    end sub
+
+    ' --- the pipeline and Match Guide ---
+
+    ' GuidePipeline reads the antenna guide after the others, for the antenna channels only; a playlist channel never
+    ' matches it; its programmes are kept; with Guide from SiliconDust off it isn't read and the pasted guides' rules
+    ' apply; without its file it's "Not loaded yet".
+    sub test_thePipelineReadsTheAntennaGuideForAntennaChannelsOnly(t as object)
+        WriteAsciiFile("tmp:/antenna-guide.xml", AntennaGuideTests.antennaXMLTV())
+        channels = [{ id: "name:wsb-hd", name: "WSB-HD", tvgID: invalid, tvgName: invalid }, { id: "antenna:2.1", name: "WSB-HD", tvgID: invalid, tvgName: invalid, source: "antenna", guideNumber: "2.1" }, { id: "antenna:5.1", name: "WAGA-HD", tvgID: invalid, tvgName: invalid, source: "antenna", guideNumber: "5.1" }]
+        request = { guides: [], channels: channels, overrides: {}, windowStart: 1791190000, windowEnd: 1791300000, canInflate: true, inflateMaxCompressedBytes: invalid, antenna: { keep: true, path: "tmp:/antenna-guide.xml", xmlPath: "tmp:/antenna-guide.inflated.xml" } }
+        result = GuidePipeline.process(request)
+        t.assertEqual(result.antennaIndex, 0)
+        t.assertEqual(result.matches["antenna:2.1"], { guide: 0, sourceID: "0", epgID: "us10001.hdhomerun.com" })
+        t.assertEqual(result.matches["antenna:5.1"], { guide: 0, sourceID: "0", epgID: "us10002.hdhomerun.com" })
+        t.assertInvalid(result.matches["name:wsb-hd"], "a playlist channel never matches the antenna guide")
+        t.assertEqual(GuidePipeline.programmesFor(result, "antenna:2.1").Count(), 1)
+        t.assertEqual(result.guides[0].status, "OK, 2 channels matched")
+        row = GuideFetch.antennaRow(result)
+        t.assertEqual(row, { status: "OK, 2 channels matched", problem: "", matched: 2, programmes: 2 })
+        data = GuideFetch.matchData(result)
+        t.assertEqual(data.antennaIndex, 0)
+        ' Off: not read; the pasted guides' rules.
+        request.antenna.keep = false
+        off = GuidePipeline.process(request)
+        t.assertInvalid(off.antennaIndex)
+        t.assertInvalid(GuideFetch.antennaRow(off))
+        t.assertEqual(off.matches.Count(), 0)
+        ' No file yet.
+        request.antenna = { keep: true, path: "tmp:/no-such-antenna-guide.xml" }
+        missing = GuidePipeline.process(request)
+        t.assertEqual(GuideFetch.antennaRow(missing), { status: "Not loaded yet", problem: "notLoaded", matched: 0, programmes: 0 })
+        ' No antenna channels: not read at all.
+        request.antenna = { keep: true, path: "tmp:/antenna-guide.xml" }
+        request.channels = [channels[0]]
+        t.assertInvalid(GuidePipeline.process(request).antennaIndex)
+        CreateObject("roFileSystem").Delete("tmp:/antenna-guide.xml")
+    end sub
+
+    ' MMTVL M7j L12: an antenna channel gets the antenna guide's suggestions first, then the pasted guides'; a playlist
+    ' channel never gets the antenna guide's. Labels: the antenna guide is "HDHomeRun".
+    sub test_matchGuideOffersTheAntennaGuideFirst(t as object)
+        data = { matches: {}, antennaIndex: 1, guides: [[{ id: "wsb.example", names: ["WSB-HD Atlanta"] }], [{ id: "us10001.hdhomerun.com", names: ["WSB-HD", "2.1"] }]] }
+        antenna = { id: "antenna:2.1", name: "WSB-HD", tvgID: invalid, tvgName: invalid }
+        offered = EPGSuggester.suggestions(antenna, data, 30)
+        t.assertEqual(offered.guideCount, 2)
+        t.assertEqual(offered.suggestions.Count(), 2)
+        t.assertEqual(offered.suggestions[0].guide, 1, "the antenna guide's first")
+        t.assertEqual(offered.suggestions[0].epgID, "us10001.hdhomerun.com")
+        t.assertEqual(offered.suggestions[1].guide, 0)
+        playlist = { id: "name:wsb-hd", name: "WSB-HD", tvgID: invalid, tvgName: invalid }
+        forPlaylist = EPGSuggester.suggestions(playlist, data, 30).suggestions
+        t.assertEqual(forPlaylist.Count(), 1)
+        t.assertEqual(forPlaylist[0].guide, 0, "never the antenna guide")
+        noAntenna = EPGSuggester.suggestions(antenna, { matches: {}, guides: data.guides }, 30).suggestions
+        t.assertEqual(noAntenna.Count(), 2, "without an antenna index every guide is a pasted one")
+        t.assertEqual(MatchGuide.withAntennaLabel(["guide.xml"], 1), ["guide.xml", "HDHomeRun"])
+        t.assertEqual(MatchGuide.withAntennaLabel(["guide.xml"], invalid), ["guide.xml"])
+        t.assertEqual(MatchGuide.withAntennaLabel([], 2), ["", "", "HDHomeRun"])
+        t.assertTrue(MatchGuide.isAntennaChannel(antenna))
+        t.assertFalse(MatchGuide.isAntennaChannel(playlist))
+    end sub
+
+    ' --- helpers ---
+
+    function fakeAuth() as string
+        return "FAKEdeviceAUTH24chars000"
+    end function
+
+    function channel(number as string, name as string) as object
+        return { id: "antenna:" + number, number: 100, name: name, group: "Antenna", tvgID: invalid, tvgName: invalid, url: "http://10.0.0.9:5004/auto/v" + number, source: "antenna", guideNumber: number }
+    end function
+
+    ' Shaped like SiliconDust's file: the short name, number + names, the bare number, the name, the network.
+    function guide() as object
+        return [
+            { id: "US10001.hdhomerun.com", names: ["WSBDT", "2.1 WSBDT", "2.1 WSB-HD", "2.1", "WSB-HD", "ABC"] },
+            { id: "US10002.hdhomerun.com", names: ["WAGADT", "5.1 WAGADT", "5.1 WAGA-HD", "5.1", "WAGA-HD", "FOX"] },
+            { id: "US10003.hdhomerun.com", names: ["WXIADT", "11.1 WXIADT", "11.1 WXIA-TV", "11.1", "WXIA-TV", "NBC"] }
+        ]
+    end function
+
+    function antennaXMLTV() as string
+        q = Chr(34)
+        lines = ["<?xml version=" + q + "1.0" + q + "?>", "<tv>"]
+        for each epg in AntennaGuideTests.guide()
+            lines.Push("<channel id=" + q + epg.id + q + ">")
+            for each name in epg.names
+                lines.Push("<display-name>" + name + "</display-name>")
+            end for
+            lines.Push("</channel>")
+        end for
+        lines.Push("<programme start=" + q + "20261005113320 +0000" + q + " stop=" + q + "20261005123320 +0000" + q + " channel=" + q + "US10001.hdhomerun.com" + q + "><title>Action News</title></programme>")
+        lines.Push("<programme start=" + q + "20261005113320 +0000" + q + " stop=" + q + "20261005123320 +0000" + q + " channel=" + q + "US10002.hdhomerun.com" + q + "><title>Good Day</title></programme>")
+        lines.Push("</tv>")
+        return lines.Join(Chr(10))
+    end function
+
+    function device(id as string, host as string) as object
+        return { id: id, name: "HDHomeRun CONNECT", model: "HDHR4-2US", tunerCount: 2, host: host, baseURL: "http://" + host, lineupURL: "http://" + host + "/lineup.json" }
+    end function
+
+    function discoverAnswer(id as string, auth as dynamic) as object
+        made = { FriendlyName: "HDHomeRun CONNECT", DeviceID: id, TunerCount: 2 }
+        if auth <> invalid then made.DeviceAuth = auth
+        return { ok: true, code: 200, text: FormatJson(made), peer: "" }
+    end function
+
+    ' A fake io: answers by URL, downloads recorded (the URL kept only so the test can see the key was used), text
+    ' written, every log line.
+    function network() as object
+        return {
+            answers: {}, asked: [], limits: [], downloads: [], written: {}, logs: [], downloadResult: { ok: true, code: 200, reason: "" },
+            get: function(url as string, maxBytes as dynamic, timeoutMs as dynamic) as object
+                m.asked.Push(url)
+                m.limits.Push([maxBytes, timeoutMs])
+                found = m.answers[url]
+                if found = invalid then return { ok: false, code: 404, text: "", peer: "" }
+                return found
+            end function,
+            download: function(url as string, path as string, maxBytes as dynamic, timeoutMs as dynamic, gzip as boolean) as object
+                m.downloads.Push({ url: url, path: path, gzip: gzip, maxBytes: maxBytes, timeoutMs: timeoutMs })
+                return m.downloadResult
+            end function,
+            writeText: function(path as string, text as string) as boolean
+                m.written[path] = text
+                return true
+            end function,
+            log: sub(level as string, text as string)
+                m.logs.Push(level + ": " + text)
+            end sub
+        }
+    end function
+
+    ' No DeviceAuth (any "FAKE" token) and no URL in a log line or the result.
+    sub assertNoAuth(t as object, io as object, result as object)
+        shown = FormatJson(result)
+        t.assertEqual(Instr(1, LCase(shown), "fakeauth"), 0, "the result: " + shown)
+        t.assertEqual(Instr(1, shown, "://"), 0, "no URL in the result")
+        for each line in io.logs
+            t.assertEqual(Instr(1, LCase(line), "fakeauth"), 0, "logged: " + line)
+            t.assertEqual(Instr(1, line, "://"), 0, "logged a URL: " + line)
+            t.assertEqual(Instr(1, line, "10.0.0."), 0, "logged an address: " + line)
+        end for
+    end sub
+
+end namespace

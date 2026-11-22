@@ -19,6 +19,7 @@
 '   statusRows(sources, outcomes, result) -> Settings → Guides' rows, no URLs (below).
 '   guideData(result, windowStart, windowEnd) -> what the guide screen reads (below).
 '   matchData(result) -> what Match Guide reads (step 20, below).
+'   antennaRow(result) -> the antenna guide's line for Settings → Antenna (step 21), or invalid.
 '   prunable(names, sources) -> the files in cachefs:/guides to delete when a run starts (no other run alive).
 '   logLine(row) -> "Guide <i> from <host>: <status>".
 namespace GuideFetch
@@ -278,15 +279,25 @@ namespace GuideFetch
     end function
 
     ' Step 20: what Match Guide reads (GuideTask's matchData field; MatchGuideTask reads it per open):
-    '   { matches: { channel id: { guide, sourceID, epgID } }, guides: [[{ id, names }]] }
+    '   { matches: { channel id: { guide, sourceID, epgID } }, guides: [[{ id, names }]], antennaIndex }
     ' the run's matches and each guide's channel list from the channel pass (XMLTVScan.channelList; [] for a guide
-    ' that failed), in priority order. No programmes, so a read copies only names.
+    ' that failed), in priority order. No programmes, so a read copies only names. Step 21: antennaIndex is the
+    ' antenna guide's index in guides (the last), or invalid.
     function matchData(result as object) as object
         guides = []
         for each entry in result.guides
             guides.Push(entry.channels)
         end for
-        return { matches: result.matches, guides: guides }
+        return { matches: result.matches, guides: guides, antennaIndex: result.antennaIndex }
+    end function
+
+    ' Step 21: the antenna guide's line for Settings → Antenna (no URL): { status, problem, matched, programmes }, or
+    ' invalid when the run didn't read it (Guide from SiliconDust off, or no antenna channels).
+    function antennaRow(result as object) as dynamic
+        index = result.antennaIndex
+        if not Refresh.isNumber(index) then return invalid
+        entry = result.guides[index]
+        return { status: entry.status, problem: entry.problem, matched: entry.matched, programmes: GuideFetch.programmeCount(entry) }
     end function
 
     ' The names in cachefs:/guides to delete after a run: anything that isn't a current guide's file, time or fail, so

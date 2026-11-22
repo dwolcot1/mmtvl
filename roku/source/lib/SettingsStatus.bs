@@ -16,6 +16,8 @@
 '       caps               Capabilities.detect's result
 '       inflateEnabled     GuideSources.inflateEnabled (missing: true): whether .gz guides are read at all
 '       version, build     "0.1", "1"
+'       playlistChannelCount  step 21: how many of channels are the playlist's (missing: all of them)
+'       antenna            step 21: antennaOf's input (below); antennaPlaysMPEG2: AntennaConfig.playMPEG2
 '     }
 '     model {
 '       version, build, hasLiveSource, totalChannelCount
@@ -33,6 +35,7 @@
 '                          as the Memory row shows it ("Low (720p UI)" when only the 720p UI makes it Low, from
 '                          classReason), compressed the Compressed Guides value
 '       lowSpace, spaceLeft   the registry (L5)
+'       antenna            step 21: antennaOf's model (Settings → Antenna; no address, DeviceID or URL)
 '     }
 '   guideLine(row, updated, loading, inUse) -> a guide's status line (below).
 '   countText(n, one, many) -> "1 channel", "1,234 channels".
@@ -40,6 +43,8 @@
 namespace SettingsStatus
 
     const notInUseLine = "Not in use (kept)"
+    ' Step 21: a typed tuner address that isn't one (SettingsEdits.checkTunerAddress).
+    const tunerAddressMessage = "Type the tuner's IP address on your network, like 192.168.1.20"
     const notLoadedLine = "Not loaded yet"
     const loadingLine = "Loading…"
     const updatedPrefix = "Updated "
@@ -59,18 +64,22 @@ namespace SettingsStatus
         updatedTimes = SettingsStatus.aa(input.guideUpdated)
         settings = store.settings
         hasSource = SettingsStatus.text(store.source) <> ""
+        antenna = SettingsStatus.antennaOf(input.antenna)
+        playlistCount = channels.Count()
+        if SettingsStatus.isNumber(input.playlistChannelCount) then playlistCount = input.playlistChannelCount
         model = {
             version: SettingsStatus.text(input.version),
             build: SettingsStatus.text(input.build),
             ' Step 21: a tuner that was found counts as set up too (MMTVL's hasLiveSource).
-            hasLiveSource: hasSource,
+            hasLiveSource: hasSource or (antenna.enabled and antenna.devices.Count() > 0),
             totalChannelCount: channels.Count(),
             playlist: {
                 has: hasSource,
                 host: URLDisplay.playlistLabel(store.source),
-                channelCount: channels.Count(),
+                channelCount: playlistCount,
                 line: SettingsStatus.playlistLine(input.playlist)
             },
+            antenna: antenna,
             pastedGuideCount: store.guides.Count(),
             playlistNamesGuide: named.Count() > 0,
             usePlaylistGuide: SettingsStatus.isTrue(settings.usePlaylistGuide),
@@ -109,7 +118,82 @@ namespace SettingsStatus
         inflates = true
         if SettingsStatus.isBoolean(input.inflateEnabled) then inflates = input.inflateEnabled
         model.device = SettingsStatus.deviceOf(input.caps, inflates)
+        ' Step 21 (D26): MPEG-2 channels play only where the Roku decodes it and AntennaConfig.playMPEG2 allows it.
+        model.device.mpeg2Switch = not SettingsStatus.isBoolean(input.antennaPlaysMPEG2) or input.antennaPlaysMPEG2
         return model
+    end function
+
+    ' Step 21: Settings → Antenna's model from the scene's antenna input (all optional; no address, DeviceID or URL
+    ' is in it): { enabled, guideOn, searching, devices: [{ name, model, tunerCount, channelCount }], channelCount,
+    ' leftOut, mpeg2Hidden, lineupLine, addressSet, addressLine, findLine, guideLine }.
+    '   input { enabled, guideOn, searching, devices, channelCount, leftOut, mpeg2Hidden, lineupFailed,
+    '           typedProblem ("", "refused", "noAnswer", "notTuner"), addressSet, findLine,
+    '           guide: { row (GuideTask's antenna row or invalid), outcome ({ ran, ok, message } of the last
+    '           download, or invalid), updated ("6:12 PM" or ""), loading } }
+    function antennaOf(input as dynamic) as object
+        result = { enabled: true, guideOn: true, searching: false, devices: [], channelCount: 0, leftOut: 0, mpeg2Hidden: 0, lineupLine: "", addressSet: false, addressLine: "", findLine: "", guideLine: SettingsStatus.notLoadedLine }
+        if type(input) <> "roAssociativeArray" then return result
+        if SettingsStatus.isBoolean(input.enabled) then result.enabled = input.enabled
+        if SettingsStatus.isBoolean(input.guideOn) then result.guideOn = input.guideOn
+        result.searching = SettingsStatus.isTrue(input.searching)
+        if type(input.devices) = "roArray"
+            for each device in input.devices
+                if type(device) = "roAssociativeArray"
+                    result.devices.Push({ name: SettingsStatus.text(device.name), model: SettingsStatus.text(device.model), tunerCount: SettingsStatus.number(device.tunerCount), channelCount: SettingsStatus.number(device.channelCount) })
+                end if
+            end for
+        end if
+        result.channelCount = SettingsStatus.number(input.channelCount)
+        result.leftOut = SettingsStatus.number(input.leftOut)
+        result.mpeg2Hidden = SettingsStatus.number(input.mpeg2Hidden)
+        if SettingsStatus.number(input.lineupFailed) > 0 then result.lineupLine = "The antenna tuner isn't answering"
+        result.addressSet = SettingsStatus.isTrue(input.addressSet)
+        problem = SettingsStatus.text(input.typedProblem)
+        if result.addressSet
+            if problem = "noAnswer"
+                result.addressLine = "No tuner answered at that address"
+            else if problem = "notTuner"
+                result.addressLine = "That address isn't an HDHomeRun tuner"
+            else if problem = "refused"
+                result.addressLine = SettingsStatus.tunerAddressMessage
+            end if
+        end if
+        result.findLine = SettingsStatus.text(input.findLine)
+        result.guideLine = SettingsStatus.antennaGuideLine(result.guideOn, input.guide, result.channelCount)
+        return result
+    end function
+
+    ' MMTVL's antennaGuideLine, in the Roku guides' style: "Off"; "Loading…"; "Failed: <why>" after a failed
+    ' download; "N programmes · M of K channels · Updated 6:12 PM"; the guide's problem ("Too large for this Roku",
+    ' "Can't read .gz on this Roku"); else "Not loaded yet".
+    function antennaGuideLine(guideOn as boolean, guide as dynamic, channelCount as integer) as string
+        if not guideOn then return "Off"
+        if type(guide) <> "roAssociativeArray" then return SettingsStatus.notLoadedLine
+        if SettingsStatus.isTrue(guide.loading) then return SettingsStatus.loadingLine
+        outcome = guide.outcome
+        if type(outcome) = "roAssociativeArray"
+            if SettingsStatus.isTrue(outcome.ran) and not SettingsStatus.isTrue(outcome.ok)
+                message = SettingsStatus.text(outcome.message)
+                if message = "" then return "Failed"
+                return "Failed: " + message
+            end if
+        end if
+        row = guide.row
+        if type(row) <> "roAssociativeArray" then return SettingsStatus.notLoadedLine
+        problem = SettingsStatus.text(row.problem)
+        if problem = "notLoaded" then return SettingsStatus.notLoadedLine
+        if problem <> "" then return SettingsStatus.text(row.status)
+        dot = " " + URLDisplay.separator() + " "
+        line = SettingsStatus.countText(SettingsStatus.number(row.programmes), "programme", "programmes") + dot + SettingsStatus.grouped(SettingsStatus.number(row.matched)) + " of " + SettingsStatus.countText(channelCount, "channel", "channels")
+        when = SettingsStatus.text(guide.updated)
+        if when <> "" then line += dot + SettingsStatus.updatedPrefix + when
+        return line
+    end function
+
+    ' An integer from a number, else 0.
+    function number(value as dynamic) as integer
+        if SettingsStatus.isNumber(value) then return Int(value)
+        return 0
     end function
 
     ' MMTVL's playlistLine: "Loading…", the failure, "Updated 6:12 PM", or "".

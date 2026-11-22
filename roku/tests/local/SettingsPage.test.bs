@@ -39,13 +39,18 @@ namespace SettingsPageTests
 
     ' --- Live TV ---
 
+    ' MMTVL's pageWithoutPlaylistOnlyPastes (with the antenna off, as there): the keyboard row and the Antenna row,
+    ' so the antenna can be turned back on.
     sub test_pageWithoutPlaylistOnlyHasTheKeyboardRow(t as object)
         input = SettingsPageTests.fixture({})
         input.store.source = ""
         input.store.guides = []
+        input.store.settings.antennaEnabled = false
         input.channels = []
+        input.antenna = { enabled: false }
         list = SettingsPages.sections("liveTV", SettingsStatus.make(input))
-        t.assertEqual(SettingsPages.focusableIDs(list), ["playlist.edit"])
+        t.assertEqual(SettingsPages.focusableIDs(list), ["playlist.edit", "antenna"])
+        t.assertEqual(SettingsPages.rowWithID(list, "antenna").value, "Off")
         edit = SettingsPages.rowWithID(list, "playlist.edit")
         t.assertEqual(edit.title, "Add Playlist URL…")
         t.assertEqual(edit.detail, "Type the M3U address on the Roku's keyboard")
@@ -62,7 +67,7 @@ namespace SettingsPageTests
         input.guideLoading = true
         model = SettingsStatus.make(input)
         list = SettingsPages.sections("liveTV", model)
-        t.assertEqual(SettingsPages.focusableIDs(list), ["playlist.edit", "guide." + ids[0], "guide." + ids[1], "guide.add", "groups", "hiddenChannels", "teams", "refresh", "removeSource"])
+        t.assertEqual(SettingsPages.focusableIDs(list), ["playlist.edit", "guide." + ids[0], "guide." + ids[1], "guide.add", "antenna", "groups", "hiddenChannels", "teams", "refresh", "removeSource"])
         t.assertEqual(SettingsPageTests.sectionTitles(list), ["Playlist", "Guides", "Channels", ""], "MMTVL's sections; Manage has no title")
         info = SettingsPages.rowWithID(list, "playlist.info")
         t.assertEqual(info.title, "iptv.example")
@@ -157,7 +162,7 @@ namespace SettingsPageTests
         input.store.guides = []
         input.playlistGuideURLs = ["https://guide.example/epg.xml"]
         list = SettingsPages.sections("liveTV", SettingsStatus.make(input))
-        t.assertEqual(SettingsPages.focusableIDs(list), ["playlist.edit", "guide.add", "groups", "hiddenChannels", "teams", "refresh", "removeSource"])
+        t.assertEqual(SettingsPages.focusableIDs(list), ["playlist.edit", "guide.add", "antenna", "groups", "hiddenChannels", "teams", "refresh", "removeSource"])
         row = SettingsPages.rowWithID(list, "guide." + GuideSources.cacheID("https://guide.example/epg.xml"))
         t.assertEqual(row.value, "From Playlist")
         t.assertEqual(row.detail, "Not loaded yet")
@@ -472,6 +477,207 @@ namespace SettingsPageTests
     ' --- fixtures ---
 
     ' A store with a playlist and two typed guides, three channels in two groups, a Low Roku, version 1.0 build 7.
+    ' --- Antenna (step 21; MMTVL's SettingsModelTests liveTVPageHasAnAntennaRow, antennaOnlyPageHasGuidesPreviewAndRefresh,
+    ' antennaPageShowsTunersAndGuide, antennaOffShowsOffAndHidesTheTunerRows, useAntennaTogglesTheSetting) ---
+
+    sub test_liveTVPageHasAnAntennaRow(t as object)
+        ' Without a playlist: a tuner found sets Live TV up; the Channels section shows with the Antenna row.
+        input = SettingsPageTests.antennaFixture()
+        model = SettingsStatus.make(input)
+        t.assertTrue(model.hasLiveSource, "a tuner counts as set up")
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("root", model), "liveTV").value, "3 Channels")
+        list = SettingsPages.sections("liveTV", model)
+        t.assertEqual(SettingsPageTests.rowIDs(SettingsPageTests.section(list, "channels")), ["antenna", "groups", "hiddenChannels", "teams"])
+        row = SettingsPages.rowWithID(list, "antenna")
+        t.assertEqual(row.title, "Antenna")
+        t.assertEqual(row.value, "1 Tuner " + Chr(183) + " 3 Channels")
+        t.assertEqual(row.description, "Channels from an HDHomeRun tuner on your network.")
+        t.assertEqual(row.action, { type: "push", page: "antenna" })
+        t.assertTrue(row.disclosure)
+        ' Searching, then nothing found: no tuner yet, so the Channels section only.
+        input.antenna = { enabled: true, searching: true, devices: [] }
+        input.channels = []
+        model = SettingsStatus.make(input)
+        t.assertFalse(model.hasLiveSource)
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("root", model), "liveTV").value, "Not Set Up")
+        list = SettingsPages.sections("liveTV", model)
+        t.assertEqual(SettingsPages.rowWithID(list, "antenna").value, "Searching" + Chr(8230))
+        t.assertEqual(SettingsPageTests.sectionIDs(list), ["playlist", "channels"])
+        input.antenna.searching = false
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("liveTV", SettingsStatus.make(input)), "antenna").value, "No Tuner Found")
+        ' With a playlist: the row leads Channels.
+        withPlaylist = SettingsPageTests.fixture({ antenna: SettingsPageTests.antennaInput() })
+        list = SettingsPages.sections("liveTV", SettingsStatus.make(withPlaylist))
+        t.assertEqual(SettingsPageTests.rowIDs(SettingsPageTests.section(list, "channels")), ["antenna", "groups", "hiddenChannels", "teams"])
+        t.assertEqual(SettingsPageTests.sectionIDs(list), ["playlist", "guides", "channels", "manage"])
+    end sub
+
+    ' A tuner alone: the guides and Refresh Now (MMTVL's wording); only Remove is the playlist's.
+    sub test_antennaOnlyPageHasGuidesAndRefresh(t as object)
+        list = SettingsPages.sections("liveTV", SettingsStatus.make(SettingsPageTests.antennaFixture()))
+        t.assertEqual(SettingsPageTests.sectionIDs(list), ["playlist", "guides", "channels", "manage"])
+        t.assertEqual(SettingsPages.focusableIDs(list), ["playlist.edit", "guide.add", "antenna", "groups", "hiddenChannels", "teams", "refresh"])
+        t.assertInvalid(SettingsPages.rowWithID(list, "removeSource"))
+        t.assertEqual(SettingsPageTests.section(list, "guides").footer, "A channel uses the first guide in this list that has it.", "the count is the playlist's")
+        t.assertEqual(SettingsPages.rowWithID(list, "refresh").description, "Reads the tuner's channels and downloads the guides again now.")
+    end sub
+
+    sub test_antennaPageShowsTunersAndGuide(t as object)
+        input = SettingsPageTests.antennaFixture()
+        input.antenna.leftOut = 2
+        model = SettingsStatus.make(input)
+        list = SettingsPages.sections("antenna", model)
+        t.assertEqual(SettingsPages.pageTitle("antenna", model), "Antenna")
+        t.assertEqual(SettingsPageTests.sectionTitles(list), ["Antenna", "Tuners", "Guide"])
+        t.assertEqual(SettingsPages.focusableIDs(list), ["antenna.enabled", "antenna.find", "antenna.address", "antenna.guide"])
+        use = SettingsPages.rowWithID(list, "antenna.enabled")
+        t.assertEqual(use.title, "Use Antenna")
+        t.assertEqual(use.value, "On")
+        t.assertEqual(use.action, { type: "toggle", setting: "antennaEnabled" })
+        t.assertEqual(use.description, "Finds HDHomeRun tuners on your network and adds their channels to Live TV's Antenna group.")
+        tuner = SettingsPages.rowWithID(list, "antenna.tuner.0")
+        t.assertEqual(tuner.title, "HDHomeRun FLEX 4K")
+        t.assertEqual(tuner.value, "2 tuners")
+        t.assertEqual(tuner.detail, "HDFX-4K " + Chr(183) + " 3 channels")
+        t.assertInvalid(tuner.action)
+        find = SettingsPages.rowWithID(list, "antenna.find")
+        t.assertEqual(find.title, "Find Tuners")
+        t.assertEqual(find.detail, "")
+        t.assertEqual(find.action, { type: "findTuners" })
+        t.assertEqual(find.description, "Looks for HDHomeRun tuners on your network again.")
+        address = SettingsPages.rowWithID(list, "antenna.address")
+        t.assertEqual(address.value, "None")
+        t.assertEqual(address.action, { type: "editURL", field: "antennaAddress" })
+        guide = SettingsPages.rowWithID(list, "antenna.guide")
+        t.assertEqual(guide.title, "Guide from SiliconDust")
+        t.assertEqual(guide.value, "On")
+        t.assertEqual(guide.action, { type: "toggle", setting: "antennaGuide" })
+        status = SettingsPages.rowWithID(list, "antenna.guide.status")
+        t.assertEqual(status.detail, "1,234 programmes " + Chr(183) + " 2 of 3 channels " + Chr(183) + " Updated 9:12 AM")
+        t.assertInvalid(status.action)
+        t.assertEqual(SettingsPageTests.section(list, "antennaTuners").footer, "Channels come from the tuner's lineup. To find them again after moving the antenna, scan for channels on the tuner's own page or in MMTVL. 2 protected channels can't play and are left out.")
+        ' The lineup can't be read: the tuner row says so.
+        input.antenna.lineupFailed = 1
+        input.antenna.leftOut = 0
+        failed = SettingsPages.sections("antenna", SettingsStatus.make(input))
+        t.assertEqual(SettingsPages.rowWithID(failed, "antenna.tuner.0").detail, "HDFX-4K " + Chr(183) + " The antenna tuner isn't answering")
+        ' L6: no DeviceID or address on any page (the model has none to show).
+        for each page in ["root", "liveTV", "antenna", "device"]
+            for each part in SettingsPages.sections(page, model)
+                for each text in [part.footer, part.title]
+                    t.assertFalse(SettingsPageTests.leaks(text), page + " section")
+                end for
+                for each row in part.rows
+                    for each text in [row.id, row.title, row.value, row.detail, row.description]
+                        t.assertFalse(SettingsPageTests.leaks(text), page + " " + row.id)
+                    end for
+                end for
+            end for
+        end for
+    end sub
+
+    sub test_antennaOffShowsOffAndHidesTheTunerRows(t as object)
+        input = SettingsPageTests.antennaFixture()
+        input.antenna.enabled = false
+        list = SettingsPages.sections("antenna", SettingsStatus.make(input))
+        t.assertEqual(SettingsPageTests.sectionIDs(list), ["antenna"])
+        t.assertEqual(SettingsPages.focusableIDs(list), ["antenna.enabled"])
+        t.assertEqual(SettingsPages.rowWithID(list, "antenna.enabled").value, "Off")
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("liveTV", SettingsStatus.make(input)), "antenna").value, "Off")
+    end sub
+
+    ' The guide's status lines, Find Tuners' result, the typed address's problems.
+    sub test_antennaGuideAndAddressLines(t as object)
+        input = SettingsPageTests.antennaFixture()
+        cases = [
+            [{ loading: true }, "Loading" + Chr(8230)],
+            [{ outcome: { ran: true, ok: false, message: "Server error (HTTP 503)" } }, "Failed: Server error (HTTP 503)"],
+            [{ row: { status: "Not loaded yet", problem: "notLoaded", matched: 0, programmes: 0 } }, "Not loaded yet"],
+            [{ row: { status: "Too large for this Roku", problem: "tooLarge", matched: 0, programmes: 0 } }, "Too large for this Roku"],
+            [{}, "Not loaded yet"]
+        ]
+        for each item in cases
+            input.antenna.guide = item[0]
+            t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("antenna", SettingsStatus.make(input)), "antenna.guide.status").detail, item[1])
+        end for
+        input.antenna.guideOn = false
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("antenna", SettingsStatus.make(input)), "antenna.guide.status").detail, "Off")
+        input.antenna.findLine = "Found 1 tuner"
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("antenna", SettingsStatus.make(input)), "antenna.find").detail, "Found 1 tuner")
+        input.antenna.searching = true
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("antenna", SettingsStatus.make(input)), "antenna.find").detail, "Searching" + Chr(8230))
+        input.antenna.searching = false
+        input.antenna.devices = []
+        input.antenna.findLine = ""
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("antenna", SettingsStatus.make(input)), "antenna.find").detail, "No HDHomeRun found on this network")
+        input.antenna.addressSet = true
+        for each item in [["noAnswer", "No tuner answered at that address"], ["notTuner", "That address isn't an HDHomeRun tuner"], ["", "Only if Find Tuners doesn't find it"]]
+            input.antenna.typedProblem = item[0]
+            row = SettingsPages.rowWithID(SettingsPages.sections("antenna", SettingsStatus.make(input)), "antenna.address")
+            t.assertEqual(row.value, "Set")
+            t.assertEqual(row.detail, item[1])
+        end for
+        ' A refused typed address shows on its row until the next push or pop.
+        row = SettingsPages.rowWithID(SettingsPages.sections("antenna", SettingsStatus.make(input), { antennaAddress: "Type the tuner's IP address on your network, like 192.168.1.20" }), "antenna.address")
+        t.assertEqual(row.detail, "Type the tuner's IP address on your network, like 192.168.1.20")
+    end sub
+
+    ' The plan's Settings → Device line when MPEG-2 channels are hidden; D26's switch off reads H.264 only.
+    sub test_deviceSaysWhenMPEG2ChannelsAreHidden(t as object)
+        input = SettingsPageTests.antennaFixture()
+        input.antenna.mpeg2Hidden = 4
+        row = SettingsPages.rowWithID(SettingsPages.sections("device", SettingsStatus.make(input)), "device.mpeg2")
+        t.assertEqual(row.value, "Off: No MPEG-2")
+        t.assertEqual(row.detail, "Some antenna channels need MPEG-2, which this Roku can't play")
+        t.assertTrue(Instr(1, SettingsPageTests.section(SettingsPages.sections("antenna", SettingsStatus.make(input)), "antennaTuners").footer, "Some antenna channels need MPEG-2, which this Roku can't play") > 0)
+        input.antenna.mpeg2Hidden = 0
+        input.caps.mpeg2 = true
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("device", SettingsStatus.make(input)), "device.mpeg2").detail, "")
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("device", SettingsStatus.make(input)), "device.mpeg2").value, "On")
+        input.antennaPlaysMPEG2 = false
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("device", SettingsStatus.make(input)), "device.mpeg2").value, "Off: H.264 Only")
+    end sub
+
+    function antennaInput() as object
+        return { enabled: true, guideOn: true, searching: false, devices: [{ name: "HDHomeRun FLEX 4K", model: "HDFX-4K", tunerCount: 2, channelCount: 3 }], channelCount: 3, leftOut: 0, mpeg2Hidden: 0, lineupFailed: 0, typedProblem: "", addressSet: false, findLine: "", guide: { row: { status: "OK, 2 channels matched", problem: "", matched: 2, programmes: 1234 }, outcome: invalid, updated: "9:12 AM", loading: false } }
+    end function
+
+    ' No playlist, one tuner with three channels.
+    function antennaFixture() as object
+        input = SettingsPageTests.fixture({ antenna: SettingsPageTests.antennaInput() })
+        input.store.source = ""
+        input.store.guides = []
+        input.channels = [
+            { id: "antenna:2.1", number: 1, name: "WSB-HD", group: "Antenna", url: "http://10.0.0.9:5004/auto/v2.1", source: "antenna", guideNumber: "2.1", tunerCount: 2 },
+            { id: "antenna:5.1", number: 2, name: "WAGA-HD", group: "Antenna", url: "http://10.0.0.9:5004/auto/v5.1", source: "antenna", guideNumber: "5.1", tunerCount: 2 },
+            { id: "antenna:11.1", number: 3, name: "WXIA-TV", group: "Antenna", url: "http://10.0.0.9:5004/auto/v11.1", source: "antenna", guideNumber: "11.1", tunerCount: 2 }
+        ]
+        input.playlistChannelCount = 0
+        return input
+    end function
+
+    function leaks(text as dynamic) as boolean
+        if not SettingsStatus.isText(text) then return false
+        return Instr(1, text, "10.0.0.9") > 0 or Instr(1, text, "SECRETID") > 0 or Instr(1, text, "://") > 0
+    end function
+
+    function rowIDs(found as dynamic) as object
+        result = []
+        if found = invalid then return result
+        for each row in found.rows
+            result.Push(row.id)
+        end for
+        return result
+    end function
+
+    function sectionIDs(list as object) as object
+        result = []
+        for each item in list
+            result.Push(item.id)
+        end for
+        return result
+    end function
+
     function fixture(overrides as object) as object
         store = SettingsStore.load(SettingsStoreTests.fakeRegistry(30000))
         store.source = "https://iptv.example/get.php?username=me&password=pw"

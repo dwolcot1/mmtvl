@@ -2,11 +2,13 @@
 <!-- Downloads and reads the guides off the render thread (M12 step 9). The scene sets channels,
      playlistGuideURLs and expectedGuides, then control = "run". The task reads the pasted guides, the playlist URL
      and usePlaylistGuide from the registry. It sets guideData first, then result once:
-       result: { ok: true, sourcesKey, fetchedAt, failures, statuses, note, programmeCount }  or  { ok: false }
+       result: { ok: true, sourcesKey, fetchedAt, failures, statuses, note, programmeCount, antenna, antennaIndex }  or  { ok: false }
          statuses   GuideFetch.statusRows: [{ index, host, status, problem, matched, fromPlaylist, stale }]
          fetchedAt  { cache id: when the guide's fresh file was downloaded (wall-clock seconds) }
          failures   { cache id: { at, kind } }, for the guides waiting after a failure
          note       "" or why the memory guard was inactive
+         antenna    step 21: the antenna guide's line (GuideFetch.antennaRow: status, problem, matched, programmes), or
+                    invalid when it wasn't read; antennaIndex its index in the guide data (Match Guide's label)
        guideData: GuideFetch.guideData's shape (see GuideFetch.bs); matchData: GuideFetch.matchData's (step 20). The scene keeps the finished task as the
          holder of guideData (its guideHolder field), so the programmes are never relayed or copied by the scene.
      ({ ok: false }: the task failed or was given up; the scene keeps what it has). Logs show hosts only (L6). -->
@@ -42,6 +44,10 @@
     <script type="text/brighterscript" uri="pkg:/source/lib/XMLTVDate.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/XMLTVScan.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/EPGMatcher.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/AntennaConfig.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/HDHomeRun.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/AntennaLineup.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/AntennaGuide.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/GuidePipeline.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/GuideSources.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/GuideFetch.bs" />

@@ -1,0 +1,524 @@
+' The antenna channels' guide (M12 step 21): SiliconDust's free service, a port of MMTVL's
+' IPTV/Antenna/AntennaGuide.swift (M7j L10, L11, L12) and IPTVLibrary.refreshAntennaGuide / antennaMatches, with
+' both formats the plan allows behind AntennaConfig.guideFormat (D27):
+'   "xmltv"  https://api.hdhomerun.com/api/xmltv?DeviceAuth=…, downloaded to cachefs: and read by GuideTask like
+'            any guide (GuidePipeline: inflated there if it's a .gz body, where inflate is kept);
+'   "json"   https://api.hdhomerun.com/api/guide.php?DeviceAuth=…&Start=… (unverified: the shape is the one
+'            SiliconDust's apps are reported to use), paged and written out as XMLTV for GuideTask.
+' The URL carries every tuner's DeviceAuth, a token: it's built in fetch's locals from each tuner's discover.json read
+' just before the download, and is never logged, stored, shown or put in a node field. Only the host is logged.
+' Downloads at most daily: 20–28 h after a success, an hour after a failure, never within an hour of the last
+' download or attempt (Refresh Now too). Pure: the network and files are AntennaTask's io (HDHomeRun.bs's, plus
+' download and writeText below), so local tests run it with fakes.
+'
+'   isValidDeviceAuth(auth), url(format, deviceAuths, start), nextDue(now, random), downloadStep(now, files, manual)
+'   fetch(io, devices, options) -> { ok, message }   (options: { format, gzip, now, windowEnd, partPath })
+'     io.download(url, path, maxBytes, timeoutMs, gzip) -> { ok, code, reason }, io.writeText(path, text) -> bool
+'   overrideTarget(channel, lowered), match(channels, epgChannels, overrides, normalizer)
+'   matches(antennaChannels, antennaGuide, pastedSources, overrides, antennaIndex): every antenna channel's ref
+'   jsonToXMLTV(pages) -> XMLTV text, xmltvTime(seconds), escaped(text)
+namespace AntennaGuide
+
+    const host = "api.hdhomerun.com"
+    const xmltvEndpoint = "https://api.hdhomerun.com/api/xmltv"
+    const jsonEndpoint = "https://api.hdhomerun.com/api/guide.php"
+    ' Match Guide's label for its channels (MMTVL's).
+    const label = "HDHomeRun"
+
+    const retryAfterFailureSeconds = 3600
+    const minimumIntervalSeconds = 3600
+    const nextDueMinHours = 20
+    const nextDueMaxHours = 28
+    ' MMTVL's security L3: the 2-day XML is about 7 MB.
+    const maximumDownloadBytes = 67108864
+    const downloadTimeoutMs = 180000
+    ' The JSON guide (unverified): one page at most 4 MB, at most 12 pages, 30 s each.
+    const jsonPageMaxBytes = 4194304
+    const jsonMaxPages = 12
+    const jsonPageTimeoutMs = 30000
+    const minimumDeviceAuthLength = 8
+    const maximumDeviceAuthLength = 64
+    const noKeyMessage = "The tuner didn't give a guide key"
+
+    ' 8…64 ASCII base64 (or URL-safe base64) characters (MMTVL's step 2 security L5).
+    function isValidDeviceAuth(auth as dynamic) as boolean
+        if not HDHomeRun.isText(auth) then return false
+        if Len(auth) < AntennaGuide.minimumDeviceAuthLength or Len(auth) > AntennaGuide.maximumDeviceAuthLength then return false
+        for i = 1 to Len(auth)
+            code = Asc(Mid(auth, i, 1))
+            ok = (code >= 65 and code <= 90) or (code >= 97 and code <= 122) or (code >= 48 and code <= 57) or code = 43 or code = 47 or code = 61 or code = 95 or code = 45
+            if not ok then return false
+        end for
+        return true
+    end function
+
+    ' The endpoint, "?DeviceAuth=" and every DeviceAuth concatenated in the given (DeviceID) order, with all but ASCII
+    ' letters and digits percent-encoded; for "json", "&Start=<seconds>" when start is a number. "" when there is
+    ' none or any isn't valid. A token: never log, store or show the result.
+    function url(format as string, auths as object, start = invalid as dynamic) as string
+        if auths.Count() = 0 then return ""
+        joined = ""
+        for each auth in auths
+            if not AntennaGuide.isValidDeviceAuth(auth) then return ""
+            joined += auth
+        end for
+        endpoint = AntennaGuide.xmltvEndpoint
+        if format = "json" then endpoint = AntennaGuide.jsonEndpoint
+        made = endpoint + "?DeviceAuth=" + AntennaGuide.percentEncoded(joined)
+        if format = "json" and AntennaGuide.isNumber(start) then made += "&Start=" + AntennaGuide.wholeText(start)
+        return made
+    end function
+
+    function percentEncoded(text as string) as string
+        digits = "0123456789ABCDEF"
+        result = ""
+        for i = 1 to Len(text)
+            character = Mid(text, i, 1)
+            code = Asc(character)
+            if (code >= 65 and code <= 90) or (code >= 97 and code <= 122) or (code >= 48 and code <= 57)
+                result += character
+            else
+                result += "%" + Mid(digits, (code \ 16) + 1, 1) + Mid(digits, (code mod 16) + 1, 1)
+            end if
+        end for
+        return result
+    end function
+
+    ' 20–28 hours after now (SiliconDust asks for 20–28 h); random in 0…1 (clamped).
+    function nextDue(now as dynamic, random as dynamic) as dynamic
+        fraction = random
+        if fraction < 0 then fraction = 0
+        if fraction > 1 then fraction = 1
+        hours = AntennaGuide.nextDueMinHours + (AntennaGuide.nextDueMaxHours - AntennaGuide.nextDueMinHours) * fraction
+        return now + Int(hours * 3600)
+    end function
+
+    ' Seconds from a file's text ("1791200000"), else invalid.
+    function readSeconds(text as dynamic) as dynamic
+        if not HDHomeRun.isText(text) then return invalid
+        digits = text.Trim()
+        if Len(digits) = 0 or Len(digits) > 12 then return invalid
+        for i = 1 to Len(digits)
+            code = Asc(Mid(digits, i, 1))
+            if code < 48 or code > 57 then return invalid
+        end for
+        return Int(Val(digits, 10))
+    end function
+
+    ' Whether to download now: files { hasFile, time (last success), due, attempt (last try) } (seconds or invalid).
+    '   "tooSoon"   the last success or attempt is within minimumIntervalSeconds (a clock set back counts too);
+    '   "notDue"    not manual, the file is there and its due time hasn't come;
+    '   "download"  otherwise (no file: cachefs: lost it, or it was never downloaded).
+    function downloadStep(now as dynamic, files as object, manual as boolean) as string
+        for each recent in [files.time, files.attempt]
+            if AntennaGuide.isNumber(recent)
+                if now - recent <= AntennaGuide.minimumIntervalSeconds then return "tooSoon"
+            end if
+        end for
+        if not manual and HDHomeRun.isTrue(files.hasFile) and AntennaGuide.isNumber(files.due)
+            if now < files.due then return "notDue"
+        end if
+        return "download"
+    end function
+
+    ' Each device's DeviceAuth, read fresh from its discover.json (same DeviceID), in DeviceID order; invalid when one
+    ' is missing or not valid. Held by the caller in a local only.
+    function deviceAuths(io as object, devices as object) as dynamic
+        auths = []
+        for each device in devices
+            answer = io.get(device.baseURL + "/discover.json", HDHomeRun.smallMaxBytes, HDHomeRun.timeoutMs)
+            if not HDHomeRun.isTrue(answer.ok) then return invalid
+            if not HDHomeRun.peerMatches(answer.peer, device.host, false) then return invalid
+            discover = HDHomeRun.parseObject(answer.text)
+            if discover = invalid then return invalid
+            if not HDHomeRun.isDeviceID(discover.DeviceID) then return invalid
+            if UCase(discover.DeviceID) <> device.id then return invalid
+            if not AntennaGuide.isValidDeviceAuth(discover.DeviceAuth) then return invalid
+            auths.Push(discover.DeviceAuth)
+        end for
+        return auths
+    end function
+
+    ' Downloads the guide to options.partPath (XMLTV, or the JSON written out as XMLTV). { ok, message }: message is
+    ' what Settings → Antenna shows after "Failed: " (never the URL or a server's text). Logs the host only.
+    function fetch(io as object, devices as object, options as object) as object
+        if devices.Count() = 0 then return { ok: false, message: "No tuner found" }
+        auths = AntennaGuide.deviceAuths(io, devices)
+        if auths = invalid
+            io.log("error", "Guide from " + AntennaGuide.host + " skipped: the tuner didn't give a usable guide key")
+            return { ok: false, message: AntennaGuide.noKeyMessage }
+        end if
+        if options.format = "json"
+            outcome = AntennaGuide.fetchJSON(io, auths, options)
+            auths.Clear()
+        else
+            ' The tokened URL lives in this local and the download's transfer only; both go when this returns.
+            address = AntennaGuide.url("xmltv", auths)
+            ' Security L-4: the tokens go from the list once the URL holds them (a crash backtrace shows locals).
+            auths.Clear()
+            if address = "" then return { ok: false, message: AntennaGuide.noKeyMessage }
+            outcome = AntennaGuide.outcomeOf(io.download(address, options.partPath, AntennaGuide.maximumDownloadBytes, AntennaGuide.downloadTimeoutMs, HDHomeRun.isTrue(options.gzip)))
+        end if
+        if outcome.ok then io.log("info", "Guide from " + AntennaGuide.host + ": downloaded") else io.log("error", "Guide from " + AntennaGuide.host + " failed: " + outcome.message)
+        return outcome
+    end function
+
+    ' The JSON guide, a page at a time from options.now until options.windowEnd (or a page that adds nothing), written
+    ' out as XMLTV.
+    function fetchJSON(io as object, auths as object, options as object) as object
+        pages = []
+        start = options.now
+        for page = 1 to AntennaGuide.jsonMaxPages
+            address = AntennaGuide.url("json", auths, start)
+            if address = "" then return { ok: false, message: AntennaGuide.noKeyMessage }
+            got = io.get(address, AntennaGuide.jsonPageMaxBytes, AntennaGuide.jsonPageTimeoutMs)
+            if not HDHomeRun.isTrue(got.ok)
+                if pages.Count() = 0 then return AntennaGuide.outcomeOf(got)
+                exit for
+            end if
+            parsed = invalid
+            try
+                parsed = ParseJson(got.text)
+            catch e
+                parsed = invalid
+            end try
+            if type(parsed) <> "roArray"
+                if pages.Count() = 0 then return { ok: false, message: "The guide wasn't one this Roku can read" }
+                exit for
+            end if
+            pages.Push(parsed)
+            latest = AntennaGuide.latestEnd(parsed)
+            if latest = invalid or latest <= start then exit for
+            start = latest
+            if AntennaGuide.isNumber(options.windowEnd)
+                if start >= options.windowEnd then exit for
+            end if
+        end for
+        if not io.writeText(options.partPath, AntennaGuide.jsonToXMLTV(pages)) then return { ok: false, message: "Couldn't save the guide" }
+        return { ok: true, message: "" }
+    end function
+
+    ' A download's { ok, code, reason } as { ok, message }.
+    function outcomeOf(got as dynamic) as object
+        if type(got) <> "roAssociativeArray" then return { ok: false, message: "Couldn't reach " + AntennaGuide.host }
+        if HDHomeRun.isTrue(got.ok) then return { ok: true, message: "" }
+        if got.reason = "tooLarge" then return { ok: false, message: "Too large for this Roku" }
+        if got.reason = "refused" then return { ok: false, message: "It reached an address a guide may not use" }
+        code = got.code
+        if HDHomeRun.isInteger(code)
+            if code >= 500 then return { ok: false, message: "Server error (HTTP " + code.ToStr() + ")" }
+            if code >= 400 then return { ok: false, message: "Refused (HTTP " + code.ToStr() + ")" }
+        end if
+        return { ok: false, message: "Couldn't reach " + AntennaGuide.host }
+    end function
+
+    ' The latest EndTime in a JSON page, or invalid.
+    function latestEnd(channels as object) as dynamic
+        latest = invalid
+        for each channel in channels
+            if type(channel) = "roAssociativeArray"
+                if type(channel.Guide) = "roArray"
+                    for each item in channel.Guide
+                        if type(item) = "roAssociativeArray"
+                            if HDHomeRun.isInteger(item.EndTime)
+                                if latest = invalid or item.EndTime > latest then latest = item.EndTime
+                            end if
+                        end if
+                    end for
+                end if
+            end if
+        end for
+        return latest
+    end function
+
+    ' The JSON pages ([{ GuideNumber, GuideName, Affiliate, Guide: [{ StartTime, EndTime, Title, EpisodeTitle,
+    ' EpisodeNumber, Synopsis, Filter }] }]) as one XMLTV document: a channel per GuideNumber (id
+    ' "<GuideNumber>.hdhomerun.json", display-names the number, the name and the affiliate), its programmes once per
+    ' StartTime, in page order. Anything malformed is skipped.
+    function jsonToXMLTV(pages as object) as string
+        order = []
+        byNumber = {}
+        byNumber.SetModeCaseSensitive()
+        for each page in pages
+            for each channel in page
+                if type(channel) = "roAssociativeArray"
+                    number = HDHomeRun.jsonText(channel.GuideNumber)
+                    if number <> invalid and AntennaLineup.isGuideNumber(number)
+                        entry = byNumber[number]
+                        if entry = invalid
+                            names = [number]
+                            for each value in [channel.GuideName, channel.Affiliate]
+                                shown = HDHomeRun.displayText(value)
+                                if shown <> "" and not HDHomeRun.containsText(names, shown) then names.Push(shown)
+                            end for
+                            entry = { names: names, programmes: [], starts: {} }
+                            byNumber[number] = entry
+                            order.Push(number)
+                        end if
+                        if type(channel.Guide) = "roArray"
+                            for each item in channel.Guide
+                                AntennaGuide.addProgramme(entry, item)
+                            end for
+                        end if
+                    end if
+                end if
+            end for
+        end for
+        lines = ["<?xml version=" + Chr(34) + "1.0" + Chr(34) + " encoding=" + Chr(34) + "UTF-8" + Chr(34) + "?>", "<tv>"]
+        for each number in order
+            lines.Push("<channel id=" + Chr(34) + AntennaGuide.escaped(number + ".hdhomerun.json") + Chr(34) + ">")
+            for each name in byNumber[number].names
+                lines.Push("<display-name>" + AntennaGuide.escaped(name) + "</display-name>")
+            end for
+            lines.Push("</channel>")
+        end for
+        for each number in order
+            channelID = AntennaGuide.escaped(number + ".hdhomerun.json")
+            for each programme in byNumber[number].programmes
+                lines.Push("<programme start=" + Chr(34) + AntennaGuide.xmltvTime(programme.start) + Chr(34) + " stop=" + Chr(34) + AntennaGuide.xmltvTime(programme.stop) + Chr(34) + " channel=" + Chr(34) + channelID + Chr(34) + ">")
+                lines.Push("<title>" + AntennaGuide.escaped(programme.title) + "</title>")
+                if programme.subtitle <> "" then lines.Push("<sub-title>" + AntennaGuide.escaped(programme.subtitle) + "</sub-title>")
+                if programme.summary <> "" then lines.Push("<desc>" + AntennaGuide.escaped(programme.summary) + "</desc>")
+                if programme.category <> "" then lines.Push("<category>" + AntennaGuide.escaped(programme.category) + "</category>")
+                if programme.episode <> "" then lines.Push("<episode-num system=" + Chr(34) + "onscreen" + Chr(34) + ">" + AntennaGuide.escaped(programme.episode) + "</episode-num>")
+                lines.Push("</programme>")
+            end for
+        end for
+        lines.Push("</tv>")
+        return lines.Join(Chr(10))
+    end function
+
+    sub addProgramme(entry as object, item as dynamic)
+        if type(item) <> "roAssociativeArray" then return
+        if not HDHomeRun.isInteger(item.StartTime) or not HDHomeRun.isInteger(item.EndTime) then return
+        if item.EndTime <= item.StartTime then return
+        title = AntennaGuide.plain(item.Title)
+        if title = "" then return
+        key = item.StartTime.ToStr()
+        if entry.starts.DoesExist(key) then return
+        entry.starts[key] = true
+        category = ""
+        if type(item.Filter) = "roArray"
+            if item.Filter.Count() > 0 then category = AntennaGuide.plain(item.Filter[0])
+        end if
+        entry.programmes.Push({ start: item.StartTime, stop: item.EndTime, title: title, subtitle: AntennaGuide.plain(item.EpisodeTitle), summary: AntennaGuide.plain(item.Synopsis), category: category, episode: AntennaGuide.plain(item.EpisodeNumber) })
+    end sub
+
+    ' Text from JSON, without control characters; "" for anything else.
+    function plain(value as dynamic) as string
+        if not HDHomeRun.isText(value) then return ""
+        kept = ""
+        for i = 1 to Len(value)
+            character = Mid(value, i, 1)
+            code = Asc(character)
+            if code >= 32 and code <> 127 then kept += character
+        end for
+        return kept.Trim()
+    end function
+
+    ' &, <, > and " as XML entities.
+    function escaped(text as string) as string
+        return text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace(Chr(34), "&quot;")
+    end function
+
+    ' "YYYYMMDDhhmmss +0000" for seconds since 1970 (UTC; the inverse of XMLTVDate.daysFromCivil).
+    function xmltvTime(seconds as dynamic) as string
+        days = Int(seconds / 86400)
+        rest = seconds - days * 86400
+        z = days + 719468
+        era = Int(z / 146097)
+        doe = z - era * 146097
+        yoe = Int((doe - Int(doe / 1460) + Int(doe / 36524) - Int(doe / 146096)) / 365)
+        year = yoe + era * 400
+        doy = doe - (365 * yoe + Int(yoe / 4) - Int(yoe / 100))
+        mp = Int((5 * doy + 2) / 153)
+        day = doy - Int((153 * mp + 2) / 5) + 1
+        if mp < 10 then month = mp + 3 else month = mp - 9
+        if month <= 2 then year = year + 1
+        hours = Int(rest / 3600)
+        minutes = Int((rest - hours * 3600) / 60)
+        secs = rest - hours * 3600 - minutes * 60
+        return AntennaGuide.two(year \ 100) + AntennaGuide.two(year mod 100) + AntennaGuide.two(month) + AntennaGuide.two(day) + AntennaGuide.two(hours) + AntennaGuide.two(minutes) + AntennaGuide.two(secs) + " +0000"
+    end function
+
+    function two(value as dynamic) as string
+        text = Int(value).ToStr()
+        if Len(text) < 2 then text = "0" + text
+        return text
+    end function
+
+    ' --- matching (M7j L10, L12) ---------------------------------------------------------------------------------
+
+    ' The override for an antenna channel (its id "antenna:5.1", then its name, ignoring case), lowercased; "" means no
+    ' guide; invalid when none. lowered: the overrides with lowercased keys and values (loweredOverrides).
+    function overrideTarget(channel as object, lowered as object, finder = invalid as dynamic) as dynamic
+        if lowered.Count() = 0 then return invalid
+        if finder = invalid then finder = Unicode.newNonASCIIFinder()
+        target = lowered[Unicode.lower(channel.id, finder)]
+        if target <> invalid then return target
+        if HDHomeRun.isText(channel.name) then return lowered[Unicode.lower(channel.name, finder)]
+        return invalid
+    end function
+
+    ' The overrides with lowercased keys and values (the last of keys equal ignoring case wins, in sorted order, as
+    ' EPGMatcher reads them), in a case-sensitive map.
+    function loweredOverrides(overrides as dynamic, finder = invalid as dynamic) as object
+        result = {}
+        result.SetModeCaseSensitive()
+        if type(overrides) <> "roAssociativeArray" then return result
+        if finder = invalid then finder = Unicode.newNonASCIIFinder()
+        keys = overrides.Keys()
+        keys.Sort()
+        for each key in keys
+            value = overrides[key]
+            if HDHomeRun.isText(value) then result[Unicode.lower(key, finder)] = Unicode.lower(value, finder)
+        end for
+        return result
+    end function
+
+    ' MMTVL's AntennaGuide.match: antenna channels → the guide's channel ids (lowercased), the first rule that hits:
+    '   1. an override naming a channel in this guide ("" = no guide);
+    '   2. a display-name exactly equal to the channel's GuideNumber (trimmed);
+    '   3. the channel's normalized name equal to a normalized display-name, only when no other antenna channel has
+    '      that name, and only against guide channels whose display-names name no other antenna channel's number.
+    ' epgChannels: [{ id, names }] (XMLTVScan.channelList). normalizer: EPGMatcher.newNormalizer() (invalid: a new one).
+    function match(antennaChannels as object, epgChannels as object, overrides as dynamic, normalizer = invalid as dynamic) as object
+        n = normalizer
+        if n = invalid then n = EPGMatcher.newNormalizer()
+        lowered = AntennaGuide.loweredOverrides(overrides, n.nonASCII)
+        ids = EPGMatcher.newSet()
+        byNumber = EPGMatcher.newSet()
+        normalizedNames = []
+        trimmedNames = []
+        for each epg in epgChannels
+            epgID = Unicode.lower(epg.id, n.nonASCII)
+            ids[epgID] = true
+            normalized = EPGMatcher.newSet()
+            trimmed = []
+            for each name in epg.names
+                cut = name.Trim()
+                trimmed.Push(cut)
+                if not byNumber.DoesExist(cut) then byNumber[cut] = epgID
+                normalized[EPGMatcher.normalize(name, n)] = true
+            end for
+            normalizedNames.Push(normalized)
+            trimmedNames.Push(trimmed)
+        end for
+        numbers = EPGMatcher.newSet()
+        nameCounts = EPGMatcher.newSet()
+        for each channel in antennaChannels
+            if HDHomeRun.isText(channel.guideNumber) then numbers[channel.guideNumber] = true
+            key = EPGMatcher.normalize(channel.name, n)
+            if key <> ""
+                if nameCounts.DoesExist(key) then nameCounts[key] = nameCounts[key] + 1 else nameCounts[key] = 1
+            end if
+        end for
+
+        result = {}
+        result.SetModeCaseSensitive()
+        for each channel in antennaChannels
+            decided = false
+            target = AntennaGuide.overrideTarget(channel, lowered, n.nonASCII)
+            if target <> invalid
+                if target = ""
+                    decided = true
+                else if ids.DoesExist(target)
+                    result[channel.id] = target
+                    decided = true
+                end if
+            end if
+            if not decided and HDHomeRun.isText(channel.guideNumber)
+                found = byNumber[channel.guideNumber]
+                if found <> invalid
+                    result[channel.id] = found
+                    decided = true
+                end if
+            end if
+            if not decided
+                key = EPGMatcher.normalize(channel.name, n)
+                if key <> "" and nameCounts[key] = 1
+                    for i = 0 to epgChannels.Count() - 1
+                        if normalizedNames[i].DoesExist(key) and not AntennaGuide.namesOtherNumber(trimmedNames[i], channel.guideNumber, numbers)
+                            result[channel.id] = Unicode.lower(epgChannels[i].id, n.nonASCII)
+                            exit for
+                        end if
+                    end for
+                end if
+            end if
+        end for
+        return result
+    end function
+
+    ' Whether any of names is another antenna channel's GuideNumber.
+    function namesOtherNumber(names as object, own as dynamic, numbers as object) as boolean
+        for each name in names
+            if name <> own and numbers.DoesExist(name) then return true
+        end for
+        return false
+    end function
+
+    ' MMTVL's antennaMatches: refs { guide, sourceID, epgID } for antenna channels. antennaGuide: the antenna guide's
+    ' channels while it's kept (AntennaConfig and Settings; [] when it has none yet), else invalid. Kept: match above
+    ' (guide antennaIndex), except that an override naming a pasted guide's channel wins (Match Guide offers those
+    ' too). Not kept: the pasted guides' rules (EPGMatcher, by name; tvg-id is invalid). pastedSources:
+    ' [{ sourceID, channels }] in priority order, as GuidePipeline gives EPGMatcher.
+    function matches(antennaChannels as object, guideChannels as dynamic, pastedSources as object, overrides as dynamic, antennaIndex as dynamic) as object
+        if antennaChannels.Count() = 0 then return {}
+        if type(guideChannels) <> "roArray" then return EPGMatcher.match(antennaChannels, pastedSources, overrides)
+        n = EPGMatcher.newNormalizer()
+        found = AntennaGuide.match(antennaChannels, guideChannels, overrides, n)
+        result = {}
+        result.SetModeCaseSensitive()
+        for each channelID in found
+            result[channelID] = { guide: antennaIndex, sourceID: antennaIndex.ToStr(), epgID: found[channelID] }
+        end for
+        lowered = AntennaGuide.loweredOverrides(overrides, n.nonASCII)
+        if lowered.Count() = 0 then return result
+        antennaIDs = EPGMatcher.newSet()
+        for each epg in guideChannels
+            antennaIDs[Unicode.lower(epg.id, n.nonASCII)] = true
+        end for
+        for each channel in antennaChannels
+            target = AntennaGuide.overrideTarget(channel, lowered, n.nonASCII)
+            if HDHomeRun.isText(target)
+                if target <> "" and not antennaIDs.DoesExist(target)
+                    for i = 0 to pastedSources.Count() - 1
+                        if AntennaGuide.hasID(pastedSources[i].channels, target, n)
+                            result[channel.id] = { guide: i, sourceID: pastedSources[i].sourceID, epgID: target }
+                            exit for
+                        end if
+                    end for
+                end if
+            end if
+        end for
+        return result
+    end function
+
+    ' Any number (a Roku's AsSeconds is an Integer; arithmetic or JSON may give a Float or Double).
+    function isNumber(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "integer" or kind = "roint" or kind = "rointeger" or kind = "longinteger" or kind = "rolonginteger" or kind = "float" or kind = "rofloat" or kind = "double" or kind = "rodouble"
+    end function
+
+    ' A whole number's digits, without Str's leading space or a float's exponent.
+    function wholeText(value as dynamic) as string
+        whole# = value
+        if whole# < 0 then return "0"
+        digits = ""
+        while whole# >= 1
+            q# = Fix(whole# / 10)
+            digits = Chr(48 + Int(whole# - q# * 10)) + digits
+            whole# = q#
+        end while
+        if digits = "" then return "0"
+        return digits
+    end function
+
+    function hasID(channels as object, target as string, n as object) as boolean
+        for each epg in channels
+            if Unicode.lower(epg.id, n.nonASCII) = target then return true
+        end for
+        return false
+    end function
+
+end namespace

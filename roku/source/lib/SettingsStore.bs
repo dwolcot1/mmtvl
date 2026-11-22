@@ -6,11 +6,14 @@
 '   state      { lastChannelID, lastGroup, recentChannelIDs, lowMemoryNoticeShown }: "" = none; recents most recent
 '                first, at most 10; lowMemoryNoticeShown (Roku-only, step 11, L7): the low-memory notice was answered
 '   settings   { channelUpMovesUpList, usePlaylistGuide, teamMatchInitials, teamMatchNicknames, antennaEnabled,
-'                antennaGuide, channelLogos }; channelLogos (Roku-only, L7 as amended 2026-11-21) is on by default
-'                on every device class, and Settings → Device turns it off (step 13)
+'                antennaGuide, channelLogos, antennaAddress }; channelLogos (Roku-only, L7 as amended 2026-11-21) is on
+'                by default on every device class, and Settings → Device turns it off (step 13); antennaAddress
+'                (Roku-only, step 21) is the tuner address typed in Settings → Antenna ("" = none, at most 64
+'                characters; checked by SettingsEdits.checkTunerAddress when typed and HDHomeRun.typedHost when used)
 '   schema     1
 ' Defaults are MMTVL's (App/AppSettings.swift, IPTV/Sources/ChannelPreferences.swift, IPTV/IPTVState.swift). The
-' Roku-only fields (lowMemoryNoticeShown, channelLogos) aren't in an import bundle, so replaceAll keeps them. A
+' Roku-only fields (lowMemoryNoticeShown, channelLogos, antennaAddress) aren't in an import bundle, so replaceAll
+' keeps them. A
 ' missing key reads as its default; a value that isn't JSON reads as the key's default; a field of the wrong type
 ' or past a limit reads as that field's default (list entries are dropped one by one), never a crash. The limits
 ' are the import's (step 14): URLs at most 2 KB, ids at most 256 characters, at most 500 entries per list.
@@ -37,6 +40,8 @@ namespace SettingsStore
     const maximumIDLength = 256
     const maximumListEntries = 500
     const maximumRecents = 10
+    ' Step 21: the tuner address typed in Settings → Antenna (an IPv4 literal is at most 15 characters).
+    const maximumAddressLength = 64
     ' Added to each entry's estimated size for the registry's own bookkeeping (unverified; errs on the large side).
     const entryOverheadBytes = 16
     const overridesRefusedMessage = "This Roku is almost out of room for settings, so the guide match wasn't saved. Remove some guide matches, favorites or hidden channels and try again."
@@ -214,7 +219,8 @@ namespace SettingsStore
                 "teamMatchNicknames": bundle.teamMatchNicknames,
                 "antennaEnabled": bundle.antennaEnabled,
                 "antennaGuide": bundle.antennaGuide,
-                "channelLogos": store.settings.channelLogos
+                "channelLogos": store.settings.channelLogos,
+                "antennaAddress": store.settings.antennaAddress
             }
         }
         for each key in SettingsStore.keys()
@@ -244,6 +250,16 @@ namespace SettingsStore
         return { "ok": true, "message": "" }
     end function
 
+    ' Step 21 (security L-3): the settings the guide screen reads (LogoCache.wanted's channelLogos), so no node field
+    ' outside the store carries antennaAddress or another setting it doesn't need.
+    function guideSettings(settings as dynamic) as object
+        logos = true
+        if type(settings) = "roAssociativeArray"
+            if SettingsStore.isBoolean(settings.channelLogos) then logos = settings.channelLogos
+        end if
+        return { "channelLogos": logos }
+    end function
+
     ' --- defaults and limits ------------------------------------------------------------------------------------
 
     function defaultValue(key as string) as dynamic
@@ -265,7 +281,8 @@ namespace SettingsStore
             "teamMatchNicknames": false,
             "antennaEnabled": true,
             "antennaGuide": true,
-            "channelLogos": true
+            "channelLogos": true,
+            "antennaAddress": ""
         }
     end function
 
@@ -288,7 +305,11 @@ namespace SettingsStore
             if SettingsStore.isBoolean(value.lowMemoryNoticeShown) then result["lowMemoryNoticeShown"] = value.lowMemoryNoticeShown
         else if key = "settings"
             for each field in result.Keys()
-                if SettingsStore.isBoolean(value[field]) then result[field] = value[field]
+                if field = "antennaAddress"
+                    result[field] = SettingsStore.boundedText(value[field], SettingsStore.maximumAddressLength)
+                else if SettingsStore.isBoolean(value[field])
+                    result[field] = value[field]
+                end if
             end for
         end if
         return result

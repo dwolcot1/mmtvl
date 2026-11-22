@@ -37,7 +37,7 @@ function emptyModel() as object
 end function
 
 function noMessages() as object
-    return { playlist: "", guide: "", band: "" }
+    return { playlist: "", guide: "", band: "", antennaAddress: "" }
 end function
 
 ' The frames' layout, from Theme.bs.

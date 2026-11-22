@@ -121,11 +121,14 @@ namespace SettingsNavTests
     sub test_trickPlayKeysPageByEightRows(t as object)
         state = SettingsNavTests.press(SettingsNav.open(), ["OK"])
         ids = SettingsPages.focusableIDs(SettingsNavTests.list(state))
-        ' Step 18 added My Teams: 9 rows, so a page of 8 from the first lands on the last.
-        t.assertEqual(ids.Count(), 9)
+        ' Step 18 added My Teams and step 21 the Antenna row: 10 rows, so a page of 8 from the first lands on the
+        ' ninth, and another on the last.
+        t.assertEqual(ids.Count(), 10)
         state = SettingsNavTests.press(state, ["fastforward"])
         t.assertEqual(SettingsNavTests.focus(state), ids[8])
-        state = SettingsNavTests.press(state, ["rewind"])
+        state = SettingsNavTests.press(state, ["fastforward"])
+        t.assertEqual(SettingsNavTests.focus(state), ids[9])
+        state = SettingsNavTests.press(state, ["rewind", "rewind"])
         t.assertEqual(SettingsNavTests.focus(state), ids[0])
         state = SettingsNavTests.press(state, ["channeldown", "channelup"])
         t.assertEqual(SettingsNavTests.focus(state), ids[0])
@@ -153,7 +156,7 @@ namespace SettingsNavTests
     end sub
 
     sub test_removeConfirmFocusesCancelFirst(t as object)
-        state = SettingsNavTests.press(SettingsNav.open(), ["OK", "fastforward", "OK"])
+        state = SettingsNavTests.press(SettingsNav.open(), ["OK", "fastforward", "fastforward", "OK"])
         t.assertEqual(SettingsNav.currentPage(state), "confirmRemoveSource")
         t.assertEqual(SettingsNavTests.focus(state), "confirm.cancel")
         result = SettingsNavTests.handle(state, "OK")

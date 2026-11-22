@@ -1,0 +1,371 @@
+' The tuners' lineups as Live TV channels (M12 step 21): a port of MMTVL's IPTV/Antenna/AntennaLineup.swift (M7j L1,
+' L2, L5) and AntennaSource.sharedNumbersNotice, plus the Roku's MPEG-2 rule (U1, AntennaConfig.playMPEG2). Pure.
+'
+'   channels(deviceLineups, firstNumber, options) -> { channels, leftOut, sharedNumbers, mpeg2Hidden, perDevice }
+'     deviceLineups  [{ device, entries }]: HDHomeRun.find's devices and HDHomeRun.parseLineup's entries
+'     options        { mpeg2 }: this Roku plays MPEG-2 (Capabilities' mpeg2 and AntennaConfig.playMPEG2)
+'     channels       in GuideNumber order, numbered from firstNumber: { id "antenna:<GuideNumber>", number, name,
+'                    group "Antenna", url, source "antenna", guideNumber, tvgID, tvgName, logo (all invalid),
+'                    tunerCount (the device's, for "Both antenna tuners are in use") }
+'     leftOut        protected (DRM) GuideNumbers no kept entry carries ("N protected channels left out")
+'     sharedNumbers  GuideNumbers a later device would also have kept (the first device's channel is used)
+'     mpeg2Hidden    MPEG-2 GuideNumbers no kept entry carries, hidden because this Roku can't play them
+'     perDevice      { DeviceID: channels kept from it } (stays in AntennaTask: it's keyed by DeviceID)
+'   Devices are taken in DeviceID order; the first one carrying a GuideNumber in a kept entry wins, and within a
+'   lineup the first kept entry with a number wins. An entry is kept when its GuideNumber is <digits> or
+'   <digits>.<digits> (at most 5 digits each), it's available (not Enabled 0 or Subscribed 0), its URL is http on
+'   its device's address (HDHomeRun.isStreamOnDevice), it isn't copy protected (Tags "drm" or DRM 1), and (Roku)
+'   it isn't MPEG-2 on a Roku that can't play it. At most maximumChannelsPerDevice kept per device.
+'   isGuideNumber(text), compareGuideNumbers(a, b), sortKey(text), renumbered(channels, firstNumber),
+'   sharedNumbersNotice(count, previous), isMPEG2(entry).
+'   setKeys(channels), withKept(channels, previous, failedHosts, firstNumber), refreshRun(io, config, request, sink) (below).
+namespace AntennaLineup
+
+    const group = "Antenna"
+    const idPrefix = "antenna:"
+    const maximumNumberDigits = 5
+    const maximumChannelsPerDevice = 1000
+
+    function channels(deviceLineups as object, firstNumber as integer, options = invalid as dynamic) as object
+        playsMPEG2 = true
+        if type(options) = "roAssociativeArray"
+            if HDHomeRun.isBoolean(options.mpeg2) then playsMPEG2 = options.mpeg2
+        end if
+        sorted = []
+        for each item in deviceLineups
+            sorted.Push(item)
+        end for
+        for i = 1 to sorted.Count() - 1
+            j = i
+            while j > 0 and sorted[j - 1].device.id > sorted[j].device.id
+                held = sorted[j - 1]
+                sorted[j - 1] = sorted[j]
+                sorted[j] = held
+                j = j - 1
+            end while
+        end for
+
+        kept = {}
+        kept.SetModeCaseSensitive()
+        protected = {}
+        protected.SetModeCaseSensitive()
+        shared = {}
+        shared.SetModeCaseSensitive()
+        mpeg2 = {}
+        mpeg2.SetModeCaseSensitive()
+        perDevice = {}
+        perDevice.SetModeCaseSensitive()
+        for each item in sorted
+            device = item.device
+            keptOnDevice = 0
+            entries = item.entries
+            if type(entries) <> "roArray" then entries = []
+            for each entry in entries
+                if keptOnDevice >= AntennaLineup.maximumChannelsPerDevice then exit for
+                number = entry.guideNumber
+                if AntennaLineup.isGuideNumber(number) and AntennaLineup.isAvailable(entry)
+                    first = kept[number]
+                    if first <> invalid
+                        if first.device.id <> device.id and not AntennaLineup.isDRM(entry) and HDHomeRun.isStreamOnDevice(entry.url, device.host)
+                            if playsMPEG2 or not AntennaLineup.isMPEG2(entry) then shared[number] = true
+                        end if
+                    else if AntennaLineup.isDRM(entry)
+                        protected[number] = true
+                    else if HDHomeRun.isStreamOnDevice(entry.url, device.host)
+                        if not playsMPEG2 and AntennaLineup.isMPEG2(entry)
+                            mpeg2[number] = true
+                        else
+                            kept[number] = { entry: entry, device: device }
+                            keptOnDevice += 1
+                        end if
+                    end if
+                end if
+            end for
+            perDevice[device.id] = keptOnDevice
+        end for
+
+        ordered = []
+        for each number in kept
+            ordered.Push(AntennaLineup.sortKey(number))
+        end for
+        ordered.Sort()
+        result = []
+        for each key in ordered
+            number = Mid(key, Instr(1, key, "|") + 1)
+            found = kept[number]
+            name = HDHomeRun.displayText(found.entry.guideName)
+            if name = "" then name = "Channel " + number
+            result.Push({
+                id: AntennaLineup.idPrefix + number,
+                number: firstNumber + result.Count(),
+                name: name,
+                group: AntennaLineup.group,
+                url: found.entry.url,
+                source: "antenna",
+                guideNumber: number,
+                tvgID: invalid,
+                tvgName: invalid,
+                logo: invalid,
+                tunerCount: found.device.tunerCount,
+                ' D40: the lineup named no codec, so a failure may be MPEG-2 on a Roku without it.
+                codecUnknown: not HDHomeRun.isText(found.entry.videoCodec) or found.entry.videoCodec = ""
+            })
+        end for
+        return {
+            channels: result,
+            leftOut: AntennaLineup.notIn(protected, kept),
+            sharedNumbers: shared.Count(),
+            mpeg2Hidden: AntennaLineup.notIn(mpeg2, kept),
+            perDevice: perDevice
+        }
+    end function
+
+    ' Step 21 (D37): setKeys: the antenna channel set's two keys, SHA-1 hex: matchKey over what the guide matches (id, name,
+    ' GuideNumber), which decides a rematch; payloadKey over that plus each stream URL and tuner count and whether
+    ' the codec is known, which decides that the scene's channels change (a tuner's new DHCP address). Neither is
+    ' logged (the URL is in the payload's input).
+    function setKeys(list as object) as object
+        matchLines = []
+        payloadLines = []
+        for each channel in list
+            line = AntennaLineup.textOf(channel.id) + Chr(9) + AntennaLineup.textOf(channel.name) + Chr(9) + AntennaLineup.textOf(channel.guideNumber)
+            matchLines.Push(line)
+            count = ""
+            if HDHomeRun.isInteger(channel.tunerCount) then count = channel.tunerCount.ToStr()
+            unknown = "0"
+            if HDHomeRun.isTrue(channel.codecUnknown) then unknown = "1"
+            payloadLines.Push(line + Chr(9) + AntennaLineup.textOf(channel.url) + Chr(9) + count + Chr(9) + unknown)
+        end for
+        return { matchKey: AntennaLineup.digest(matchLines.Join(Chr(10))), payloadKey: AntennaLineup.digest(payloadLines.Join(Chr(10))) }
+    end function
+
+    function digest(joined as string) as string
+        if joined = "" then return ""
+        bytes = CreateObject("roByteArray")
+        bytes.FromAsciiString(joined)
+        sha = CreateObject("roEVPDigest")
+        sha.Setup("sha1")
+        return sha.Process(bytes)
+    end function
+
+    function textOf(value as dynamic) as string
+        if HDHomeRun.isText(value) then return value
+        return ""
+    end function
+
+    ' Step 21 (D41, MMTVL's AntennaSource): a tuner that answered but whose lineup.json couldn't be read keeps the
+    ' channels it had (previous: the last answer's antenna channels, whose stream URLs are on their tuner's address;
+    ' failedHosts: those tuners' addresses). A kept channel never replaces one a readable lineup gave. The result is
+    ' in GuideNumber order, numbered from firstNumber. { channels, kept }.
+    function withKept(list as object, previous as dynamic, failedHosts as object, firstNumber as integer) as object
+        if type(previous) <> "roArray" or failedHosts.Count() = 0 then return { channels: list, kept: 0 }
+        byID = {}
+        byID.SetModeCaseSensitive()
+        for each channel in list
+            byID[channel.id] = channel
+        end for
+        kept = 0
+        for each channel in previous
+            if type(channel) = "roAssociativeArray" and HDHomeRun.isText(channel.id) and HDHomeRun.isText(channel.guideNumber)
+                origin = HDHomeRun.originOf(channel.url)
+                if origin <> "" and not byID.DoesExist(channel.id) and HDHomeRun.containsText(failedHosts, Mid(origin, 8))
+                    byID[channel.id] = channel
+                    kept += 1
+                end if
+            end if
+        end for
+        if kept = 0 then return { channels: list, kept: 0 }
+        order = []
+        for each id in byID
+            order.Push(AntennaLineup.sortKey(byID[id].guideNumber) + Chr(9) + id)
+        end for
+        order.Sort()
+        result = []
+        for each line in order
+            channel = byID[Mid(line, Instr(1, line, Chr(9)) + 1)]
+            copy = {}
+            for each field in channel
+                copy[field] = channel[field]
+            end for
+            copy.number = firstNumber + result.Count()
+            result.Push(copy)
+        end for
+        return { channels: result, kept: kept }
+    end function
+
+    ' Step 21: one refresh (AntennaTask's), with the lineup answered first (D36). config: { broadcast, byName,
+    ' nameNeedsPeer, guideFormat... } (AntennaConfig's); request: { typed, mpeg2, guide, manual, guideHours, previous }.
+    ' sink.lineup(answer) gets discovery and the lineups (HDHomeRun.find, the lineups, AntennaLineup.channels and
+    ' withKept, the public devices and fields, keys) before anything is downloaded; then, when request.guide is set,
+    ' the run found channels and AntennaGuide.downloadStep says "download", io.downloadGuide(devices, guideHours)
+    ' downloads SiliconDust's guide; sink.done(guide) ends it ({ ran, ok, message }). A crash ends it too, with
+    ' sink.failed(); either way io.cleanup(downloaded) then deletes what the run may have left in tmp: and cachefs: (security
+    ' L-2: a discover.json body holds a DeviceAuth). Returns whether it ran to the end. io: HDHomeRun.bs's plus now(),
+    ' guideFiles(), downloadGuide(devices, hours) and cleanup(downloaded): the .part only when this run downloaded.
+    function refreshRun(io as object, config as object, request as object, sink as object) as boolean
+        finished = false
+        progress = { downloaded: false }
+        try
+            AntennaLineup.runSteps(io, config, request, sink, progress)
+            finished = true
+        catch e
+            io.log("error", "The antenna run stopped")
+            sink.failed()
+        end try
+        ' Round 2: the guide's .part only when this run downloaded (an abandoned run may still be writing its own).
+        io.cleanup(progress.downloaded)
+        return finished
+    end function
+
+    sub runSteps(io as object, config as object, request as object, sink as object, progress as object)
+        typed = ""
+        if HDHomeRun.isText(request.typed) then typed = request.typed
+        found = HDHomeRun.find(io, { broadcast: config.broadcast, byName: config.byName, nameNeedsPeer: config.nameNeedsPeer, typed: typed })
+        lineups = []
+        failedHosts = []
+        for each tuner in found.devices
+            entries = []
+            answer = io.get(tuner.lineupURL, HDHomeRun.lineupMaxBytes, HDHomeRun.lineupTimeoutMs)
+            parsed = invalid
+            if HDHomeRun.isTrue(answer.ok) and HDHomeRun.peerMatches(answer.peer, tuner.host, false) then parsed = HDHomeRun.parseLineup(answer.text)
+            if parsed = invalid then failedHosts.Push(tuner.host) else entries = parsed
+            lineups.Push({ device: tuner, entries: entries })
+        end for
+        built = AntennaLineup.channels(lineups, 1, { mpeg2: HDHomeRun.isTrue(request.mpeg2) })
+        merged = AntennaLineup.withKept(built.channels, request.previous, failedHosts, 1)
+        line = "Read " + merged.channels.Count().ToStr() + " antenna channel(s) from " + found.devices.Count().ToStr() + " tuner(s)"
+        if built.leftOut > 0 then line += "; " + built.leftOut.ToStr() + " protected left out"
+        if built.mpeg2Hidden > 0 then line += "; " + built.mpeg2Hidden.ToStr() + " MPEG-2 hidden"
+        if failedHosts.Count() > 0 then line += "; " + failedHosts.Count().ToStr() + " lineup(s) unreadable, " + merged.kept.ToStr() + " channel(s) kept"
+        io.log("info", line)
+        if built.sharedNumbers > 0 then io.log("info", AntennaLineup.sharedNumbersNotice(built.sharedNumbers, 0))
+        publicDevices = []
+        for each tuner in found.devices
+            count = 0
+            for each channel in merged.channels
+                if HDHomeRun.originOf(channel.url) = tuner.baseURL then count += 1
+            end for
+            publicDevices.Push(HDHomeRun.publicDevice(tuner, count))
+        end for
+        matchFields = []
+        teamFields = []
+        for each channel in merged.channels
+            matchFields.Push({ id: channel.id, name: channel.name, tvgID: invalid, tvgName: invalid, source: "antenna", guideNumber: channel.guideNumber })
+            teamFields.Push({ id: channel.id, name: channel.name, group: channel.group })
+        end for
+        channelKeys = AntennaLineup.setKeys(merged.channels)
+        sink.lineup({ ok: true, devices: publicDevices, channels: merged.channels, matchFields: matchFields, teamFields: teamFields, matchKey: channelKeys.matchKey, payloadKey: channelKeys.payloadKey, leftOut: built.leftOut, mpeg2Hidden: built.mpeg2Hidden, sharedNumbers: built.sharedNumbers, typedProblem: found.typedProblem, lineupFailed: failedHosts.Count() })
+        guide = { ran: false, ok: false, message: "" }
+        if HDHomeRun.isTrue(request.guide) and found.devices.Count() > 0 and merged.channels.Count() > 0
+            plannedStep = AntennaGuide.downloadStep(io.now(), io.guideFiles(), HDHomeRun.isTrue(request.manual))
+            if plannedStep = "download"
+                progress.downloaded = true
+                guide = io.downloadGuide(found.devices, request.guideHours)
+            else
+                io.log("info", "Guide from " + AntennaGuide.host + ": " + plannedStep)
+            end if
+        end if
+        sink.done(guide)
+    end sub
+
+    ' How many of set's keys aren't in kept.
+    function notIn(set as object, kept as object) as integer
+        count = 0
+        for each number in set
+            if not kept.DoesExist(number) then count += 1
+        end for
+        return count
+    end function
+
+    ' Copies of channels numbered from firstNumber (after the playlist's channels, L2).
+    function renumbered(list as object, firstNumber as integer) as object
+        result = []
+        for each channel in list
+            copy = {}
+            for each field in channel
+                copy[field] = channel[field]
+            end for
+            copy.number = firstNumber + result.Count()
+            result.Push(copy)
+        end for
+        return result
+    end function
+
+    ' Copy protected: Tags has "drm", or DRM is 1 / true.
+    function isDRM(entry as object) as boolean
+        if HDHomeRun.isTrue(entry.drm) then return true
+        if type(entry.tags) = "roArray"
+            for each tag in entry.tags
+                if tag = "drm" then return true
+            end for
+        end if
+        return false
+    end function
+
+    ' Not disabled in the tuner's page (Enabled 0) and not unsubscribed (Subscribed 0).
+    function isAvailable(entry as object) as boolean
+        return not HDHomeRun.isFalse(entry.enabled) and not HDHomeRun.isFalse(entry.subscribed)
+    end function
+
+    ' The lineup names MPEG-2 video ("MPEG2"; HDHomeRun's spelling, "MPEG-2" also read).
+    function isMPEG2(entry as object) as boolean
+        codec = entry.videoCodec
+        if not HDHomeRun.isText(codec) then return false
+        codec = UCase(codec)
+        return codec = "MPEG2" or codec = "MPEG-2"
+    end function
+
+    ' <major> or <major>.<minor>, ASCII digits only, each part 1…maximumNumberDigits long ("5.1", "702").
+    function isGuideNumber(text as dynamic) as boolean
+        if not HDHomeRun.isText(text) then return false
+        dot = Instr(1, text, ".")
+        if dot = 0 then return AntennaLineup.isDigits(text)
+        if Instr(dot + 1, text, ".") > 0 then return false
+        return AntennaLineup.isDigits(Left(text, dot - 1)) and AntennaLineup.isDigits(Mid(text, dot + 1))
+    end function
+
+    function isDigits(part as string) as boolean
+        if Len(part) < 1 or Len(part) > AntennaLineup.maximumNumberDigits then return false
+        for i = 1 to Len(part)
+            code = Asc(Mid(part, i, 1))
+            if code < 48 or code > 57 then return false
+        end for
+        return true
+    end function
+
+    ' A text key in GuideNumber order (MMTVL's compareGuideNumbers): numeric major, then numeric minor ("5" before
+    ' "5.1"; 2.2 < 2.10), then the text itself (so "5.01" and "5.1" keep a stable order); text that isn't a
+    ' GuideNumber after every number, by its characters.
+    function sortKey(text as string) as string
+        if not AntennaLineup.isGuideNumber(text) then return "1" + text
+        dot = Instr(1, text, ".")
+        if dot = 0
+            major = Int(Val(text, 10))
+            minor = "000000"
+        else
+            major = Int(Val(Left(text, dot - 1), 10))
+            minor = "1" + AntennaLineup.padded(Int(Val(Mid(text, dot + 1), 10)))
+        end if
+        return "0" + AntennaLineup.padded(major) + minor + "|" + text
+    end function
+
+    function padded(value as integer) as string
+        digits = value.ToStr()
+        while Len(digits) < AntennaLineup.maximumNumberDigits
+            digits = "0" + digits
+        end while
+        return digits
+    end function
+
+    function compareGuideNumbers(a as string, b as string) as boolean
+        return AntennaLineup.sortKey(a) < AntennaLineup.sortKey(b)
+    end function
+
+    ' MMTVL's pre-build QA minor 2: the log line only when the count changes; back to 0 says so once.
+    function sharedNumbersNotice(count as integer, previous as integer) as dynamic
+        if count = previous then return invalid
+        if count = 0 then return "Channel numbers on more than one tuner: none now"
+        return "Channel numbers on more than one tuner: " + count.ToStr() + " (the first tuner's are used)"
+    end function
+
+end namespace

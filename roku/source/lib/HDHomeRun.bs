@@ -1,0 +1,808 @@
+' HDHomeRun tuners (M12 step 21): finding them, checking what they say, and asking why a stream failed. A port of
+' MMTVL's IPTV/Antenna/HDHomeRunPacket.swift, HDHomeRunDiscovery.swift (the checks), HDHomeRunAPI.swift (the JSON
+' models) and AntennaDiagnosis.swift, for the Roku. Pure: the network is an injected io object, so every rule runs
+' in local tests with fakes; AntennaTask passes the real one.
+'
+' io (AntennaTask's; tests pass fakes):
+'   ownAddresses()                    the Roku's IPv4 addresses (strings)
+'   broadcast(requestHex, targets, waitMs) -> [{ hex, source }]: the datagrams that came back, as hex, and the
+'                                     IPv4 address each came from
+'   get(url, maxBytes, timeoutMs) -> { ok, code, text, peer }: an http GET, status 200 and at most maxBytes;
+'                                     peer is the address the transfer reported reaching ("" when none)
+'   log(level, text)                  "info", "warn" or "error"; text never holds an address, DeviceID or URL
+'
+' Discovery (MMTVL M7j L4, as far as a Roku allows; AntennaConfig's switches decide which methods run):
+'   1. SiliconDust's discover request to 255.255.255.255 and each of the Roku's private /24 broadcasts on UDP 65001.
+'      A reply counts when it parses (type 3, length, CRC-32, a tuner with a 4-byte id), came from a private address
+'      on one of the Roku's /24 subnets that isn't the Roku's own, and names a BaseURL that is exactly that address
+'      (origin only). One per DeviceID, at most maximumDevices. discover.json is then asked at
+'      http://<that address>/discover.json, never at a path or port a reply names.
+'   2. With nothing found: http://hdhomerun.local/discover.json (AntennaConfig.discoverByName), accepted only when
+'      its BaseURL is a private address on the Roku's /24 and (nameNeedsPeer) the transfer reported reaching that
+'      same address.
+'   3. The address typed in Settings → Antenna (always, de-duplicated by DeviceID): a private IPv4 literal only, never
+'      a name, a public, loopback or the Roku's own address; its BaseURL must be exactly that address.
+'   Every device: a DeviceID of 8 hex digits (the reply's, ignoring case), TunerCount 1…16, BaseURL the bare origin
+'   on its address (port 80 or none), LineupURL http on the same address with no query or fragment.
+'
+' A device (memory only; never logged, shown or put in a result field): { id (DeviceID), name, model, tunerCount,
+'   host (its address), baseURL ("http://<host>"), lineupURL }. publicDevice(device) is what may leave the task.
+namespace HDHomeRun
+
+    const port = 65001
+    const portText = "65001"
+    ' 00 02 00 0c 01 04 ff ff ff ff 02 04 ff ff ff ff 73 cc 7d 8f: any device type, any device id (MMTVL's).
+    const discoverRequestHex = "0002000C0104FFFFFFFF0204FFFFFFFF73CC7D8F"
+    ' How long replies are read after the request (sent twice).
+    const replyWaitMs = 1500
+    const maximumDevices = 16
+    const maximumURLLength = 256
+    const maximumNameLength = 64
+    const maximumTunerCount = 16
+    ' discover.json, status.json, lineup_status.json (MMTVL's HDHomeRunHTTP limits).
+    const smallMaxBytes = 16384
+    const lineupMaxBytes = 1048576
+    const timeoutMs = 2000
+    const lineupTimeoutMs = 5000
+    const fallbackHost = "hdhomerun.local"
+    const broadcastAll = "255.255.255.255"
+    ' D40: a failed channel that may be MPEG-2 on a Roku that can't play it.
+    const mpeg2HintMessage = "This channel may need MPEG-2, which this Roku can't play"
+
+    ' Tags in a discover reply.
+    const tagDeviceType = 1
+    const tagDeviceID = 2
+    const tagTunerCount = 16
+    const tagLineupURL = 39
+    const tagBaseURL = 42
+
+    ' --- discovery ---------------------------------------------------------------------------------------------
+
+    ' options: { broadcast, byName, nameNeedsPeer, typed } (typed: the address from Settings, "" for none). Returns
+    ' { devices (DeviceID order), typedProblem } where typedProblem is "" or why the typed address gave no tuner
+    ' ("refused", "noAnswer", "notTuner"). Logs counts only.
+    function find(io as object, options as object) as object
+        own = HDHomeRun.ownIPv4(io.ownAddresses())
+        subnets = HDHomeRun.subnetsOf(own)
+        devices = []
+        if HDHomeRun.isTrue(options.broadcast)
+            if subnets.Count() = 0
+                io.log("info", "Antenna discovery: no LAN address to search from")
+            else
+                datagrams = io.broadcast(HDHomeRun.discoverRequestHex, HDHomeRun.broadcastTargets(subnets), HDHomeRun.replyWaitMs)
+                for each candidate in HDHomeRun.candidates(datagrams, subnets, own)
+                    answer = io.get(HDHomeRun.discoverURL(candidate.source), HDHomeRun.smallMaxBytes, HDHomeRun.timeoutMs)
+                    ' A transfer that reported reaching another address (a redirect) doesn't count.
+                    if HDHomeRun.peerMatches(answer.peer, candidate.source, false)
+                        tuner = HDHomeRun.deviceFromAnswer(answer, candidate.source, candidate.deviceID, own)
+                        if tuner <> invalid then HDHomeRun.addDevice(devices, tuner)
+                    end if
+                end for
+            end if
+        end if
+        if devices.Count() = 0 and HDHomeRun.isTrue(options.byName) and subnets.Count() > 0
+            tuner = HDHomeRun.byName(io, subnets, own, HDHomeRun.isTrue(options.nameNeedsPeer))
+            if tuner <> invalid then HDHomeRun.addDevice(devices, tuner)
+        end if
+        typedProblem = ""
+        typed = options.typed
+        if HDHomeRun.isText(typed)
+            if typed <> ""
+                typedProblem = "refused"
+                host = HDHomeRun.typedHost(typed, own)
+                if host <> ""
+                    answer = io.get(HDHomeRun.discoverURL(host), HDHomeRun.smallMaxBytes, HDHomeRun.timeoutMs)
+                    typedProblem = "noAnswer"
+                    if HDHomeRun.isTrue(answer.ok)
+                        typedProblem = "notTuner"
+                        tuner = invalid
+                        if HDHomeRun.peerMatches(answer.peer, host, false) then tuner = HDHomeRun.deviceFromAnswer(answer, host, invalid, own)
+                        if tuner <> invalid
+                            typedProblem = ""
+                            HDHomeRun.addDevice(devices, tuner)
+                        end if
+                    end if
+                end if
+            end if
+        end if
+        HDHomeRun.sortDevices(devices)
+        slots = 0
+        for each tuner in devices
+            slots += tuner.tunerCount
+        end for
+        io.log("info", "Found " + devices.Count().ToStr() + " tuner(s) (" + slots.ToStr() + " tuner slots)")
+        return { devices: devices, typedProblem: typedProblem }
+    end function
+
+    ' The hdhomerun.local fallback (AntennaConfig.discoverByName): its BaseURL's address must pass acceptableSource,
+    ' and with needsPeer the transfer must have reported reaching exactly that address.
+    function byName(io as object, subnets as object, own as object, needsPeer as boolean) as dynamic
+        answer = io.get("http://" + HDHomeRun.fallbackHost + "/discover.json", HDHomeRun.smallMaxBytes, HDHomeRun.timeoutMs)
+        if not HDHomeRun.isTrue(answer.ok) then return invalid
+        discover = HDHomeRun.parseObject(answer.text)
+        if discover = invalid then return invalid
+        if not HDHomeRun.isText(discover.BaseURL) then return invalid
+        parsed = HDHomeRun.urlParts(discover.BaseURL)
+        if parsed = invalid then return invalid
+        host = HDHomeRun.canonicalIPv4(parsed.host)
+        if host = "" or HDHomeRun.acceptableSource(host, subnets, own) = "" then return invalid
+        if not HDHomeRun.peerMatches(answer.peer, host, needsPeer)
+            io.log("warn", "Antenna discovery: " + HDHomeRun.fallbackHost + " answered from an address that didn't match its own")
+            return invalid
+        end if
+        return HDHomeRun.device(discover, host, invalid, own)
+    end function
+
+    ' A reported peer must be the expected address (canonical); with required, one must be reported.
+    function peerMatches(peer as dynamic, host as string, required as boolean) as boolean
+        if not HDHomeRun.isText(peer) or peer = "" then return not required
+        address = peer
+        ' "10.0.0.9:80" or "10.0.0.9": the address part.
+        colon = Instr(1, address, ":")
+        if colon > 0 and Instr(colon + 1, address, ":") = 0 then address = Left(address, colon - 1)
+        return HDHomeRun.canonicalIPv4(address) = host
+    end function
+
+    ' The device a discover.json answer describes at host, or invalid.
+    function deviceFromAnswer(answer as dynamic, host as string, replyDeviceID as dynamic, own as object) as dynamic
+        if type(answer) <> "roAssociativeArray" then return invalid
+        if not HDHomeRun.isTrue(answer.ok) then return invalid
+        discover = HDHomeRun.parseObject(answer.text)
+        if discover = invalid then return invalid
+        return HDHomeRun.device(discover, host, replyDeviceID, own)
+    end function
+
+    sub addDevice(devices as object, tuner as object)
+        if devices.Count() >= HDHomeRun.maximumDevices then return
+        for each known in devices
+            if known.id = tuner.id then return
+        end for
+        devices.Push(tuner)
+    end sub
+
+    ' DeviceID order (L1), case as given (DeviceIDs are upper case hex).
+    sub sortDevices(devices as object)
+        for i = 1 to devices.Count() - 1
+            j = i
+            while j > 0 and devices[j - 1].id > devices[j].id
+                held = devices[j - 1]
+                devices[j - 1] = devices[j]
+                devices[j] = held
+                j = j - 1
+            end while
+        end for
+    end sub
+
+    ' The Roku's own addresses that are IPv4 literals, canonical.
+    function ownIPv4(addresses as dynamic) as object
+        result = []
+        if type(addresses) <> "roArray" then return result
+        for each address in addresses
+            if HDHomeRun.isText(address)
+                canonical = HDHomeRun.canonicalIPv4(address)
+                if canonical <> "" then result.Push(canonical)
+            end if
+        end for
+        return result
+    end function
+
+    ' "192.168.1." for each private own address (a Roku reports no netmask, so its /24; probe f's targets).
+    function subnetsOf(own as object) as object
+        result = []
+        for each address in own
+            if HDHomeRun.isPrivate(address)
+                parts = address.Split(".")
+                prefix = parts[0] + "." + parts[1] + "." + parts[2] + "."
+                if not HDHomeRun.containsText(result, prefix) then result.Push(prefix)
+            end if
+        end for
+        return result
+    end function
+
+    ' 255.255.255.255, then each subnet's x.x.x.255.
+    function broadcastTargets(subnets as object) as object
+        result = [HDHomeRun.broadcastAll]
+        for each prefix in subnets
+            result.Push(prefix + "255")
+        end for
+        return result
+    end function
+
+    ' address as its canonical dotted quad when it is private (or link-local), on one of subnets and not one of own;
+    ' else "".
+    function acceptableSource(address as dynamic, subnets as object, own as object) as string
+        if not HDHomeRun.isText(address) then return ""
+        canonical = HDHomeRun.canonicalIPv4(address)
+        if canonical = "" or not HDHomeRun.isPrivate(canonical) then return ""
+        if HDHomeRun.containsText(own, canonical) then return ""
+        parts = canonical.Split(".")
+        if not HDHomeRun.containsText(subnets, parts[0] + "." + parts[1] + "." + parts[2] + ".") then return ""
+        if parts[3] = "0" or parts[3] = "255" then return ""
+        return canonical
+    end function
+
+    ' A typed address: a private (or link-local) IPv4 literal, "http://" and a trailing "/" allowed, that isn't the
+    ' Roku's own and isn't a network or broadcast address of a /24; else "".
+    function typedHost(text as dynamic, own as object) as string
+        if not HDHomeRun.isText(text) then return ""
+        typed = text.Trim()
+        if LCase(Left(typed, 7)) = "http://" then typed = Mid(typed, 8)
+        if Right(typed, 1) = "/" then typed = Left(typed, Len(typed) - 1)
+        canonical = HDHomeRun.canonicalIPv4(typed)
+        if canonical = "" or not HDHomeRun.isPrivate(canonical) then return ""
+        if HDHomeRun.containsText(own, canonical) then return ""
+        last = canonical.Split(".")[3]
+        if last = "0" or last = "255" then return ""
+        return canonical
+    end function
+
+    ' The tuner replies worth a discover.json: [{ deviceID (8 upper case hex), source }].
+    function candidates(datagrams as dynamic, subnets as object, own as object) as object
+        result = []
+        if type(datagrams) <> "roArray" then return result
+        for each datagram in datagrams
+            if result.Count() >= HDHomeRun.maximumDevices then exit for
+            if type(datagram) = "roAssociativeArray"
+                source = HDHomeRun.acceptableSource(datagram.source, subnets, own)
+                if source <> "" and HDHomeRun.isText(datagram.hex)
+                    reply = HDHomeRun.parseReply(datagram.hex)
+                    if reply <> invalid
+                        seen = false
+                        for each known in result
+                            if known.deviceID = reply.deviceID then seen = true
+                        end for
+                        if not seen and HDHomeRun.isOrigin(reply.baseURL, source) then result.Push({ deviceID: reply.deviceID, source: source })
+                    end if
+                end if
+            end if
+        end for
+        return result
+    end function
+
+    ' http://<address>/discover.json, built from the address itself (MMTVL's security M3).
+    function discoverURL(address as string) as string
+        return "http://" + address + "/discover.json"
+    end function
+
+    ' The device discover describes at expectedHost (see the header), or invalid.
+    function device(discover as dynamic, expectedHost as string, replyDeviceID as dynamic, own as object) as dynamic
+        if type(discover) <> "roAssociativeArray" then return invalid
+        count = discover.TunerCount
+        if not HDHomeRun.isInteger(count) then return invalid
+        if count < 1 or count > HDHomeRun.maximumTunerCount then return invalid
+        id = discover.DeviceID
+        if not HDHomeRun.isDeviceID(id) then return invalid
+        if HDHomeRun.isText(replyDeviceID)
+            if UCase(id) <> UCase(replyDeviceID) then return invalid
+        end if
+        host = HDHomeRun.canonicalIPv4(expectedHost)
+        if host = "" or host <> expectedHost or not HDHomeRun.isPrivate(host) then return invalid
+        if HDHomeRun.containsText(own, host) then return invalid
+        if not HDHomeRun.isOrigin(discover.BaseURL, host) then return invalid
+        if not HDHomeRun.isLineupURL(discover.LineupURL, host) then return invalid
+        name = HDHomeRun.displayText(discover.FriendlyName)
+        if name = "" then name = "HDHomeRun"
+        return { id: UCase(id), name: name, model: HDHomeRun.displayText(discover.ModelNumber), tunerCount: count, host: host, baseURL: "http://" + host, lineupURL: discover.LineupURL }
+    end function
+
+    ' What may leave AntennaTask about a device: name, model, tuner count (and the channels it gave). Never its
+    ' DeviceID, DeviceAuth or address.
+    function publicDevice(tuner as object, channelCount = 0 as integer) as object
+        return { name: tuner.name, model: tuner.model, tunerCount: tuner.tunerCount, channelCount: channelCount }
+    end function
+
+    ' --- the UDP packet (SiliconDust's format, implemented from hdhomerun_pkt.h's description; no code copied) ---
+
+    ' A tuner's reply (hex) as { deviceID (8 upper case hex), tunerCount (or invalid), baseURL, lineupURL ("" when
+    ' missing) }, when it is type 3, its length matches, its CRC-32 is right, every TLV is whole, its device type is
+    ' 1 (tuner) and its id 4 bytes; else invalid. Unknown tags (DeviceAuth among them) are skipped.
+    function parseReply(hex as string) as dynamic
+        bytes = CreateObject("roByteArray")
+        if Len(hex) mod 2 <> 0 then return invalid
+        bytes.FromHexString(hex)
+        total = bytes.Count()
+        if total < 8 or total * 2 <> Len(hex) then return invalid
+        if bytes[0] <> 0 or bytes[1] <> 3 then return invalid
+        length = bytes[2] * 256 + bytes[3]
+        if total <> 4 + length + 4 then return invalid
+        if not HDHomeRun.crcMatches(bytes, 4 + length) then return invalid
+        deviceType = invalid
+        deviceID = invalid
+        tuners = invalid
+        baseURL = invalid
+        lineupURL = invalid
+        index = 4
+        last = 4 + length
+        while index < last
+            tag = bytes[index]
+            index += 1
+            if index >= last then return invalid
+            valueLength = bytes[index]
+            index += 1
+            if valueLength >= 128
+                if index >= last then return invalid
+                valueLength = (valueLength - 128) + bytes[index] * 128
+                index += 1
+            end if
+            if valueLength > last - index then return invalid
+            valueStart = index
+            index += valueLength
+            if tag = HDHomeRun.tagDeviceType
+                if valueLength <> 4 then return invalid
+                if deviceType = invalid then deviceType = HDHomeRun.hexOf(bytes, valueStart, 4)
+            else if tag = HDHomeRun.tagDeviceID
+                if valueLength <> 4 then return invalid
+                if deviceID = invalid then deviceID = HDHomeRun.hexOf(bytes, valueStart, 4)
+            else if tag = HDHomeRun.tagTunerCount
+                if valueLength <> 1 then return invalid
+                if tuners = invalid then tuners = bytes[valueStart]
+            else if tag = HDHomeRun.tagBaseURL
+                if baseURL = invalid then baseURL = HDHomeRun.urlText(bytes, valueStart, valueLength)
+            else if tag = HDHomeRun.tagLineupURL
+                if lineupURL = invalid then lineupURL = HDHomeRun.urlText(bytes, valueStart, valueLength)
+            end if
+        end while
+        if deviceType <> "00000001" or deviceID = invalid then return invalid
+        if baseURL = invalid then baseURL = ""
+        if lineupURL = invalid then lineupURL = ""
+        return { deviceID: deviceID, tunerCount: tuners, baseURL: baseURL, lineupURL: lineupURL }
+    end function
+
+    ' The CRC-32 (zlib's, roByteArray.GetCRC32) of bytes[0 … length-1] against the 4 little-endian bytes after them.
+    function crcMatches(bytes as object, length as integer) as boolean
+        crc = bytes.GetCRC32(0, length)
+        expected = HDHomeRun.littleEndian(crc)
+        for i = 0 to 3
+            if bytes[length + i] <> expected[i] then return false
+        end for
+        return true
+    end function
+
+    ' A 32-bit value's 4 bytes, low first (no shift by 0: brs-node reads x >> 0 of a negative value wrongly).
+    function littleEndian(value as integer) as object
+        return [value and 255, (value >> 8) and 255, (value >> 16) and 255, (value >> 24) and 255]
+    end function
+
+    ' A request or reply as hex: type, length, the TLVs ([{ tag, hex }]), CRC (for tests and the request constant).
+    function encode(packetType as integer, tlvs as object) as string
+        payload = CreateObject("roByteArray")
+        for each tlv in tlvs
+            value = CreateObject("roByteArray")
+            if Len(tlv.hex) > 0 then value.FromHexString(tlv.hex)
+            payload.Push(tlv.tag)
+            n = value.Count()
+            if n <= 127
+                payload.Push(n)
+            else
+                payload.Push(128 + (n and 127))
+                payload.Push((n >> 7) and 255)
+            end if
+            payload.Append(value)
+        end for
+        packet = CreateObject("roByteArray")
+        packet.Push((packetType >> 8) and 255)
+        packet.Push(packetType and 255)
+        packet.Push((payload.Count() >> 8) and 255)
+        packet.Push(payload.Count() and 255)
+        packet.Append(payload)
+        for each part in HDHomeRun.littleEndian(packet.GetCRC32(0, packet.Count()))
+            packet.Push(part)
+        end for
+        return packet.ToHexString()
+    end function
+
+    function hexOf(bytes as object, start as integer, count as integer) as string
+        part = CreateObject("roByteArray")
+        for i = start to start + count - 1
+            part.Push(bytes[i])
+        end for
+        return UCase(part.ToHexString())
+    end function
+
+    ' ASCII text without trailing NULs, at most maximumURLLength bytes; "" otherwise (only ASCII is a URL MMTVL
+    ' accepts here: the checks below take canonical IPv4 hosts).
+    function urlText(bytes as object, start as integer, count as integer) as string
+        while count > 0 and bytes[start + count - 1] = 0
+            count -= 1
+        end while
+        if count = 0 or count > HDHomeRun.maximumURLLength then return ""
+        text = ""
+        for i = start to start + count - 1
+            code = bytes[i]
+            if code < 32 or code > 126 then return ""
+            text += Chr(code)
+        end for
+        return text
+    end function
+
+    ' --- URL checks (MMTVL's security M1, M3 and step 10: everything is read as written) -------------------------
+
+    ' url split as written: { scheme (lower case), hasUser, host (raw), port ("none", "invalid" or 1…65535), path,
+    ' hasQuery, hasFragment }, or invalid when it isn't scheme://authority, is over 2 KB, or holds a space, control
+    ' character or backslash anywhere.
+    function urlParts(url as dynamic) as dynamic
+        if not HDHomeRun.isText(url) then return invalid
+        if Len(url) = 0 or Len(url) > 2048 then return invalid
+        for i = 1 to Len(url)
+            code = Asc(Mid(url, i, 1))
+            if code <= 32 or code = 92 or code >= 127 then return invalid
+        end for
+        schemeEnd = Instr(1, url, "://")
+        if schemeEnd < 2 then return invalid
+        scheme = LCase(Left(url, schemeEnd - 1))
+        rest = Mid(url, schemeEnd + 3)
+        authorityEnd = Len(rest) + 1
+        for each stopper in ["/", "?", "#"]
+            at = Instr(1, rest, stopper)
+            if at > 0 and at < authorityEnd then authorityEnd = at
+        end for
+        authority = Left(rest, authorityEnd - 1)
+        tail = Mid(rest, authorityEnd)
+        hasUser = Instr(1, authority, "@") > 0
+        if hasUser
+            at = Instr(1, authority, "@")
+            while Instr(at + 1, authority, "@") > 0
+                at = Instr(at + 1, authority, "@")
+            end while
+            authority = Mid(authority, at + 1)
+        end if
+        if Left(authority, 1) = "[" then return invalid
+        hostPart = authority
+        writtenPort = "none"
+        colon = Instr(1, authority, ":")
+        if colon > 0
+            hostPart = Left(authority, colon - 1)
+            writtenPort = HDHomeRun.portValue(Mid(authority, colon + 1))
+        end if
+        pathPart = tail
+        queryAt = Instr(1, tail, "?")
+        fragmentAt = Instr(1, tail, "#")
+        cut = Len(tail) + 1
+        if queryAt > 0 and queryAt < cut then cut = queryAt
+        if fragmentAt > 0 and fragmentAt < cut then cut = fragmentAt
+        pathPart = Left(tail, cut - 1)
+        return { scheme: scheme, hasUser: hasUser, host: hostPart, port: writtenPort, path: pathPart, hasQuery: queryAt > 0 and (fragmentAt = 0 or queryAt < fragmentAt), hasFragment: fragmentAt > 0 }
+    end function
+
+    ' A written port: 1–5 ASCII digits with a value in 1…65535 (leading zeros allowed, as ffmpeg and Foundation
+    ' read them alike), else "invalid" (an empty ":" included).
+    function portValue(text as string) as dynamic
+        if Len(text) < 1 or Len(text) > 5 then return "invalid"
+        for i = 1 to Len(text)
+            code = Asc(Mid(text, i, 1))
+            if code < 48 or code > 57 then return "invalid"
+        end for
+        value = Val(text, 10)
+        if value < 1 or value > 65535 then return "invalid"
+        return value
+    end function
+
+    ' http, no user name, the raw host exactly address, port 80 or none.
+    function isHTTPOn(url as dynamic, address as string) as boolean
+        parsed = HDHomeRun.urlParts(url)
+        if parsed = invalid then return false
+        if parsed.scheme <> "http" or parsed.hasUser then return false
+        if HDHomeRun.canonicalIPv4(parsed.host) <> address or address = "" then return false
+        if HDHomeRun.isText(parsed.port) then return parsed.port = "none"
+        return parsed.port = 80
+    end function
+
+    ' A BaseURL: isHTTPOn and nothing after the origin (no path but "/", no query, no fragment).
+    function isOrigin(url as dynamic, address as string) as boolean
+        if not HDHomeRun.isHTTPOn(url, address) then return false
+        parsed = HDHomeRun.urlParts(url)
+        return (parsed.path = "" or parsed.path = "/") and not parsed.hasQuery and not parsed.hasFragment
+    end function
+
+    ' A LineupURL: isHTTPOn (any path), no query or fragment.
+    function isLineupURL(url as dynamic, address as string) as boolean
+        if not HDHomeRun.isHTTPOn(url, address) then return false
+        parsed = HDHomeRun.urlParts(url)
+        return not parsed.hasQuery and not parsed.hasFragment
+    end function
+
+    ' A lineup entry's stream URL (MMTVL's isHTTPOnDevice): http, no user name, the raw host exactly the device's,
+    ' any port in 1…65535 or none, as written.
+    function isStreamOnDevice(url as dynamic, host as string) as boolean
+        parsed = HDHomeRun.urlParts(url)
+        if parsed = invalid then return false
+        if parsed.scheme <> "http" or parsed.hasUser then return false
+        if host = "" or HDHomeRun.canonicalIPv4(parsed.host) <> host then return false
+        return parsed.port <> "invalid"
+    end function
+
+    ' "http://<address>" for a stream on a private IPv4 literal (the tuner to ask why it failed), else "".
+    function originOf(url as dynamic) as string
+        parsed = HDHomeRun.urlParts(url)
+        if parsed = invalid then return ""
+        if parsed.scheme <> "http" or parsed.hasUser then return ""
+        host = HDHomeRun.canonicalIPv4(parsed.host)
+        if host = "" or not HDHomeRun.isPrivate(host) then return ""
+        return "http://" + host
+    end function
+
+    ' The dotted quad when text is exactly one (no leading zeros, spaces or trailing dot), else "".
+    function canonicalIPv4(text as dynamic) as string
+        if not HDHomeRun.isText(text) then return ""
+        bytes = URLPolicy.parseDottedQuad(text)
+        if bytes = invalid then return ""
+        made = bytes[0].ToStr() + "." + bytes[1].ToStr() + "." + bytes[2].ToStr() + "." + bytes[3].ToStr()
+        if made <> text then return ""
+        return made
+    end function
+
+    ' 10/8, 172.16/12, 192.168/16, or link-local 169.254/16 (MMTVL's LANAddress.isPrivate, which a tuner on a
+    ' direct cable needs).
+    function isPrivate(address as string) as boolean
+        bytes = URLPolicy.parseDottedQuad(address)
+        if bytes = invalid then return false
+        if bytes[0] = 10 then return true
+        if bytes[0] = 172 and bytes[1] >= 16 and bytes[1] <= 31 then return true
+        if bytes[0] = 192 and bytes[1] = 168 then return true
+        return bytes[0] = 169 and bytes[1] = 254
+    end function
+
+    ' Exactly 8 ASCII hex digits.
+    function isDeviceID(value as dynamic) as boolean
+        if not HDHomeRun.isText(value) then return false
+        if Len(value) <> 8 then return false
+        for i = 1 to 8
+            code = Asc(Mid(value, i, 1))
+            digit = (code >= 48 and code <= 57) or (code >= 65 and code <= 70) or (code >= 97 and code <= 102)
+            if not digit then return false
+        end for
+        return true
+    end function
+
+    ' FriendlyName, ModelNumber or GuideName for display (MMTVL's displayText): control, format, line and paragraph
+    ' separator characters removed, trimmed, at most maximumNameLength characters; "" when nothing is left or the
+    ' value isn't text.
+    function displayText(value as dynamic) as string
+        if not HDHomeRun.isText(value) then return ""
+        kept = ""
+        for i = 1 to Len(value)
+            character = Mid(value, i, 1)
+            if not HDHomeRun.isHiddenCharacter(Asc(character)) then kept += character
+        end for
+        kept = kept.Trim()
+        if Len(kept) > HDHomeRun.maximumNameLength then kept = Left(kept, HDHomeRun.maximumNameLength).Trim()
+        return kept
+    end function
+
+    ' Unicode Cc, Cf, Zl and Zp (the BMP's), so a hostile name can't put bidi overrides or line breaks in a row.
+    function isHiddenCharacter(code as integer) as boolean
+        if code < 32 or (code >= 127 and code <= 159) then return true
+        if code = 173 or code = 1564 or code = 1757 or code = 1807 or code = 2274 or code = 6158 then return true
+        if code >= 1536 and code <= 1541 then return true
+        if code >= 8203 and code <= 8207 then return true
+        if code >= 8232 and code <= 8238 then return true
+        if code >= 8288 and code <= 8292 then return true
+        if code >= 8294 and code <= 8303 then return true
+        if code = 65279 then return true
+        if code >= 65529 and code <= 65531 then return true
+        return false
+    end function
+
+    ' --- the tuner's JSON (lenient, as MMTVL's decoders) ---------------------------------------------------------
+
+    ' An object from JSON text, else invalid.
+    function parseObject(text as dynamic) as dynamic
+        if not HDHomeRun.isText(text) then return invalid
+        parsed = invalid
+        try
+            parsed = ParseJson(text)
+        catch e
+            parsed = invalid
+        end try
+        if type(parsed) <> "roAssociativeArray" then return invalid
+        return parsed
+    end function
+
+    ' lineup.json's entries: [{ guideNumber, guideName, videoCodec, url, drm, enabled, subscribed, tags, hd }], an
+    ' entry without a GuideNumber (string or integer) or URL (string) dropped; invalid when the text isn't a JSON
+    ' array.
+    function parseLineup(text as dynamic) as dynamic
+        if not HDHomeRun.isText(text) then return invalid
+        parsed = invalid
+        try
+            parsed = ParseJson(text)
+        catch e
+            parsed = invalid
+        end try
+        if type(parsed) <> "roArray" then return invalid
+        result = []
+        for each item in parsed
+            entry = HDHomeRun.lineupEntry(item)
+            if entry <> invalid then result.Push(entry)
+        end for
+        return result
+    end function
+
+    function lineupEntry(item as dynamic) as dynamic
+        if type(item) <> "roAssociativeArray" then return invalid
+        number = HDHomeRun.jsonText(item.GuideNumber)
+        if number = invalid then return invalid
+        if not HDHomeRun.isText(item.URL) then return invalid
+        tags = []
+        tagText = HDHomeRun.jsonText(item.Tags)
+        if tagText <> invalid
+            for each part in tagText.Split(",")
+                tag = LCase(part.Trim())
+                if tag <> "" then tags.Push(tag)
+            end for
+        end if
+        return {
+            guideNumber: number,
+            guideName: HDHomeRun.jsonText(item.GuideName),
+            videoCodec: HDHomeRun.jsonText(item.VideoCodec),
+            url: item.URL,
+            drm: HDHomeRun.jsonFlag(item.DRM),
+            enabled: HDHomeRun.jsonFlag(item.Enabled),
+            subscribed: HDHomeRun.jsonFlag(item.Subscribed),
+            hd: HDHomeRun.jsonFlag(item.HD),
+            tags: tags
+        }
+    end function
+
+    ' status.json's tuners as [{ busy }] (busy: any key besides Resource; TargetIP is never kept), or invalid when
+    ' the text isn't a JSON array of objects.
+    function parseTunerStatus(text as dynamic) as dynamic
+        if not HDHomeRun.isText(text) then return invalid
+        parsed = invalid
+        try
+            parsed = ParseJson(text)
+        catch e
+            parsed = invalid
+        end try
+        if type(parsed) <> "roArray" then return invalid
+        result = []
+        for each item in parsed
+            if type(item) <> "roAssociativeArray" then return invalid
+            busy = false
+            for each key in item
+                if LCase(key) <> "resource" then busy = true
+            end for
+            result.Push({ busy: busy })
+        end for
+        return result
+    end function
+
+    ' lineup_status.json as { scanInProgress } (Int or Bool; missing: false), or invalid when it isn't an object.
+    function parseLineupStatus(text as dynamic) as dynamic
+        parsed = HDHomeRun.parseObject(text)
+        if parsed = invalid then return invalid
+        scanning = HDHomeRun.jsonFlag(parsed.ScanInProgress)
+        return { scanInProgress: HDHomeRun.isTrue(scanning) }
+    end function
+
+    ' A string, or an integer written as one; else invalid.
+    function jsonText(value as dynamic) as dynamic
+        if HDHomeRun.isText(value) then return value
+        if HDHomeRun.isInteger(value) then return value.ToStr()
+        return invalid
+    end function
+
+    ' A boolean, or an integer (0 false, else true); else invalid.
+    function jsonFlag(value as dynamic) as dynamic
+        kind = LCase(type(value))
+        if kind = "boolean" or kind = "roboolean" then return value
+        if HDHomeRun.isInteger(value) then return value <> 0
+        return invalid
+    end function
+
+    ' --- why a stream failed (MMTVL's AntennaDiagnosis, L9) -----------------------------------------------------
+
+    ' Problem kinds: "allTunersInUse", "scanning", "noSignal", "unknownChannel", "unreachable", "unknown", and the
+    ' Roku's "cantPlay" (AntennaConfig.playRawTS off).
+    '
+    ' MMTVL's order on one device: every tuner busy; status.json unanswered (unreachable); a scan running; then the
+    ' stream's HTTP status: 404 unknownChannel, 503 or none noSignal, anything else unknown. The tuner's own state
+    ' decides first (a status may be stale). The Roku adds X-HDHomeRun-Error 805 ("all tuners in use") after the
+    ' scan check, where the Video node's error text shows it (unverified: Roku may not pass the header on).
+    function problemFor(tuners as dynamic, lineupStatus as dynamic, httpStatus as dynamic, tunerError as dynamic) as string
+        if type(tuners) <> "roArray" then return "unreachable"
+        busy = 0
+        for each tuner in tuners
+            if HDHomeRun.isTrue(tuner.busy) then busy += 1
+        end for
+        if tuners.Count() > 0 and busy = tuners.Count() then return "allTunersInUse"
+        if type(lineupStatus) = "roAssociativeArray"
+            if HDHomeRun.isTrue(lineupStatus.scanInProgress) then return "scanning"
+        end if
+        if HDHomeRun.isInteger(tunerError)
+            if tunerError = 805 then return "allTunersInUse"
+        end if
+        if not HDHomeRun.isInteger(httpStatus) then return "noSignal"
+        if httpStatus = 404 then return "unknownChannel"
+        if httpStatus = 503 then return "noSignal"
+        return "unknown"
+    end function
+
+    ' Asks the tuner at origin (HDHomeRun.originOf the stream) why the stream failed, taking no tuner: status.json,
+    ' then lineup_status.json. The problem kind.
+    function diagnose(io as object, origin as string, httpStatus as dynamic, tunerError as dynamic) as string
+        if origin = "" then return "unreachable"
+        answer = io.get(origin + "/status.json", HDHomeRun.smallMaxBytes, HDHomeRun.timeoutMs)
+        tuners = invalid
+        host = Mid(origin, 8)
+        if HDHomeRun.isTrue(answer.ok) and HDHomeRun.peerMatches(answer.peer, host, false) then tuners = HDHomeRun.parseTunerStatus(answer.text)
+        ' As MMTVL: lineup_status.json only when the tuners didn't already decide (unanswered, or all busy).
+        problem = HDHomeRun.problemFor(tuners, invalid, httpStatus, invalid)
+        if problem <> "unreachable" and problem <> "allTunersInUse"
+            lineupStatus = invalid
+            answer = io.get(origin + "/lineup_status.json", HDHomeRun.smallMaxBytes, HDHomeRun.timeoutMs)
+            if HDHomeRun.isTrue(answer.ok) and HDHomeRun.peerMatches(answer.peer, host, false) then lineupStatus = HDHomeRun.parseLineupStatus(answer.text)
+            problem = HDHomeRun.problemFor(tuners, lineupStatus, httpStatus, tunerError)
+        end if
+        io.log("info", "Antenna stream: " + HDHomeRun.problemLogText(problem, 0))
+        return problem
+    end function
+
+    ' L9: "Both antenna tuners are in use" for two; "All N antenna tuners are in use" for more; one tuner says so.
+    function busyMessage(tunerCount as dynamic) as string
+        if not HDHomeRun.isInteger(tunerCount) then return "The antenna tuners are in use"
+        if tunerCount = 2 then return "Both antenna tuners are in use"
+        if tunerCount <= 1 then return "The antenna tuner is in use"
+        return "All " + tunerCount.ToStr() + " antenna tuners are in use"
+    end function
+
+    ' The message Live TV shows (MMTVL's AntennaProblem.message). mpeg2Hint (D40): the channel's lineup entry named
+    ' no codec and this Roku can't play MPEG-2, so "no signal" or "can't play" may really be MPEG-2: say that instead.
+    function problemMessage(problem as string, tunerCount as dynamic, mpeg2Hint = false as boolean) as string
+        if mpeg2Hint and (problem = "noSignal" or problem = "unknown") then return HDHomeRun.mpeg2HintMessage
+        if problem = "allTunersInUse" then return HDHomeRun.busyMessage(tunerCount)
+        if problem = "scanning" then return "The tuner is scanning for channels"
+        if problem = "noSignal" then return "No signal on this channel"
+        if problem = "unknownChannel" then return "This channel is no longer on the tuner"
+        if problem = "unreachable" then return "The antenna tuner isn't answering"
+        if problem = "cantPlay" then return "This Roku can't play antenna channels"
+        return "Can't play this channel"
+    end function
+
+    ' For the log: never an address, DeviceID or URL.
+    function problemLogText(problem as string, tunerCount as dynamic) as string
+        if problem = "allTunersInUse"
+            if HDHomeRun.isInteger(tunerCount) and tunerCount > 0 then return "all " + tunerCount.ToStr() + " tuners in use"
+            return "all tuners in use"
+        end if
+        if problem = "scanning" then return "the tuner is scanning"
+        if problem = "noSignal" then return "no signal"
+        if problem = "unknownChannel" then return "not on the tuner"
+        if problem = "unreachable" then return "the tuner isn't answering"
+        if problem = "cantPlay" then return "antenna playback is off on this Roku"
+        return "unknown"
+    end function
+
+    ' --- helpers -----------------------------------------------------------------------------------------------
+
+    function containsText(list as object, value as string) as boolean
+        for each item in list
+            if item = value then return true
+        end for
+        return false
+    end function
+
+    function isText(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "string" or kind = "rostring"
+    end function
+
+    function isInteger(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "integer" or kind = "roint" or kind = "rointeger" or kind = "longinteger" or kind = "rolonginteger"
+    end function
+
+    function isTrue(value as dynamic) as boolean
+        return HDHomeRun.isBoolean(value) and value = true
+    end function
+
+    function isFalse(value as dynamic) as boolean
+        return HDHomeRun.isBoolean(value) and value = false
+    end function
+
+    function isBoolean(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "boolean" or kind = "roboolean"
+    end function
+
+end namespace

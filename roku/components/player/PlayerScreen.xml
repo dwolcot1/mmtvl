@@ -29,6 +29,12 @@
         <field id="preview" type="boolean" value="false" onChange="onPreview" />
         <!-- Out (step 12): the error panel is up (a Video error, a stall or a refused stream). -->
         <field id="failed" type="boolean" value="false" />
+        <!-- Out (step 21): set before failed on a Video error: PlayerSession.errorNumbers' { httpStatus, tunerError }
+             (numbers or invalid; never the error's text, which may hold the stream URL). -->
+        <field id="failure" type="assocarray" alwaysNotify="true" />
+        <!-- In (step 21): the error panel's message ("" for "Can't play this channel"), e.g. the antenna's
+             "Both antenna tuners are in use". Each play() goes back to the default. -->
+        <field id="errorMessage" type="string" alwaysNotify="true" onChange="onErrorMessage" />
         <!-- To the scene: { type: "zap", step }, { type: "previousChannel", channelID }, { type: "openGuide" },
              { type: "openChannelMenu", channelID }. -->
         <field id="action" type="assocarray" alwaysNotify="true" />
@@ -47,6 +53,7 @@
     <script type="text/brighterscript" uri="pkg:/source/lib/BannerText.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/Timeshift.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/URLPolicy.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/AntennaConfig.bs" />
     <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
     <children>
         <Video id="video" />

@@ -27,6 +27,10 @@
 ' deleted when a run starts (the scene starts one only when no other task is alive).
 ' A crash in here still sets { ok: false } (as PlaylistTask), and the scene keeps what it has. Logs: hosts only.
 '
+' Step 21: with Use Antenna and Guide from SiliconDust on, the antenna guide's file (AntennaConfig.guideDataPath,
+' which AntennaTask downloads; this task never fetches it or sees a DeviceAuth) is read after the other guides, for
+' the antenna channels only (GuidePipeline's antenna request); its line goes back in result.antenna.
+'
 ' Step 20: with cachedOnly (Match Guide's rematch) nothing is downloaded: each guide is read from the file it has,
 ' fresh or not (a refused one, or one waiting after a failure, as always), and every guide is matched again with the
 ' overrides just saved.
@@ -72,7 +76,7 @@ sub loadGuidesNow()
         finishCancelled()
         return
     end if
-    readout = readGuides(sources, fetched, store.overrides)
+    readout = readGuides(sources, fetched, store.overrides, store.settings)
     for each paths in fetched.paths
         fs.Delete(paths.inflated)
     end for
@@ -90,7 +94,7 @@ sub loadGuidesNow()
     readout.Delete("matchData")
     if FieldMove.put(m.top, "guideData", data) then how = "moved into" else how = "copied into"
     Log.info("Guide", "Programmes " + how + " the guide task's field")
-    m.top.result = { ok: true, sourcesKey: GuideSources.sourcesKey(sources), fetchedAt: fetched.fetchedAt, failures: fetched.failures, statuses: readout.rows, note: readout.note, programmeCount: readout.programmeCount }
+    m.top.result = { ok: true, sourcesKey: GuideSources.sourcesKey(sources), fetchedAt: fetched.fetchedAt, failures: fetched.failures, statuses: readout.rows, note: readout.note, programmeCount: readout.programmeCount, antenna: readout.antennaRow, antennaIndex: readout.antennaIndex }
 end sub
 
 sub finishCancelled()
@@ -125,7 +129,7 @@ end function
 ' cancel check, size cap, time limit and memory guard, the class's programme limit, and what's left of the
 ' cachefs: budget for inflating. Then the unreadable files (QA minor) and the rows. { rows, note, programmeCount,
 ' data, matchData }.
-function readGuides(sources as object, fetched as object, overrides as object) as object
+function readGuides(sources as object, fetched as object, overrides as object, settings as object) as object
     deviceCaps = Capabilities.detectDevice()
     nowSeconds = wallClock()
     windowStart = nowSeconds - 7200
@@ -142,7 +146,11 @@ function readGuides(sources as object, fetched as object, overrides as object) a
     inflateRoom = GuideFetch.runBudgetBytes - fetched.usedBytes
     if inflateRoom < 0 then inflateRoom = 0
     timer = CreateObject("roTimespan")
+    ' Step 21: SiliconDust's guide for the antenna channels, from the file AntennaTask downloaded (never fetched
+    ' here), while Use Antenna and Guide from SiliconDust are on.
+    antenna = { keep: settings.antennaEnabled = true and settings.antennaGuide = true, path: AntennaConfig.guideDataPath, xmlPath: AntennaConfig.guideInflatedPath }
     processed = GuidePipeline.process({
+        antenna: antenna,
         guides: fetched.requestGuides,
         channels: m.top.channels,
         overrides: overrides,
@@ -172,10 +180,13 @@ function readGuides(sources as object, fetched as object, overrides as object) a
         Log.warn("Guide", note)
     end if
     if observer.stops.Count() > 0 then Log.warn("Guide", "Stopped reading a guide: " + observer.stops.Join(", "))
+    CreateObject("roFileSystem").Delete(AntennaConfig.guideInflatedPath)
+    antennaRow = GuideFetch.antennaRow(processed)
+    if antennaRow <> invalid then Log.info("Guide", "Antenna guide from " + AntennaGuide.host + ": " + antennaRow.status)
     data = GuideFetch.guideData(processed, windowStart, windowEnd)
     lists = GuideFetch.matchData(processed)
     Log.info("Guide", "Read " + sources.Count().ToStr() + " guide(s) in " + (timer.TotalMilliseconds() \ 1000).ToStr() + " s: " + data.programmeCount.ToStr() + " programmes, lowest memory left " + megabytesText(observer.lowestMB))
-    return { rows: rows, note: note, programmeCount: data.programmeCount, data: data, matchData: lists }
+    return { rows: rows, note: note, programmeCount: data.programmeCount, data: data, matchData: lists, antennaRow: antennaRow, antennaIndex: processed.antennaIndex }
 end function
 
 ' The observer's cancel check (m = the observer): the task's cancel field, read at most every 500 ms (a field read
