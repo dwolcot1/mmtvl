@@ -1,0 +1,1495 @@
+[
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.ari",
+    "league" : "nfl",
+    "name" : "Arizona Cardinals",
+    "nickname" : "Cardinals"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.atl",
+    "league" : "nfl",
+    "name" : "Atlanta Falcons",
+    "nickname" : "Falcons"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.bal",
+    "league" : "nfl",
+    "name" : "Baltimore Ravens",
+    "nickname" : "Ravens"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.buf",
+    "league" : "nfl",
+    "name" : "Buffalo Bills",
+    "nickname" : "Bills"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.car",
+    "league" : "nfl",
+    "name" : "Carolina Panthers",
+    "nickname" : "Panthers"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.chi",
+    "league" : "nfl",
+    "name" : "Chicago Bears",
+    "nickname" : "Bears"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.cin",
+    "league" : "nfl",
+    "name" : "Cincinnati Bengals",
+    "nickname" : "Bengals"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.cle",
+    "league" : "nfl",
+    "name" : "Cleveland Browns",
+    "nickname" : "Browns"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.dal",
+    "league" : "nfl",
+    "name" : "Dallas Cowboys",
+    "nickname" : "Cowboys"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.den",
+    "league" : "nfl",
+    "name" : "Denver Broncos",
+    "nickname" : "Broncos"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.det",
+    "league" : "nfl",
+    "name" : "Detroit Lions",
+    "nickname" : "Lions"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.gb",
+    "league" : "nfl",
+    "name" : "Green Bay Packers",
+    "nickname" : "Packers"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.hou",
+    "league" : "nfl",
+    "name" : "Houston Texans",
+    "nickname" : "Texans"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.ind",
+    "league" : "nfl",
+    "name" : "Indianapolis Colts",
+    "nickname" : "Colts"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.jax",
+    "league" : "nfl",
+    "name" : "Jacksonville Jaguars",
+    "nickname" : "Jaguars"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.kc",
+    "league" : "nfl",
+    "name" : "Kansas City Chiefs",
+    "nickname" : "Chiefs"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+      "Oakland Raiders"
+    ],
+    "id" : "nfl.lv",
+    "league" : "nfl",
+    "name" : "Las Vegas Raiders",
+    "nickname" : "Raiders"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+      "LA Chargers",
+      "San Diego Chargers"
+    ],
+    "id" : "nfl.lac",
+    "league" : "nfl",
+    "name" : "Los Angeles Chargers",
+    "nickname" : "Chargers"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+      "LA Rams",
+      "St. Louis Rams"
+    ],
+    "id" : "nfl.lar",
+    "league" : "nfl",
+    "name" : "Los Angeles Rams",
+    "nickname" : "Rams"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.mia",
+    "league" : "nfl",
+    "name" : "Miami Dolphins",
+    "nickname" : "Dolphins"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.min",
+    "league" : "nfl",
+    "name" : "Minnesota Vikings",
+    "nickname" : "Vikings"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.ne",
+    "league" : "nfl",
+    "name" : "New England Patriots",
+    "nickname" : "Patriots"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.no",
+    "league" : "nfl",
+    "name" : "New Orleans Saints",
+    "nickname" : "Saints"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.nyg",
+    "league" : "nfl",
+    "name" : "New York Giants",
+    "nickname" : "Giants"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.nyj",
+    "league" : "nfl",
+    "name" : "New York Jets",
+    "nickname" : "Jets"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.phi",
+    "league" : "nfl",
+    "name" : "Philadelphia Eagles",
+    "nickname" : "Eagles"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.pit",
+    "league" : "nfl",
+    "name" : "Pittsburgh Steelers",
+    "nickname" : "Steelers"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.sf",
+    "league" : "nfl",
+    "name" : "San Francisco 49ers",
+    "nickname" : "49ers"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.sea",
+    "league" : "nfl",
+    "name" : "Seattle Seahawks",
+    "nickname" : "Seahawks"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.tb",
+    "league" : "nfl",
+    "name" : "Tampa Bay Buccaneers",
+    "nickname" : "Buccaneers"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nfl.ten",
+    "league" : "nfl",
+    "name" : "Tennessee Titans",
+    "nickname" : "Titans"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+      "Washington Football Team"
+    ],
+    "id" : "nfl.wsh",
+    "league" : "nfl",
+    "name" : "Washington Commanders",
+    "nickname" : "Commanders"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.atl",
+    "league" : "nba",
+    "name" : "Atlanta Hawks",
+    "nickname" : "Hawks"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.bos",
+    "league" : "nba",
+    "name" : "Boston Celtics",
+    "nickname" : "Celtics"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.bkn",
+    "league" : "nba",
+    "name" : "Brooklyn Nets",
+    "nickname" : "Nets"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.cha",
+    "league" : "nba",
+    "name" : "Charlotte Hornets",
+    "nickname" : "Hornets"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.chi",
+    "league" : "nba",
+    "name" : "Chicago Bulls",
+    "nickname" : "Bulls"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.cle",
+    "league" : "nba",
+    "name" : "Cleveland Cavaliers",
+    "nickname" : "Cavaliers"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.dal",
+    "league" : "nba",
+    "name" : "Dallas Mavericks",
+    "nickname" : "Mavericks"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.den",
+    "league" : "nba",
+    "name" : "Denver Nuggets",
+    "nickname" : "Nuggets"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.det",
+    "league" : "nba",
+    "name" : "Detroit Pistons",
+    "nickname" : "Pistons"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.gs",
+    "league" : "nba",
+    "name" : "Golden State Warriors",
+    "nickname" : "Warriors"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.hou",
+    "league" : "nba",
+    "name" : "Houston Rockets",
+    "nickname" : "Rockets"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.ind",
+    "league" : "nba",
+    "name" : "Indiana Pacers",
+    "nickname" : "Pacers"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+      "LA Clippers"
+    ],
+    "id" : "nba.lac",
+    "league" : "nba",
+    "name" : "Los Angeles Clippers",
+    "nickname" : "Clippers"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+      "LA Lakers"
+    ],
+    "id" : "nba.lal",
+    "league" : "nba",
+    "name" : "Los Angeles Lakers",
+    "nickname" : "Lakers"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.mem",
+    "league" : "nba",
+    "name" : "Memphis Grizzlies",
+    "nickname" : "Grizzlies"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.mia",
+    "league" : "nba",
+    "name" : "Miami Heat",
+    "nickname" : "Heat"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.mil",
+    "league" : "nba",
+    "name" : "Milwaukee Bucks",
+    "nickname" : "Bucks"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.min",
+    "league" : "nba",
+    "name" : "Minnesota Timberwolves",
+    "nickname" : "Timberwolves"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.no",
+    "league" : "nba",
+    "name" : "New Orleans Pelicans",
+    "nickname" : "Pelicans"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.ny",
+    "league" : "nba",
+    "name" : "New York Knicks",
+    "nickname" : "Knicks"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.okc",
+    "league" : "nba",
+    "name" : "Oklahoma City Thunder",
+    "nickname" : "Thunder"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.orl",
+    "league" : "nba",
+    "name" : "Orlando Magic",
+    "nickname" : "Magic"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.phi",
+    "league" : "nba",
+    "name" : "Philadelphia 76ers",
+    "nickname" : "76ers"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.phx",
+    "league" : "nba",
+    "name" : "Phoenix Suns",
+    "nickname" : "Suns"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.por",
+    "league" : "nba",
+    "name" : "Portland Trail Blazers",
+    "nickname" : "Trail Blazers"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.sac",
+    "league" : "nba",
+    "name" : "Sacramento Kings",
+    "nickname" : "Kings"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.sa",
+    "league" : "nba",
+    "name" : "San Antonio Spurs",
+    "nickname" : "Spurs"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.tor",
+    "league" : "nba",
+    "name" : "Toronto Raptors",
+    "nickname" : "Raptors"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.utah",
+    "league" : "nba",
+    "name" : "Utah Jazz",
+    "nickname" : "Jazz"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nba.wsh",
+    "league" : "nba",
+    "name" : "Washington Wizards",
+    "nickname" : "Wizards"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.ana",
+    "league" : "nhl",
+    "name" : "Anaheim Ducks",
+    "nickname" : "Ducks"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.bos",
+    "league" : "nhl",
+    "name" : "Boston Bruins",
+    "nickname" : "Bruins"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.buf",
+    "league" : "nhl",
+    "name" : "Buffalo Sabres",
+    "nickname" : "Sabres"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.cgy",
+    "league" : "nhl",
+    "name" : "Calgary Flames",
+    "nickname" : "Flames"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.car",
+    "league" : "nhl",
+    "name" : "Carolina Hurricanes",
+    "nickname" : "Hurricanes"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.chi",
+    "league" : "nhl",
+    "name" : "Chicago Blackhawks",
+    "nickname" : "Blackhawks"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.col",
+    "league" : "nhl",
+    "name" : "Colorado Avalanche",
+    "nickname" : "Avalanche"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.cbj",
+    "league" : "nhl",
+    "name" : "Columbus Blue Jackets",
+    "nickname" : "Blue Jackets"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.dal",
+    "league" : "nhl",
+    "name" : "Dallas Stars",
+    "nickname" : "Stars"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.det",
+    "league" : "nhl",
+    "name" : "Detroit Red Wings",
+    "nickname" : "Red Wings"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.edm",
+    "league" : "nhl",
+    "name" : "Edmonton Oilers",
+    "nickname" : "Oilers"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.fla",
+    "league" : "nhl",
+    "name" : "Florida Panthers",
+    "nickname" : "Panthers"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+      "LA Kings"
+    ],
+    "id" : "nhl.la",
+    "league" : "nhl",
+    "name" : "Los Angeles Kings",
+    "nickname" : "Kings"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.min",
+    "league" : "nhl",
+    "name" : "Minnesota Wild",
+    "nickname" : "Wild"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.mtl",
+    "league" : "nhl",
+    "name" : "Montreal Canadiens",
+    "nickname" : "Canadiens"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.nsh",
+    "league" : "nhl",
+    "name" : "Nashville Predators",
+    "nickname" : "Predators"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.nj",
+    "league" : "nhl",
+    "name" : "New Jersey Devils",
+    "nickname" : "Devils"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.nyi",
+    "league" : "nhl",
+    "name" : "New York Islanders",
+    "nickname" : "Islanders"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.nyr",
+    "league" : "nhl",
+    "name" : "New York Rangers",
+    "nickname" : "Rangers"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.ott",
+    "league" : "nhl",
+    "name" : "Ottawa Senators",
+    "nickname" : "Senators"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.phi",
+    "league" : "nhl",
+    "name" : "Philadelphia Flyers",
+    "nickname" : "Flyers"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.pit",
+    "league" : "nhl",
+    "name" : "Pittsburgh Penguins",
+    "nickname" : "Penguins"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.sj",
+    "league" : "nhl",
+    "name" : "San Jose Sharks",
+    "nickname" : "Sharks"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.sea",
+    "league" : "nhl",
+    "name" : "Seattle Kraken",
+    "nickname" : "Kraken"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.stl",
+    "league" : "nhl",
+    "name" : "St. Louis Blues",
+    "nickname" : "Blues"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.tb",
+    "league" : "nhl",
+    "name" : "Tampa Bay Lightning",
+    "nickname" : "Lightning"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.tor",
+    "league" : "nhl",
+    "name" : "Toronto Maple Leafs",
+    "nickname" : "Maple Leafs"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+      "Utah Hockey Club"
+    ],
+    "id" : "nhl.utah",
+    "league" : "nhl",
+    "name" : "Utah Mammoth",
+    "nickname" : "Mammoth"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.van",
+    "league" : "nhl",
+    "name" : "Vancouver Canucks",
+    "nickname" : "Canucks"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.vgk",
+    "league" : "nhl",
+    "name" : "Vegas Golden Knights",
+    "nickname" : "Golden Knights"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.wsh",
+    "league" : "nhl",
+    "name" : "Washington Capitals",
+    "nickname" : "Capitals"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "nhl.wpg",
+    "league" : "nhl",
+    "name" : "Winnipeg Jets",
+    "nickname" : "Jets"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.ari",
+    "league" : "mlb",
+    "name" : "Arizona Diamondbacks",
+    "nickname" : "Diamondbacks"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+      "Oakland Athletics",
+      "Sacramento Athletics",
+      "Las Vegas Athletics"
+    ],
+    "id" : "mlb.ath",
+    "league" : "mlb",
+    "name" : "Athletics",
+    "nickname" : "Athletics"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.atl",
+    "league" : "mlb",
+    "name" : "Atlanta Braves",
+    "nickname" : "Braves"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.bal",
+    "league" : "mlb",
+    "name" : "Baltimore Orioles",
+    "nickname" : "Orioles"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.bos",
+    "league" : "mlb",
+    "name" : "Boston Red Sox",
+    "nickname" : "Red Sox"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.chc",
+    "league" : "mlb",
+    "name" : "Chicago Cubs",
+    "nickname" : "Cubs"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.cws",
+    "league" : "mlb",
+    "name" : "Chicago White Sox",
+    "nickname" : "White Sox"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.cin",
+    "league" : "mlb",
+    "name" : "Cincinnati Reds",
+    "nickname" : "Reds"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+      "Cleveland Indians"
+    ],
+    "id" : "mlb.cle",
+    "league" : "mlb",
+    "name" : "Cleveland Guardians",
+    "nickname" : "Guardians"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.col",
+    "league" : "mlb",
+    "name" : "Colorado Rockies",
+    "nickname" : "Rockies"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.det",
+    "league" : "mlb",
+    "name" : "Detroit Tigers",
+    "nickname" : "Tigers"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.hou",
+    "league" : "mlb",
+    "name" : "Houston Astros",
+    "nickname" : "Astros"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.kc",
+    "league" : "mlb",
+    "name" : "Kansas City Royals",
+    "nickname" : "Royals"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+      "LA Angels",
+      "Los Angeles Angels of Anaheim"
+    ],
+    "id" : "mlb.laa",
+    "league" : "mlb",
+    "name" : "Los Angeles Angels",
+    "nickname" : "Angels"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+      "LA Dodgers"
+    ],
+    "id" : "mlb.lad",
+    "league" : "mlb",
+    "name" : "Los Angeles Dodgers",
+    "nickname" : "Dodgers"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.mia",
+    "league" : "mlb",
+    "name" : "Miami Marlins",
+    "nickname" : "Marlins"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.mil",
+    "league" : "mlb",
+    "name" : "Milwaukee Brewers",
+    "nickname" : "Brewers"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.min",
+    "league" : "mlb",
+    "name" : "Minnesota Twins",
+    "nickname" : "Twins"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.nym",
+    "league" : "mlb",
+    "name" : "New York Mets",
+    "nickname" : "Mets"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.nyy",
+    "league" : "mlb",
+    "name" : "New York Yankees",
+    "nickname" : "Yankees"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.phi",
+    "league" : "mlb",
+    "name" : "Philadelphia Phillies",
+    "nickname" : "Phillies"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.pit",
+    "league" : "mlb",
+    "name" : "Pittsburgh Pirates",
+    "nickname" : "Pirates"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.sd",
+    "league" : "mlb",
+    "name" : "San Diego Padres",
+    "nickname" : "Padres"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.sf",
+    "league" : "mlb",
+    "name" : "San Francisco Giants",
+    "nickname" : "Giants"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.sea",
+    "league" : "mlb",
+    "name" : "Seattle Mariners",
+    "nickname" : "Mariners"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.stl",
+    "league" : "mlb",
+    "name" : "St. Louis Cardinals",
+    "nickname" : "Cardinals"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.tb",
+    "league" : "mlb",
+    "name" : "Tampa Bay Rays",
+    "nickname" : "Rays"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.tex",
+    "league" : "mlb",
+    "name" : "Texas Rangers",
+    "nickname" : "Rangers"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.tor",
+    "league" : "mlb",
+    "name" : "Toronto Blue Jays",
+    "nickname" : "Blue Jays"
+  },
+  {
+    "abbreviations" : [
+
+    ],
+    "aliases" : [
+
+    ],
+    "id" : "mlb.wsh",
+    "league" : "mlb",
+    "name" : "Washington Nationals",
+    "nickname" : "Nationals"
+  }
+]

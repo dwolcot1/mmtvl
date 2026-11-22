@@ -18,6 +18,10 @@ import Testing
 /// - `programmes.golden.json`: per guide, the channels `XMLTVParser` keeps (lowercased id, display-names as written),
 ///   `wantedIDs` (what the importer keeps programmes for: that guide alone matched, as `GuideImporter` does, sorted)
 ///   and the programmes kept in `window`, in file order.
+/// - Step 16: `roku/data/pro-teams.json` (not a fixture: the Roku app ships it as `pkg:/data/pro-teams.json`) holds
+///   `TeamCatalog.proTeams` in catalog order, an array of `{abbreviations, aliases, id, league, name, nickname}`, the
+///   same shape and key order as the college catalog (`college-teams.json`, which the Roku build copies from
+///   `MMTVL/IPTV/Teams/`), so one `ParseJson` reads either.
 ///
 /// When MMTVL's behaviour changes on purpose, regenerate the goldens, review the diff, and update the Roku ports:
 ///
@@ -27,9 +31,13 @@ import Testing
 /// (xcodebuild passes `TEST_RUNNER_<name>` to the test process as `<name>`.) With it set, the test writes the
 /// goldens instead of comparing; by default it compares.
 struct RokuParityTests {
-    nonisolated static let fixtures = URL(fileURLWithPath: #filePath)
+    nonisolated static let roku = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent()
-        .appending(path: "roku/tests/fixtures", directoryHint: .isDirectory)
+        .appending(path: "roku", directoryHint: .isDirectory)
+    nonisolated static let fixtures = roku.appending(path: "tests/fixtures", directoryHint: .isDirectory)
+    nonisolated static let proTeamsFile = roku.appending(path: "data/pro-teams.json")
+    nonisolated static let regenerate = "TEST_RUNNER_MMTVL_WRITE_ROKU_GOLDENS=1 xcodebuild -project MMTVL.xcodeproj "
+        + "-scheme MMTVL -derivedDataPath build test -only-testing:MMTVLTests/RokuParityTests"
     /// Priority order (guide A first).
     nonisolated static let guideFiles = ["guide-a.xml", "guide-b.xml"]
     /// 2026-10-05T00:00Z to 2026-10-07T00:00Z, as Unix seconds.
@@ -118,6 +126,30 @@ struct RokuParityTests {
         }
     }
 
+    /// Step 16: the Roku's pro team catalog can't drift from MMTVL's.
+    @Test func proTeamsMatchTheGolden() throws {
+        let actual = TeamCatalog.proTeams.map(TeamGolden.init)
+        #expect(actual.count == 124)
+        if Self.writesGoldens {
+            try Self.write(actual, to: Self.proTeamsFile)
+            return
+        }
+        let hint = "roku/data/pro-teams.json differs from TeamCatalog.proTeams; never edit it by hand, regenerate it "
+            + "with: \(Self.regenerate)"
+        guard let data = try? Data(contentsOf: Self.proTeamsFile) else {
+            Issue.record("roku/data/pro-teams.json is missing; \(hint)")
+            return
+        }
+        guard let golden = try? JSONDecoder().decode([TeamGolden].self, from: data) else {
+            Issue.record("roku/data/pro-teams.json isn't an array of teams; \(hint)")
+            return
+        }
+        #expect(actual.count == golden.count, "team count: \(hint)")
+        for (index, (a, g)) in zip(actual, golden).enumerated() {
+            #expect(a == g, "team \(index) (\(a.id)): \(hint)")
+        }
+    }
+
     // MARK: - MMTVL's code paths
 
     nonisolated static func playlist() throws -> M3UPlaylist {
@@ -158,15 +190,20 @@ struct RokuParityTests {
                                               compare: (T, T) -> Void) throws {
         let url = fixtures.appending(path: file)
         if writesGoldens {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-            var data = try encoder.encode(actual)
-            data.append(0x0A)
-            try data.write(to: url, options: .atomic)
+            try write(actual, to: url)
             return
         }
         let golden = try JSONDecoder().decode(T.self, from: Data(contentsOf: url))
         compare(actual, golden)
+    }
+
+    /// Pretty-printed with sorted keys and a final newline, so a regenerated golden diffs cleanly.
+    nonisolated static func write<T: Encodable>(_ value: T, to url: URL) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        var data = try encoder.encode(value)
+        data.append(0x0A)
+        try data.write(to: url, options: .atomic)
     }
 
     /// Element by element, so a failure names the item that differs.
@@ -305,5 +342,25 @@ nonisolated struct ProgrammeGolden: Codable, Equatable {
         try container.encode(summary, forKey: .summary)
         try container.encode(category, forKey: .category)
         try container.encode(episode, forKey: .episode)
+    }
+}
+
+/// Step 16: one pro team as `roku/data/pro-teams.json` holds it (`abbreviations` is always empty for pro teams, kept
+/// so pro and college entries have the same keys).
+nonisolated struct TeamGolden: Codable, Equatable {
+    var id: String
+    var league: String
+    var name: String
+    var nickname: String
+    var aliases: [String]
+    var abbreviations: [String]
+
+    init(_ team: Team) {
+        id = team.id
+        league = team.league.rawValue
+        name = team.name
+        nickname = team.nickname
+        aliases = team.aliases
+        abbreviations = team.abbreviations
     }
 }
