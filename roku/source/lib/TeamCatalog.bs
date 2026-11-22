@@ -1,0 +1,189 @@
+' The team catalog (M12 step 17): MMTVL's TeamCatalog and TeamLeague (MMTVL/IPTV/Teams/TeamCatalog.swift), read
+' from the two files the package ships (step 16): pkg:/data/pro-teams.json (the 124 pro teams, written by MMTVL's
+' RokuParityTests) and pkg:/data/college-teams.json (copied from MMTVL at build, 382 KB). Pure functions, no nodes:
+' the college file is meant to be read in a Task (step 18), never on the render thread.
+'
+' A team: { id, league, name, nickname, aliases, abbreviations, school, conference }, school and conference invalid
+' for a pro team. Ids: "nba.lal", "ncaaf.michigan-wolverines".
+' Reading a file, as MMTVL's collegeTeams(fromJSON:) decodes: the file must be a JSON array of entries, each with
+' string id, league, name and nickname (college: school and conference too), and aliases and abbreviations each
+' missing, null or an array of strings; any other entry makes the whole file unreadable. Of a readable file, entries
+' whose league isn't one of the file's kind (pro or college), whose id doesn't start with "<league>.", or whose id
+' is already taken are skipped. A missing or unreadable file gives no teams of that kind and a logged error, as
+' MMTVL does for its bundled college file.
+namespace TeamCatalog
+
+    const proPath = "pkg:/data/pro-teams.json"
+    const collegePath = "pkg:/data/college-teams.json"
+
+    ' TeamLeague.allCases, in order.
+    function leagues() as object
+        return ["nfl", "nba", "nhl", "mlb", "ncaaf", "ncaam", "ncaaw", "ncaabase"]
+    end function
+
+    function isLeague(league as dynamic) as boolean
+        if type(league) <> "roString" and type(league) <> "String" then return false
+        for each known in TeamCatalog.leagues()
+            if league = known then return true
+        end for
+        return false
+    end function
+
+    function isCollege(league as string) as boolean
+        return league = "ncaaf" or league = "ncaam" or league = "ncaaw" or league = "ncaabase"
+    end function
+
+    ' TeamLeague.words: a programme names a pro league with one of these (whole words); none for college.
+    function leagueWords(league as string) as object
+        if league = "nfl" then return ["nfl", "football"]
+        if league = "nba" then return ["nba", "basketball"]
+        if league = "nhl" then return ["nhl", "hockey"]
+        if league = "mlb" then return ["mlb", "baseball"]
+        return []
+    end function
+
+    ' TeamLeague.title: "NFL" … "College Football", "Women's College Basketball".
+    function leagueTitle(league as string) as string
+        if league = "ncaaf" then return "College Football"
+        if league = "ncaam" then return "College Basketball"
+        if league = "ncaaw" then return "Women's College Basketball"
+        if league = "ncaabase" then return "College Baseball"
+        return UCase(league)
+    end function
+
+    ' TeamLeague.sportTitle: the sport after a college team's name; the title for pro.
+    function sportTitle(league as string) as string
+        if league = "ncaaf" then return "Football"
+        if league = "ncaam" then return "Basketball"
+        if league = "ncaaw" then return "Women's Basketball"
+        if league = "ncaabase" then return "Baseball"
+        return TeamCatalog.leagueTitle(league)
+    end function
+
+    ' Team.pickTitle: "Los Angeles Lakers", "Michigan Wolverines (Women's Basketball)".
+    function pickTitle(team as object) as string
+        if TeamCatalog.isCollege(team.league) then return team.name + " (" + TeamCatalog.sportTitle(team.league) + ")"
+        return team.name
+    end function
+
+    ' Team.fullNames: the name and every alias.
+    function fullNames(team as object) as object
+        names = [team.name]
+        names.Append(team.aliases)
+        return names
+    end function
+
+    ' id → team, the first of each id. Case-sensitive.
+    function byID(teams as object) as object
+        result = {}
+        result.SetModeCaseSensitive()
+        for each team in teams
+            if not result.DoesExist(team.id) then result[team.id] = team
+        end for
+        return result
+    end function
+
+    ' The pro teams of pkg:/data/pro-teams.json; none (and a logged error) if it's missing or unreadable.
+    function loadPro(path = "pkg:/data/pro-teams.json" as string) as object
+        return TeamCatalog.load(path, false)
+    end function
+
+    ' The college teams of pkg:/data/college-teams.json, likewise. 382 KB: call it from a Task.
+    function loadCollege(path = "pkg:/data/college-teams.json" as string) as object
+        return TeamCatalog.load(path, true)
+    end function
+
+    function load(path as string, college as boolean) as object
+        #if DEBUG
+            timer = CreateObject("roTimespan")
+        #end if
+        if college then kind = "college" else kind = "pro"
+        result = TeamCatalog.readFile(path, college)
+        if result.error = "missing"
+            Log.error("IPTV", "The " + kind + " team catalog is missing")
+        else if result.error <> ""
+            Log.error("IPTV", "The " + kind + " team catalog couldn't be read: " + result.error)
+        end if
+        #if DEBUG
+            Log.info("IPTV", "Teams: read " + result.teams.Count().ToStr() + " " + kind + " teams in " + timer.TotalMilliseconds().ToStr() + " ms")
+        #end if
+        return result.teams
+    end function
+
+    ' { teams, error }: error is "" when the file was read, "missing" when it's missing or empty, else why not.
+    function readFile(path as string, college as boolean) as object
+        text = ReadAsciiFile(path)
+        if text = "" then return { teams: [], error: "missing" }
+        return TeamCatalog.teamsFromJSON(text, college)
+    end function
+
+    ' A catalog file's text: { teams, error }, as readFile.
+    function teamsFromJSON(text as string, college as boolean) as object
+        parsed = invalid
+        try
+            parsed = ParseJson(text)
+        catch e
+            parsed = invalid
+        end try
+        if type(parsed) <> "roArray" then return { teams: [], error: "it isn't a JSON array of teams" }
+        teams = []
+        seen = {}
+        seen.SetModeCaseSensitive()
+        for i = 0 to parsed.Count() - 1
+            team = TeamCatalog.teamFromEntry(parsed[i], college)
+            if team = invalid then return { teams: [], error: "entry " + (i + 1).ToStr() + " isn't a team" }
+            if TeamCatalog.isLeague(team.league) and TeamCatalog.isCollege(team.league) = college and Left(team.id, Len(team.league) + 1) = team.league + "." and not seen.DoesExist(team.id)
+                seen[team.id] = true
+                teams.Push(team)
+            end if
+        end for
+        return { teams: teams, error: "" }
+    end function
+
+    ' One entry as a team, or invalid when it doesn't have the fields a team needs (see above). Its league isn't
+    ' checked here.
+    function teamFromEntry(entry as dynamic, college as boolean) as dynamic
+        if type(entry) <> "roAssociativeArray" then return invalid
+        fields = ["id", "league", "name", "nickname"]
+        if college
+            fields.Push("school")
+            fields.Push("conference")
+        end if
+        for each field in fields
+            if not TeamCatalog.isString(entry[field]) then return invalid
+        end for
+        aliases = TeamCatalog.stringList(entry["aliases"])
+        abbreviations = TeamCatalog.stringList(entry["abbreviations"])
+        if aliases = invalid or abbreviations = invalid then return invalid
+        team = {
+            id: entry["id"],
+            league: entry["league"],
+            name: entry["name"],
+            nickname: entry["nickname"],
+            aliases: aliases,
+            abbreviations: abbreviations,
+            school: invalid,
+            conference: invalid
+        }
+        if college
+            team.school = entry["school"]
+            team.conference = entry["conference"]
+        end if
+        return team
+    end function
+
+    function isString(value as dynamic) as boolean
+        return type(value) = "roString" or type(value) = "String"
+    end function
+
+    ' A missing or null list is []; an array of strings is itself; anything else invalid.
+    function stringList(value as dynamic) as dynamic
+        if value = invalid then return []
+        if type(value) <> "roArray" then return invalid
+        for each item in value
+            if not TeamCatalog.isString(item) then return invalid
+        end for
+        return value
+    end function
+
+end namespace

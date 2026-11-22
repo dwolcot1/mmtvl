@@ -1,0 +1,97 @@
+' The catalog loader (M12 step 17): the shipped files load, and a missing or bad file gives no teams of its kind
+' (MMTVL's collegeTeams(fromJSON:) and loadBundledCollegeTeams).
+namespace TeamCatalogTests
+
+    sub test_theShippedCatalogsLoad(t as object)
+        pro = TeamCatalog.loadPro()
+        college = TeamCatalog.loadCollege()
+        t.assertEqual(pro.Count(), 124, "pro teams")
+        t.assertEqual(college.Count(), 1307, "college teams")
+        t.assertEqual(pro[0].id, "nfl.ari", "the first pro team")
+        t.assertInvalid(pro[0].school, "a pro team has no school")
+        t.assertEqual(college[0].id, "ncaaf.boston-college-eagles", "the first college team")
+        t.assertEqual(college[0].school, "Boston College", "a college team's school")
+        t.assertEqual(college[0].abbreviations, ["BC"], "abbreviations")
+        byID = TeamCatalog.byID(pro)
+        t.assertEqual(byID["nba.lal"].name, "Los Angeles Lakers", "by id")
+        t.assertInvalid(byID["NBA.LAL"], "ids are case-sensitive")
+    end sub
+
+    sub test_aMissingFileGivesNoTeams(t as object)
+        result = TeamCatalog.readFile("pkg:/data/no-such-teams.json", true)
+        t.assertEqual(result.error, "missing")
+        t.assertEqual(result.teams, [])
+        t.assertEqual(TeamCatalog.loadCollege("pkg:/data/no-such-teams.json"), [], "loadCollege")
+        t.assertEqual(TeamCatalog.loadPro("pkg:/data/no-such-teams.json"), [], "loadPro")
+    end sub
+
+    sub test_aBadFileGivesNoTeams(t as object)
+        for each text in ["not JSON", "{" + Chr(34) + "id" + Chr(34) + ": 1}", "42", "[1, 2]", "[null]"]
+            result = TeamCatalog.teamsFromJSON(text, true)
+            t.assertEqual(result.teams, [], text)
+            t.assertTrue(result.error <> "", text + " is an error")
+        end for
+        ' One bad entry spoils the file, as MMTVL's decoder throws: a missing field, a wrong type, a bad list.
+        good = TeamCatalogTests.entry("ncaaf.a-aces", "ncaaf", "")
+        for each bad in [
+            TeamCatalogTests.entry("ncaaf.b-bees", "ncaaf", Chr(34) + "school" + Chr(34) + ": 5, "),
+            TeamCatalogTests.entry("ncaaf.b-bees", "ncaaf", Chr(34) + "aliases" + Chr(34) + ": " + Chr(34) + "B" + Chr(34) + ", "),
+            TeamCatalogTests.entry("ncaaf.b-bees", "ncaaf", Chr(34) + "abbreviations" + Chr(34) + ": [1], ")
+        ]
+            result = TeamCatalog.teamsFromJSON("[" + good + ", " + bad + "]", true)
+            t.assertEqual(result.teams, [], bad)
+            t.assertEqual(result.error, "entry 2 isn't a team", bad)
+        end for
+        noSchool = "[{" + Chr(34) + "id" + Chr(34) + ": " + Chr(34) + "ncaaf.c" + Chr(34) + ", " + Chr(34) + "league" + Chr(34) + ": " + Chr(34) + "ncaaf" + Chr(34) + ", " + Chr(34) + "name" + Chr(34) + ": " + Chr(34) + "C" + Chr(34) + ", " + Chr(34) + "nickname" + Chr(34) + ": " + Chr(34) + "Cs" + Chr(34) + "}]"
+        t.assertEqual(TeamCatalog.teamsFromJSON(noSchool, true).teams, [], "a college entry needs its school and conference")
+        t.assertEqual(TeamCatalog.teamsFromJSON(noSchool, false).teams.Count(), 0, "a college league in the pro file is skipped")
+    end sub
+
+    ' Of a readable file, entries of another kind of league, an unknown league, an id that doesn't start with the
+    ' league, and a repeated id are skipped; null lists read as empty.
+    sub test_entriesThatDontFitAreSkipped(t as object)
+        q = Chr(34)
+        entries = [
+            TeamCatalogTests.entry("ncaaf.a-aces", "ncaaf", q + "aliases" + q + ": null, "),
+            TeamCatalogTests.entry("nba.lal", "nba", ""),
+            TeamCatalogTests.entry("ncaaz.z", "ncaaz", ""),
+            TeamCatalogTests.entry("ncaam.b-bees", "ncaaf", ""),
+            TeamCatalogTests.entry("ncaaf.a-aces", "ncaaf", ""),
+            TeamCatalogTests.entry("ncaam.b-bees", "ncaam", "")
+        ]
+        result = TeamCatalog.teamsFromJSON("[" + entries.Join(", ") + "]", true)
+        t.assertEqual(result.error, "")
+        ids = []
+        for each team in result.teams
+            ids.Push(team.id)
+        end for
+        t.assertEqual(ids, ["ncaaf.a-aces", "ncaam.b-bees"])
+        t.assertEqual(result.teams[0].aliases, [], "null aliases")
+        pro = TeamCatalog.teamsFromJSON("[" + entries.Join(", ") + "]", false)
+        t.assertEqual(pro.teams.Count(), 1, "the pro file keeps only pro leagues")
+        t.assertEqual(pro.teams[0].id, "nba.lal")
+        t.assertInvalid(pro.teams[0].school, "a pro team's school")
+    end sub
+
+    sub test_leaguesAndTitles(t as object)
+        t.assertEqual(TeamCatalog.leagues(), ["nfl", "nba", "nhl", "mlb", "ncaaf", "ncaam", "ncaaw", "ncaabase"])
+        t.assertEqual(TeamCatalog.leagueWords("nhl"), ["nhl", "hockey"])
+        t.assertEqual(TeamCatalog.leagueWords("ncaam"), [])
+        t.assertEqual(TeamCatalog.leagueTitle("nfl"), "NFL")
+        t.assertEqual(TeamCatalog.leagueTitle("ncaaw"), "Women's College Basketball")
+        t.assertEqual(TeamCatalog.pickTitle({ name: "Michigan Wolverines", league: "ncaaw" }), "Michigan Wolverines (Women's Basketball)")
+        t.assertEqual(TeamCatalog.pickTitle({ name: "Los Angeles Lakers", league: "nba" }), "Los Angeles Lakers")
+    end sub
+
+    ' One catalog entry as JSON, with extra fields (each ending in ", ") before the usual ones.
+    function entry(id as string, league as string, extra as string) as string
+        q = Chr(34)
+        text = "{" + extra
+        for each pair in [["id", id], ["league", league], ["name", "Team " + id], ["school", "School " + id], ["nickname", "Nicknames"], ["conference", "Test"]]
+            if Instr(1, extra, q + pair[0] + q) = 0 then text += q + pair[0] + q + ": " + q + pair[1] + q + ", "
+        end for
+        if Instr(1, extra, q + "abbreviations" + q) = 0 then text += q + "abbreviations" + q + ": [], "
+        return text + q + "extra" + q + ": true}"
+    end function
+
+end namespace
