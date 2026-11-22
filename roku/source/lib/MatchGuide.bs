@@ -37,6 +37,8 @@
 '     guide run gave it: sourcesKey is that run's (GuideSources.sourcesKey), sources the guides now
 '     (GuideSources.chooseSources); a guide no longer there has "".
 '   sameRef(a, b) -> the same guide and EPG id.
+'   isAntennaChannel(channel), withAntennaLabel(labels, antennaIndex) (step 21): the antenna guide's channels come
+'     first for antenna channels (MatchGuideTask), labelled "HDHomeRun".
 namespace MatchGuide
 
     const automaticTitle = "Automatic"
@@ -47,12 +49,33 @@ namespace MatchGuide
     const titlePrefix = "Guide for "
     ' The channel menu's row (the frame's wording, Z3UnCj).
     const rowTitle = "Match Guide…"
+    ' Step 21: the antenna guide's label (MMTVL's AntennaGuide.label; AntennaGuide.bs isn't loaded here).
+    const antennaLabel = "HDHomeRun"
     ' A choice the 500-key limit would drop (a key past SettingsStore.maximumListEntries).
     const tooManyMessage = "This Roku keeps at most 500 guide matches, so this one wasn't saved. Set some channels back to Automatic and try again."
 
     function overrideKey(channel as object) as string
-        if Left(channel.id, 8) = "antenna:" then return channel.id
+        if MatchGuide.isAntennaChannel(channel) then return channel.id
         return channel.name
+    end function
+
+    ' Step 21: an antenna channel (id "antenna:<GuideNumber>"), which Match Guide offers the antenna guide first.
+    function isAntennaChannel(channel as object) as boolean
+        if not MatchGuide.isText(channel.id) then return false
+        return Left(channel.id, 8) = "antenna:"
+    end function
+
+    ' Step 21: the labels with the antenna guide's ("HDHomeRun", MMTVL's AntennaGuide.label) at antennaIndex.
+    function withAntennaLabel(labelList as object, antennaIndex as dynamic) as object
+        if not MatchGuide.isNumber(antennaIndex) then return labelList
+        if antennaIndex < 0 then return labelList
+        result = []
+        result.Append(labelList)
+        while result.Count() <= antennaIndex
+            result.Push("")
+        end while
+        result[antennaIndex] = MatchGuide.antennaLabel
+        return result
     end function
 
     function overrideFor(channel as object, overrides as dynamic, finder as dynamic) as dynamic

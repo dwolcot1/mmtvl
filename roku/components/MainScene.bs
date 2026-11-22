@@ -12,11 +12,19 @@ sub init()
     m.lineup = invalid
     m.notice = invalid
     m.launchPending = true
+    ' Step 21: the launch target opens once both the playlist and the antenna have answered.
+    m.playlistAnswered = false
     m.channels = []
+    ' Step 21 (D37): m.channels, m.guideChannelFields and m.teamFields are the playlist's part (its first
+    ' m.playlistCount entries) then the antenna's, merged by PlaylistTask (off the render thread).
+    m.playlistCount = 0
+    m.teamFields = []
     m.fs = CreateObject("roFileSystem")
     m.player = m.top.findNode("player")
     m.player.observeField("action", "onPlayerAction")
     m.player.observeField("failed", "updatePlayback")
+    ' Step 21: a Video error's numbers, for the antenna diagnosis.
+    m.player.observeField("failure", "onPlayerFailure")
     #if DEBUG
         ' M12 L8 (step 13): DEBUG builds open the Probes screen from Settings → About (three Replays). Release
         ' builds (bs_const DEBUG=false) have none of this, and no probe files (bsconfig.release.json).
@@ -39,7 +47,7 @@ sub init()
     m.logoTask.control = "run"
     m.guide = m.top.findNode("guide")
     m.guide.version = versionText
-    m.guide.settings = m.store.settings
+    m.guide.settings = SettingsStore.guideSettings(m.store.settings)
     m.guide.logoTask = m.logoTask
     m.guide.observeField("action", "onGuideAction")
     m.guide.observeField("input", "noteInput")
@@ -74,6 +82,7 @@ sub init()
     startTeams()
     startSearch()
     startMatchGuide()
+    startAntenna()
     info = CreateObject("roAppInfo")
     m.versionShort = info.GetValue("major_version") + "." + info.GetValue("minor_version")
     m.buildNumber = info.GetValue("build_version")
@@ -97,6 +106,12 @@ end sub
 ' the lineup can be built again when the preferences change; a failed load keeps them.
 sub startPlaylist()
     m.channels = []
+    m.playlistCount = 0
+    m.teamFields = []
+    ' Step 21: a merge-only PlaylistTask is running (D37); a merge or a load asked for while a task runs.
+    m.playlistTaskIsMerge = false
+    m.mergePending = false
+    m.playlistLoadPending = false
     m.lastPlaylistLoad = invalid
     m.playlistTask = invalid
     m.refreshTimer = CreateObject("roSGNode", "Timer")
@@ -112,6 +127,8 @@ sub startPlaylist()
     m.playlistHost = ""
     startGuides()
     loadPlaylist()
+    ' Step 21: the tuners and their lineups, on the playlist's cadence.
+    loadAntenna(false)
 end sub
 
 ' The 15-minute tick: the playlist when stale; the guides now if no playlist load started, else after it.
@@ -123,19 +140,25 @@ end sub
 ' The timer's check, and (step 12) the guide's when it opens: a load when there are no channels or the last load
 ' is more than 10 minutes old (Refresh.isDue, on UpTime, which no clock change moves).
 sub refreshPlaylistIfStale()
-    if m.channels.Count() = 0 or Refresh.isDue(m.lastPlaylistLoad, UpTime(0), Refresh.playlistMaxAgeSeconds)
+    if m.playlistCount = 0 or Refresh.isDue(m.lastPlaylistLoad, UpTime(0), Refresh.playlistMaxAgeSeconds)
         loadPlaylist()
     end if
+    refreshAntennaIfStale()
 end sub
 
 ' One load at a time (MMTVL skips a refresh while one runs). Without a playlist URL there's nothing to load.
 sub loadPlaylist()
-    if m.playlistTask <> invalid then return
+    if m.playlistTask <> invalid
+        ' Step 21: a merge (D37) is quick; the load follows it.
+        if m.playlistTaskIsMerge then m.playlistLoadPending = true
+        return
+    end if
     url = m.store.source
     if url = ""
         ' QA-1: the field too, for the screens that read it.
         m.top.playlistStatus = "No Live TV source yet"
         showPlaylistStatus(m.top.playlistStatus)
+        m.playlistAnswered = true
         resolveLaunch()
         return
     end if
@@ -143,19 +166,50 @@ sub loadPlaylist()
     ' Step 12: the logos' referrer (LogoTask's URLPolicy check).
     m.logoTask.playlistURL = url
     if m.channels.Count() = 0 then showPlaylistStatus("Loading channels…")
-    m.playlistTask = CreateObject("roSGNode", "PlaylistTask")
+    m.playlistTask = newPlaylistTask()
     m.playlistTask.playlistURL = url
-    m.playlistTask.prefs = m.store.prefs
-    m.playlistPrefsRevision = m.prefsRevision
-    ' Step 18: the lineup carries My Teams' last results; newer ones that arrive meanwhile rebuild it.
-    m.playlistTask.teamIDs = m.teamIDs
-    m.playlistTask.upcomingGames = m.upcomingGames
-    m.playlistTeamsRevision = m.teamsRevision
-    m.playlistTask.observeField("result", "onPlaylistResult")
+    m.playlistTaskIsMerge = false
     m.playlistTask.control = "run"
     m.playlistWatchdog.control = "start"
     refreshSettings()
 end sub
+
+' A PlaylistTask with what both kinds of run need: the prefs and My Teams' results for the lineup, and (step 21)
+' the antenna's part to merge after the playlist's.
+function newPlaylistTask() as object
+    task = CreateObject("roSGNode", "PlaylistTask")
+    task.prefs = m.store.prefs
+    m.playlistPrefsRevision = m.prefsRevision
+    ' Step 18: the lineup carries My Teams' last results; newer ones that arrive meanwhile rebuild it.
+    task.teamIDs = m.teamIDs
+    task.upcomingGames = m.upcomingGames
+    m.playlistTeamsRevision = m.teamsRevision
+    task.antenna = antennaPart()
+    m.playlistAntennaRevision = m.antennaRevision
+    task.observeField("result", "onPlaylistResult")
+    return task
+end function
+
+' Step 21 (D37): the antenna's part changed: PlaylistTask merges it with the playlist's part it has, without loading
+' the playlist again (or after the run going now).
+sub startMerge()
+    if m.playlistTask <> invalid
+        m.mergePending = true
+        return
+    end if
+    m.mergePending = false
+    task = newPlaylistTask()
+    task.mergeOnly = true
+    task.base = { channels: m.channels, matchFields: m.guideChannelFields, teamFields: m.teamFields, count: m.playlistCount }
+    m.playlistTask = task
+    m.playlistTaskIsMerge = true
+    task.control = "run"
+    m.playlistWatchdog.control = "start"
+end sub
+
+function antennaPart() as object
+    return { channels: m.antenna.channels, matchFields: m.antenna.matchFields, teamFields: m.antenna.teamFields }
+end function
 
 ' The task didn't answer in time: drop it (the next refresh may start another) and say so, with the host only.
 sub onPlaylistWatchdog()
@@ -164,9 +218,28 @@ sub onPlaylistWatchdog()
     task.unobserveField("result")
     task.control = "stop"
     m.playlistTask = invalid
+    if m.playlistTaskIsMerge
+        ' Step 21: the next antenna or playlist answer merges again.
+        m.playlistTaskIsMerge = false
+        ' The next task to end merges again (its antenna revision reads as old).
+        m.playlistAntennaRevision = -1
+        ' A merge asked for meanwhile waits for that next task too (not restarted here, which could loop every
+        ' watchdog period), so the launch opens now with the channels there are.
+        m.mergePending = false
+        Log.error("Antenna", "No answer from the channel merge; keeping the channels there are")
+        resolveLaunch()
+        if m.playlistLoadPending
+            m.playlistLoadPending = false
+            loadPlaylist()
+        end if
+        return
+    end if
     Log.error("IPTV", "Playlist from " + m.playlistHost + " failed: no answer from the loader")
     m.top.playlistStatus = Log.withHost("Couldn't load the playlist", m.playlistHost)
     showPlaylistStatus(m.top.playlistStatus)
+    m.playlistAnswered = true
+    ' Round 2: a merge the load held back starts now (the launch opens after it).
+    afterPlaylistTask()
     resolveLaunch()
     refreshSettings()
 end sub
@@ -177,30 +250,24 @@ sub onPlaylistResult()
     task.unobserveField("result")
     m.playlistTask = invalid
     m.playlistWatchdog.control = "stop"
+    wasMerge = m.playlistTaskIsMerge
+    m.playlistTaskIsMerge = false
     result = task.result
     if type(result) <> "roAssociativeArray" then return
+    if wasMerge
+        if result.ok = true then applyMergedChannels(result)
+        afterPlaylistTask()
+        resolveLaunch()
+        refreshGuideIfDue()
+        return
+    end if
     if result.ok = true
-        m.channels = result.channels
-        ' Security L-5 of step 9: made by PlaylistTask, off the render thread.
-        m.guideChannelFields = result.matchFields
-        m.guideState.channelsKey = result.channelsKey
         m.lastPlaylistLoad = UpTime(0)
         m.playlistLoadedAt = CreateObject("roDateTime").AsSeconds()
         m.top.playlistGuideURLs = result.guideURLs
-        if m.prefsRevision = m.playlistPrefsRevision and m.teamsRevision = m.playlistTeamsRevision
-            m.lineup = result.lineup
-            m.top.lineup = result.lineup
-            m.guide.lineup = result.lineup
-        else
-            ' QA 4: Groups or Hidden Channels changed while the task ran on the prefs it was given (step 18: or My
-            ' Teams' results did).
-            rebuildLineup()
-        end if
-        ' Step 18: My Teams with the new channels.
-        m.teamsTask.channels = result.teamFields
-        requestTeams()
+        applyMergedChannels(result)
         m.top.playlistStatus = ""
-        loaded = m.channels.Count().ToStr() + " channels"
+        loaded = result.playlistCount.ToStr() + " channels"
         if result.host <> "" then loaded += " from " + result.host
         showPlaylistStatus(loaded)
     else
@@ -209,10 +276,50 @@ sub onPlaylistResult()
         showPlaylistStatus(result.status)
     end if
     updatePlayback()
+    m.playlistAnswered = true
     resolveLaunch()
+    afterPlaylistTask()
     ' As MMTVL's refreshIfStale: the channels first, then the guides (with the last channels after a failure).
     refreshGuideIfDue()
     refreshSettings()
+end sub
+
+' Step 21 (D37): the merged lists and the lineup PlaylistTask built (the playlist's part then the antenna's): only
+' assignments here (security L-5 of step 9), except the lineup again when the prefs or My Teams changed meanwhile
+' (QA 4).
+sub applyMergedChannels(result as object)
+    m.channels = result.channels
+    m.playlistCount = result.playlistCount
+    m.guideChannelFields = result.matchFields
+    m.teamFields = result.teamFields
+    m.guideState.channelsKey = result.channelsKey
+    if m.prefsRevision = m.playlistPrefsRevision and m.teamsRevision = m.playlistTeamsRevision
+        m.lineup = result.lineup
+        m.top.lineup = result.lineup
+        m.guide.lineup = result.lineup
+        if m.searchOpen then pushSearchChannels()
+    else
+        ' QA 4: Groups or Hidden Channels changed while the task ran on the prefs it was given (step 18: or My
+        ' Teams' results did).
+        rebuildLineup()
+    end if
+    ' Step 18: My Teams with the new channels.
+    m.teamsTask.channels = result.teamFields
+    requestTeams()
+    updatePlayback()
+    refreshSettings()
+end sub
+
+' Step 21: what waited for the task that just ended: a merge for a newer antenna part, then a playlist load.
+sub afterPlaylistTask()
+    nextStep = Lineup.afterTask(m.mergePending, m.playlistAntennaRevision, m.antennaRevision, m.playlistLoadPending)
+    if nextStep = "merge"
+        m.mergePending = true
+        startMerge()
+    else if nextStep = "load"
+        m.playlistLoadPending = false
+        loadPlaylist()
+    end if
 end sub
 
 ' M12 step 9: the guides. m.guideState is GuideSources.isRunDue's state: lastKey, fetchedAt, failures and
@@ -263,6 +370,9 @@ sub refreshGuideIfDue()
             busy = true
         end if
     end if
+    ' Step 21 (D38, security L-1): not while an AntennaTask, running or given up on, may be writing SiliconDust's
+    ' guide file, which every run reads.
+    if GuideRuns.antennaBusy(m.antennaGuideDownloading, abandonedAntennaState()) then busy = true
     gated = GuideRuns.gate(m.guideRuns, busy)
     m.guideRuns = gated.runs
     if not gated.go then return
@@ -347,6 +457,8 @@ sub onAbandonedGuideTaskState()
     if not isFinishedTask(task) then return
     releaseAbandonedGuideTask()
     refreshGuideIfDue()
+    ' Step 21: an antenna guide download that waited for this task.
+    antennaGuideMayGo()
 end sub
 
 sub releaseAbandonedGuideTask()
@@ -399,6 +511,9 @@ sub onGuideResult()
     if m.matchTask <> invalid then m.matchTask.guideHolder = task
     pushProgrammes()
     m.guideStatusByID = statusesByID(result.sourcesKey, result.statuses)
+    ' Step 21: the antenna guide's line for Settings and its index for Match Guide's labels.
+    m.antennaGuideRow = result.antenna
+    m.guideAntennaIndex = result.antennaIndex
     afterGuideRun()
 end sub
 
@@ -418,6 +533,8 @@ end function
 ' a delete, then a pending or forced run, which GuideSources.isRunDue still decides), then Settings' lines.
 sub afterGuideRun()
     if GuideRuns.checkAgain(m.guideRuns) then refreshGuideIfDue()
+    ' Step 21 (D38): an antenna guide download that waited for this run.
+    antennaGuideMayGo()
     refreshSettings()
 end sub
 
@@ -440,6 +557,11 @@ end function
 ' (OK in the guide while the playlist loaded). Step 14: it waits while the import confirm shows.
 sub resolveLaunch()
     if not m.launchPending then return
+    ' Step 21: and the antenna's first answer (its watchdog gives one), so a last antenna channel plays at launch;
+    ' whichever answers second opens it.
+    if not m.playlistAnswered or not m.antennaAnswered then return
+    ' D37: and the merge of the antenna's channels that answer started.
+    if Lineup.launchWaits(m.playlistTaskIsMerge, m.mergePending) then return
     ' Step 14: not under an open import (a cold launch with a contentId): Cancel resolves it, Replace loads anew.
     if m.importView <> invalid then return
     m.launchPending = false
@@ -461,9 +583,17 @@ end sub
 ' the channel's programmes and its cached logo.
 sub playChannel(channel as object)
     m.currentChannel = channel
+    ' Step 21: a channel chosen anew may be retried once again (retryAntennaChannel sets this after its retry).
+    m.antennaRetriedID = ""
     saveState(PlayerSession.stateAfterPlaying(m.store.state, channel.id))
     m.player.previousChannelID = PlayerKeys.previousChannelID(m.store.state.recentChannelIDs, channel.id)
-    m.player.channel = PlayerSession.playerItem(channel, playerLogo(channel))
+    item = PlayerSession.playerItem(channel, playerLogo(channel))
+    ' Step 21, MMTVL's tunerBudgetProblem: the app's other antenna streams (none: one Video, which this replaces).
+    if PlayerSession.tunerBudgetProblem(channel, []) <> ""
+        Log.info("Antenna", "Antenna tuners busy: this app holds them all")
+        item.refusal = PlayerSession.busyText(channel.tunerCount)
+    end if
+    m.player.channel = item
     pushProgrammes()
     showScreen("player")
     updatePlayback()
@@ -849,6 +979,8 @@ sub closeSettings()
     end if
     showScreen(back.screen)
     if back.screen = "guide" then noteInput()
+    ' D44: a retry that waited while Settings showed.
+    if m.antennaRetry <> invalid then retryAntennaChannel(m.antennaRetry.minSerial)
 end sub
 
 ' While Settings shows, after anything its pages show changed.
@@ -877,6 +1009,9 @@ sub updateSettingsModel()
         guideLoading: m.guideTask <> invalid,
         caps: m.caps,
         inflateEnabled: GuideSources.inflateEnabled,
+        playlistChannelCount: m.playlistCount,
+        antenna: antennaSettingsInput(),
+        antennaPlaysMPEG2: AntennaConfig.playMPEG2,
         version: m.versionShort,
         build: m.buildNumber
     })
@@ -921,6 +1056,8 @@ sub onSettingsAction()
         if PlayerSession.isText(action.id) then savePrefs(SettingsEdits.channelShown(m.store.prefs, action.id))
     else if kind = "toggleTeam"
         if PlayerSession.isText(action.teamID) then toggleTeam(action.teamID)
+    else if kind = "findTuners"
+        findTuners()
     else if kind = "refresh"
         refreshNow()
     else if kind = "removeSource"
@@ -949,12 +1086,14 @@ sub toggleSetting(name as dynamic)
     Log.info("Settings", "Changed " + name)
     if name = "channelUpMovesUpList" then m.player.channelUpMovesUpList = m.store.settings.channelUpMovesUpList
     if name = "channelLogos"
-        m.guide.settings = m.store.settings
+        m.guide.settings = SettingsStore.guideSettings(m.store.settings)
         if m.currentChannel <> invalid then m.player.logo = playerLogo(m.currentChannel)
     end if
     if name = "usePlaylistGuide" then guidesChanged()
     ' Step 18 (MMTVL's applyTeamMatchOptions): TeamsTask builds the index for the new options, then matches.
     if name = "teamMatchInitials" or name = "teamMatchNicknames" then requestTeams()
+    ' Step 21 (MMTVL's applyAntenna, applyAntennaGuide).
+    if name = "antennaEnabled" or name = "antennaGuide" then antennaSettingsChanged()
 end sub
 
 sub saveGuides(guides as object)
@@ -979,9 +1118,13 @@ end sub
 ' never shown (M6b L2), and Roku's mobile app can type or paste into it (unverified).
 sub openKeyboard(field as dynamic)
     if m.keyboard <> invalid then return
-    if field <> "playlist" and field <> "guide" then return
+    if field <> "playlist" and field <> "guide" and field <> "antennaAddress" then return
     dialog = CreateObject("roSGNode", "StandardKeyboardDialog")
-    if field = "playlist"
+    if field = "antennaAddress"
+        ' Step 21: it starts empty too; the saved address is never shown.
+        dialog.title = "Tuner Address"
+        dialog.message = ["Type the HDHomeRun's IP address on your network, like 192.168.1.20. Choose OK with nothing typed to forget it."]
+    else if field = "playlist"
         dialog.title = "Playlist URL"
         dialog.message = ["Type the M3U address of your playlist, starting with http:// or https://."]
     else
@@ -1006,7 +1149,9 @@ sub onKeyboardButton()
     dialog.text = ""
     field = m.keyboardField
     dialog.close = true
-    if chosen = 0 then applyTypedURL(field, typed)
+    if chosen = 0
+        if field = "antennaAddress" then applyTypedTunerAddress(typed) else applyTypedURL(field, typed)
+    end if
 end sub
 
 sub onKeyboardClosed()
@@ -1054,24 +1199,30 @@ end sub
 ' (a changed channel set reruns the match at once, not after the hourly wait).
 sub changePlaylist()
     stopPlaylistTask()
-    m.channels = []
-    m.guideChannelFields = []
-    m.guideState.channelsKey = invalid
     m.guideState.channelRunAt = invalid
     m.top.playlistGuideURLs = []
     m.playlistLoadedAt = invalid
     m.lastPlaylistLoad = invalid
     forgetTeamResults()
-    rebuildLineup()
+    ' Step 21: the antenna's channels stay (antenna-sized work only).
+    applyAntennaOnly()
     updatePlayback()
     ' QA 2: a guide run going now is for the old playlist; another follows it (after the new channels arrive).
     m.guideRuns = GuideRuns.sourcesChanged(m.guideRuns)
+    m.playlistAnswered = false
     loadPlaylist()
 end sub
 
 sub stopPlaylistTask()
+    m.playlistLoadPending = false
     task = m.playlistTask
     if task = invalid then return
+    ' Step 21: nothing waits for a stopped task; a stopped merge is made again by the next task that ends (round 2:
+    ' mergePending clears, so the launch never waits for a merge that won't come).
+    stopped = Lineup.afterStop(m.playlistTaskIsMerge, m.playlistAntennaRevision)
+    m.mergePending = stopped.mergePending
+    m.playlistAntennaRevision = stopped.taskRevision
+    m.playlistTaskIsMerge = false
     task.unobserveField("result")
     task.control = "stop"
     m.playlistTask = invalid
@@ -1083,6 +1234,8 @@ end sub
 sub refreshNow()
     Log.info("Settings", "Refresh Now")
     m.guideRuns = GuideRuns.refreshNow(m.guideRuns)
+    ' Step 21: the tuners' lineups now, and SiliconDust's guide unless it was downloaded or tried in the last hour.
+    loadAntenna(true)
     if m.store.source = ""
         refreshGuideIfDue()
         return
@@ -1109,8 +1262,6 @@ sub removeSource()
         m.currentChannel = invalid
         m.player.visible = false
     end if
-    m.channels = []
-    m.guideChannelFields = []
     m.top.playlistGuideURLs = []
     m.playlistLoadedAt = invalid
     m.lastPlaylistLoad = invalid
@@ -1118,7 +1269,8 @@ sub removeSource()
     m.top.playlistStatus = "No Live TV source yet"
     showPlaylistStatus(m.top.playlistStatus)
     forgetTeamResults()
-    rebuildLineup()
+    ' Step 21: the antenna's channels stay (MMTVL's Remove Live TV Source forgets the playlist only).
+    applyAntennaOnly()
     updatePlayback()
     forgetGuides()
 end sub
@@ -1140,6 +1292,8 @@ sub deleteGuideFiles()
         end for
     end if
     m.guideStatusByID = {}
+    m.antennaGuideRow = invalid
+    m.guideAntennaIndex = invalid
     ' As after a launch: no run has answered. The current channel set (from the last playlist load) stays.
     m.guideState = { lastKey: invalid, fetchedAt: invalid, failures: invalid, channelsKey: m.guideState.channelsKey, lastChannelsKey: invalid, channelRunAt: invalid, failedRunAt: invalid }
     m.top.guideHolder = invalid
@@ -1295,7 +1449,7 @@ sub applyImportedSettings()
         m.player.visible = false
     end if
     m.player.channelUpMovesUpList = m.store.settings.channelUpMovesUpList
-    m.guide.settings = m.store.settings
+    m.guide.settings = SettingsStore.guideSettings(m.store.settings)
     m.logoTask.playlistURL = m.store.source
     m.prefsRevision = m.prefsRevision + 1
     m.deferredLaunchID = ""
@@ -1303,6 +1457,7 @@ sub applyImportedSettings()
     if m.screen = "player" then showScreen("guide")
     ' Without a playlist there are no channels for the old guides: they go, as Remove Live TV Source's.
     if m.store.source = "" then forgetGuides()
+    antennaSettingsChanged()
     changePlaylist()
     if m.screen = "guide" then openGuide(false)
     refreshSettings()
@@ -1659,7 +1814,8 @@ function guideLabels() as object
     urls = m.top.playlistGuideURLs
     if type(urls) <> "roArray" then urls = []
     sources = GuideSources.chooseSources(m.store.guides, urls, m.store.settings.usePlaylistGuide, m.store.source)
-    return MatchGuide.labels(m.guideState.lastKey, sources)
+    ' Step 21: the antenna guide's "HDHomeRun" at the index the last run gave it.
+    return MatchGuide.withAntennaLabel(MatchGuide.labels(m.guideState.lastKey, sources), m.guideAntennaIndex)
 end function
 
 ' MMTVL's openMatchGuide: the channel menu closes and Match Guide opens once its options load (nothing shows
@@ -1761,4 +1917,442 @@ sub applyGuideMatch(chosen as dynamic)
     closeChannelMenu()
     m.guideRuns = GuideRuns.overridesChanged(m.guideRuns)
     refreshGuideIfDue()
+end sub
+
+' --- step 21: the antenna ----------------------------------------------------------------------------------------
+
+' AntennaTask per request (like PlaylistTask): discovery and the lineups on the playlist's cadence (at launch, the
+' 15-minute tick when 10 minutes old, the guide opening, Refresh Now, Find Tuners, a setting change), answered first
+' (lineupResult, D36), then SiliconDust's guide in the same run when due (result); and the diagnosis of a failed
+' antenna stream. m.antenna holds the last answer's antenna part and Settings' counts: no DeviceID, DeviceAuth or
+' address (the task keeps those); the channels' stream URLs are on the tuner, like the playlist's in the lineup.
+sub startAntenna()
+    m.antenna = newAntennaState()
+    m.antennaTask = invalid
+    m.antennaSerial = 0
+    ' Round 2: the running refresh's serial; answers from any other run are ignored.
+    m.antennaTaskSerial = -1
+    ' D37: goes up with each new antenna part; PlaylistTask merges the newest.
+    m.antennaRevision = 0
+    m.playlistAntennaRevision = 0
+    ' The launch waits for the first lineup answer only while the antenna is on.
+    m.antennaAnswered = not m.store.settings.antennaEnabled
+    ' D38: the running task may write the guide file; one the watchdog gave up on, while alive, and whether it may.
+    m.antennaGuideDownloading = false
+    m.abandonedAntennaTask = invalid
+    m.abandonedAntennaWantedGuide = false
+    ' D38: a run asked for while one runs (manual: Refresh Now), a guide download that had to wait for a guide run,
+    ' and Find Tuners for the next run.
+    m.antennaPending = { run: false, manual: false }
+    m.antennaGuidePending = { wanted: false, manual: false }
+    m.antennaFindWanted = false
+    m.antennaRunIsFind = false
+    m.antennaGuideOutcome = invalid
+    m.antennaGuideRow = invalid
+    m.guideAntennaIndex = invalid
+    ' MMTVL's mayRetry: a failed antenna channel is tried once more after a search or a lineup read.
+    ' D43: { id, minSerial } of the retry a diagnosis asked for, or invalid.
+    m.antennaRetry = invalid
+    m.antennaRetriedID = ""
+    m.antennaDiagnosis = invalid
+    m.antennaWatchdog = CreateObject("roSGNode", "Timer")
+    m.antennaWatchdog.repeat = false
+    m.antennaWatchdog.observeField("fire", "onAntennaWatchdog")
+end sub
+
+function newAntennaState() as object
+    return { channels: [], devices: [], matchFields: [], teamFields: [], matchKey: "", payloadKey: "", leftOut: 0, mpeg2Hidden: 0, typedProblem: "", lineupFailed: 0, lastLoad: invalid, misses: 0, findLine: "" }
+end function
+
+sub refreshAntennaIfStale()
+    if not m.store.settings.antennaEnabled then return
+    if m.antenna.lastLoad = invalid or Refresh.isDue(m.antenna.lastLoad, UpTime(0), Refresh.playlistMaxAgeSeconds) then loadAntenna(false)
+end sub
+
+' One AntennaTask refresh at a time: one asked for meanwhile runs after it (D38). SiliconDust's guide is asked for
+' when Guide from SiliconDust is on and nothing can be reading or writing its file (GuideRuns.antennaMayDownload);
+' otherwise the download waits for that (antennaGuideMayGo). The task decides whether it's due.
+sub loadAntenna(manual as boolean)
+    settings = m.store.settings
+    if not settings.antennaEnabled then return
+    if m.antennaTask <> invalid
+        m.antennaPending.run = true
+        if manual then m.antennaPending.manual = true
+        return
+    end if
+    wantsGuide = false
+    if settings.antennaGuide
+        if GuideRuns.antennaMayDownload(m.guideTask <> invalid, m.abandonedGuideTask <> invalid, abandonedAntennaState())
+            wantsGuide = true
+            m.antennaGuidePending = { wanted: false, manual: false }
+        else
+            m.antennaGuidePending.wanted = true
+            if manual then m.antennaGuidePending.manual = true
+        end if
+    end if
+    m.antennaGuideDownloading = wantsGuide
+    m.antennaRunIsFind = m.antennaFindWanted
+    m.antennaFindWanted = false
+    m.antennaSerial = m.antennaSerial + 1
+    task = CreateObject("roSGNode", "AntennaTask")
+    m.antennaTaskSerial = m.antennaSerial
+    task.request = { kind: "refresh", serial: m.antennaSerial, typed: settings.antennaAddress, mpeg2: m.caps.mpeg2 and AntennaConfig.playMPEG2, guide: wantsGuide, manual: manual, guideHours: m.caps.guideHours, previous: m.antenna.channels }
+    task.observeField("lineupResult", "onAntennaLineup")
+    task.observeField("result", "onAntennaResult")
+    m.antennaTask = task
+    ' Discovery (1.5 s, then hdhomerun.local's 2 s) and the lineups (5 s each); then antennaGuideWatchdogSeconds.
+    m.antennaWatchdog.duration = 90
+    m.antennaWatchdog.control = "start"
+    task.control = "run"
+    refreshSettings()
+end sub
+
+' The download's worst case, plus room: the XMLTV's 180 s; the JSON's 12 pages of 30 s, after up to 16 tuners'
+' discover.json (2 s each) (security L-1: above about 507 s).
+function antennaGuideWatchdogSeconds() as integer
+    if AntennaConfig.guideFormat = "json" then return 600
+    return 300
+end function
+
+' A guide download that waited (a guide run, or an abandoned task) may go now.
+sub antennaGuideMayGo()
+    if not m.antennaGuidePending.wanted or m.antennaTask <> invalid then return
+    if not GuideRuns.antennaMayDownload(m.guideTask <> invalid, m.abandonedGuideTask <> invalid, abandonedAntennaState()) then return
+    manual = m.antennaGuidePending.manual
+    loadAntenna(manual)
+end sub
+
+' { alive, wantedGuide } for an AntennaTask the watchdog or a setting gave up on, else invalid.
+function abandonedAntennaState() as dynamic
+    task = m.abandonedAntennaTask
+    if task = invalid then return invalid
+    return { alive: not isFinishedTask(task), wantedGuide: m.abandonedAntennaWantedGuide }
+end function
+
+' Security L-1: a task given up on may still write the guide file: kept until its state reads stop or done.
+sub abandonAntennaTask(task as object)
+    task.unobserveField("lineupResult")
+    task.unobserveField("result")
+    task.control = "stop"
+    if not isFinishedTask(task) and m.antennaGuideDownloading
+        if m.abandonedAntennaTask <> invalid then m.abandonedAntennaTask.unobserveField("state")
+        m.abandonedAntennaTask = task
+        m.abandonedAntennaWantedGuide = true
+        task.observeField("state", "onAbandonedAntennaTaskState")
+    end if
+    m.antennaGuideDownloading = false
+end sub
+
+sub onAbandonedAntennaTaskState()
+    task = m.abandonedAntennaTask
+    if task = invalid then return
+    if not isFinishedTask(task) then return
+    task.unobserveField("state")
+    m.abandonedAntennaTask = invalid
+    m.abandonedAntennaWantedGuide = false
+    refreshGuideIfDue()
+    antennaGuideMayGo()
+end sub
+
+sub onAntennaWatchdog()
+    task = m.antennaTask
+    if task = invalid then return
+    m.antennaTask = invalid
+    Log.error("Antenna", "No answer from the antenna task; keeping the antenna channels there are")
+    abandonAntennaTask(task)
+    m.antennaAnswered = true
+    resolveLaunch()
+    antennaRunEnded()
+end sub
+
+' D36: the lineup's answer, before any download: the channels, the launch, a waiting retry. The watchdog now waits for
+' the download.
+sub onAntennaLineup()
+    task = m.antennaTask
+    if task = invalid then return
+    answer = task.lineupResult
+    ' Round 2: only the tracked run's own answer.
+    if not isTrackedAnswer(answer) then return
+    task.unobserveField("lineupResult")
+    if m.store.settings.antennaEnabled
+        if PlayerSession.isTrue(answer.ok) then applyAntennaLineup(answer)
+    end if
+    if m.antennaGuideDownloading
+        m.antennaWatchdog.control = "stop"
+        m.antennaWatchdog.duration = antennaGuideWatchdogSeconds()
+        m.antennaWatchdog.control = "start"
+    end if
+    m.antennaAnswered = true
+    resolveLaunch()
+    ' D43: a retry waits for a lineup answer from a run that started after its diagnosis.
+    retryAntennaChannel(answer.serial)
+    refreshSettings()
+end sub
+
+function isTrackedAnswer(answer as dynamic) as boolean
+    if type(answer) <> "roAssociativeArray" then return false
+    if not Refresh.isNumber(answer.serial) then return false
+    return answer.serial = m.antennaTaskSerial
+end function
+
+sub onAntennaResult()
+    task = m.antennaTask
+    if task = invalid then return
+    if not isTrackedAnswer(task.result) then return
+    task.unobserveField("lineupResult")
+    task.unobserveField("result")
+    m.antennaTask = invalid
+    m.antennaWatchdog.control = "stop"
+    result = task.result
+    if type(result) = "roAssociativeArray" and m.store.settings.antennaEnabled
+        guide = result.guide
+        if type(guide) = "roAssociativeArray"
+            if PlayerSession.isTrue(guide.ran)
+                m.antennaGuideOutcome = { ran: true, ok: PlayerSession.isTrue(guide.ok), message: guide.message }
+                if PlayerSession.isTrue(guide.ok) then m.guideRuns = GuideRuns.overridesChanged(m.guideRuns)
+            end if
+        end if
+    end if
+    m.antennaGuideDownloading = false
+    if not m.antennaAnswered
+        m.antennaAnswered = true
+        resolveLaunch()
+    end if
+    antennaRunEnded()
+end sub
+
+' After the download (or the watchdog): the guide runs that waited, a run asked for meanwhile, Settings.
+sub antennaRunEnded()
+    m.antennaRunIsFind = false
+    refreshGuideIfDue()
+    if m.antennaPending.run
+        manual = m.antennaPending.manual
+        m.antennaPending = { run: false, manual: false }
+        loadAntenna(manual)
+    else
+        antennaGuideMayGo()
+    end if
+    refreshSettings()
+end sub
+
+' A lineup answer. No tuner answering once keeps the channels (a tuner missing for one search, as when it reboots);
+' twice in a row, they go. D37: a changed payload (a stream URL, a tuner count) merges the new antenna part into
+' m.channels off the render thread; a changed id/name set also rematches the guides (GuideRuns' rematch: nothing is
+' downloaded again).
+sub applyAntennaLineup(answer as object)
+    a = m.antenna
+    a.lastLoad = UpTime(0)
+    devices = listOr(answer.devices)
+    previousCount = a.devices.Count()
+    a.devices = devices
+    a.typedProblem = answer.typedProblem
+    if devices.Count() = 0 and a.channels.Count() > 0 and a.misses = 0
+        a.misses = 1
+        ' MMTVL's noneAnswered: the tuners known before didn't answer this search.
+        if m.antennaRunIsFind then a.findLine = "No HDHomeRun answered"
+        Log.info("Antenna", "No tuner answered; keeping its channels until the next search")
+        return
+    end if
+    if devices.Count() = 0 then a.misses = a.misses + 1 else a.misses = 0
+    ' D42: Find Tuners' line is its own run's; a change in the tuners found clears an older one.
+    if m.antennaRunIsFind
+        a.findLine = antennaFindLine(devices.Count())
+    else if devices.Count() <> previousCount
+        a.findLine = ""
+    end if
+    a.leftOut = answer.leftOut
+    a.mpeg2Hidden = answer.mpeg2Hidden
+    a.lineupFailed = answer.lineupFailed
+    change = Lineup.antennaChange({ matchKey: a.matchKey, payloadKey: a.payloadKey }, answer)
+    if change.merge
+        a.channels = listOr(answer.channels)
+        a.matchFields = listOr(answer.matchFields)
+        a.teamFields = listOr(answer.teamFields)
+        a.payloadKey = PlayerSession.textOr(answer.payloadKey)
+        m.antennaRevision = m.antennaRevision + 1
+        startMerge()
+    end if
+    if change.rematch
+        a.matchKey = PlayerSession.textOr(answer.matchKey)
+        m.guideRuns = GuideRuns.overridesChanged(m.guideRuns)
+    end if
+end sub
+
+function listOr(value as dynamic) as object
+    if type(value) = "roArray" then return value
+    return []
+end function
+
+' MMTVL's antennaFindLine.
+function antennaFindLine(count as integer) as string
+    if count = 1 then return "Found 1 tuner"
+    if count > 1 then return "Found " + count.ToStr() + " tuners"
+    return "No HDHomeRun found on this network"
+end function
+
+' The playlist gone (Change Playlist URL, Remove Live TV Source): the antenna's part alone, made here (antenna-sized:
+' at most its few hundred channels), until the next load merges again.
+sub applyAntennaOnly()
+    merged = Lineup.mergeParts({}, antennaPart())
+    m.mergePending = false
+    m.playlistAntennaRevision = m.antennaRevision
+    m.channels = merged.channels
+    m.playlistCount = 0
+    m.guideChannelFields = merged.matchFields
+    m.teamFields = merged.teamFields
+    if merged.matchFields.Count() = 0 then m.guideState.channelsKey = invalid else m.guideState.channelsKey = GuideSources.channelsKey(merged.matchFields)
+    m.teamsTask.channels = merged.teamFields
+    rebuildLineup()
+    updatePlayback()
+    if merged.channels.Count() > 0 then requestTeams()
+end sub
+
+' Use Antenna or Guide from SiliconDust changed (Settings or an import). Off: the channels go (and the launch no
+' longer waits); on: a search now. Either way the guides match again. Turning the guide off forgets when it's next
+' due, so turning it on downloads it (MMTVL: due again once it's back; the hour's limit still holds).
+sub antennaSettingsChanged()
+    settings = m.store.settings
+    m.antennaGuideOutcome = invalid
+    if not settings.antennaGuide or not settings.antennaEnabled
+        m.fs.Delete(AntennaConfig.guideDuePath)
+        m.antennaGuidePending = { wanted: false, manual: false }
+    end if
+    if not settings.antennaEnabled
+        task = m.antennaTask
+        if task <> invalid
+            m.antennaTask = invalid
+            m.antennaWatchdog.control = "stop"
+            abandonAntennaTask(task)
+        end if
+        m.antennaPending = { run: false, manual: false }
+        m.antennaAnswered = true
+        hadChannels = m.antenna.channels.Count() > 0
+        m.antenna = newAntennaState()
+        if hadChannels
+            m.antennaRevision = m.antennaRevision + 1
+            startMerge()
+        end if
+        resolveLaunch()
+    else
+        ' Round 2: a launch (an import's) waits for the antenna's lineup again, as at init.
+        if m.launchPending then m.antennaAnswered = false
+        loadAntenna(false)
+    end if
+    m.guideRuns = GuideRuns.overridesChanged(m.guideRuns)
+    refreshGuideIfDue()
+end sub
+
+' Find Tuners: a search now, or right after the one going (D38); its line is that search's.
+sub findTuners()
+    if not m.store.settings.antennaEnabled then return
+    m.antenna.findLine = ""
+    m.antennaFindWanted = true
+    loadAntenna(false)
+end sub
+
+' The keyboard's text for Settings → Antenna → Address: "" forgets it; else a LAN IPv4 literal only
+' (SettingsEdits.checkTunerAddress; AntennaTask checks it again). Never logged or shown.
+sub applyTypedTunerAddress(typed as string)
+    checked = SettingsEdits.checkTunerAddress(typed, URLPolicy.deviceAddresses())
+    typed = ""
+    if not checked.ok
+        settingsMessage("antennaAddress", checked.message)
+        return
+    end if
+    settings = SettingsEdits.copied(m.store.settings)
+    settings.antennaAddress = checked.address
+    if not saveSetting("settings", settings) then return
+    settingsMessage("antennaAddress", "")
+    if checked.address = "" then Log.info("Settings", "Tuner address forgotten") else Log.info("Settings", "Tuner address set")
+    m.antenna.typedProblem = ""
+    loadAntenna(false)
+    updateSettingsModel()
+end sub
+
+' What Settings → Antenna shows (SettingsStatus.antennaOf's input): names, models, counts and lines only.
+' "Searching…" (D42) only for Find Tuners' own search, or while no tuner is known.
+function antennaSettingsInput() as object
+    settings = m.store.settings
+    updated = ""
+    times = invalid
+    if m.fs.Exists(AntennaConfig.guideTimePath) then times = ReadAsciiFile(AntennaConfig.guideTimePath)
+    if PlayerSession.isText(times)
+        seconds = Val(times.Trim(), 10)
+        if seconds > 0 then updated = clockText(Int(seconds))
+    end if
+    searching = m.antennaTask <> invalid and (m.antennaRunIsFind or m.antennaFindWanted or m.antenna.devices.Count() = 0)
+    return {
+        enabled: settings.antennaEnabled,
+        guideOn: settings.antennaGuide,
+        searching: searching,
+        devices: m.antenna.devices,
+        channelCount: m.antenna.channels.Count(),
+        leftOut: m.antenna.leftOut,
+        mpeg2Hidden: m.antenna.mpeg2Hidden,
+        lineupFailed: m.antenna.lineupFailed,
+        typedProblem: m.antenna.typedProblem,
+        addressSet: settings.antennaAddress <> "",
+        findLine: m.antenna.findLine,
+        guide: { row: m.antennaGuideRow, outcome: m.antennaGuideOutcome, updated: updated, loading: m.antennaTask <> invalid and m.antennaGuideDownloading and m.antennaGuideRow = invalid }
+    }
+end function
+
+' --- step 21: a failed antenna stream -----------------------------------------------------------------------------
+
+' The player's Video error on an antenna channel: AntennaTask asks the tuner why (status.json, lineup_status.json;
+' no tuner taken) and the error panel says it (MMTVL L9). A stall (no picture) asks too, with no numbers.
+sub onPlayerFailure()
+    failure = m.player.failure
+    if type(failure) <> "roAssociativeArray" then failure = {}
+    diagnoseAntennaChannel(failure.httpStatus, failure.tunerError)
+end sub
+
+sub diagnoseAntennaChannel(httpStatus as dynamic, tunerError as dynamic)
+    channel = m.currentChannel
+    if channel = invalid or not Lineup.isAntenna(channel) then return
+    if m.antennaDiagnosis <> invalid then m.antennaDiagnosis.unobserveField("result")
+    task = CreateObject("roSGNode", "AntennaTask")
+    m.antennaSerial = m.antennaSerial + 1
+    task.request = { kind: "diagnose", serial: m.antennaSerial, channelID: channel.id, url: channel.url, tunerCount: channel.tunerCount, httpStatus: httpStatus, tunerError: tunerError, codecUnknown: PlayerSession.isTrue(channel.codecUnknown), mpeg2: m.caps.mpeg2 and AntennaConfig.playMPEG2 }
+    task.observeField("result", "onAntennaDiagnosis")
+    m.antennaDiagnosis = task
+    task.control = "run"
+end sub
+
+sub onAntennaDiagnosis()
+    task = m.antennaDiagnosis
+    if task = invalid then return
+    task.unobserveField("result")
+    m.antennaDiagnosis = invalid
+    result = task.result
+    if type(result) <> "roAssociativeArray" then return
+    if not PlayerSession.isTrue(result.ok) or m.currentChannel = invalid then return
+    if result.channelID <> m.currentChannel.id or not m.player.failed then return
+    m.player.errorMessage = result.message
+    ' MMTVL's diagnose: the tuner not answering (a search) or the channel gone from it (the lineup again), once.
+    problem = result.problem
+    if (problem = "unreachable" or problem = "unknownChannel") and m.antennaRetriedID <> result.channelID
+        ' D43: the run that starts now (or after the one going) is the first that can see the new address.
+        m.antennaRetry = { id: result.channelID, minSerial: m.antennaSerial + 1 }
+        loadAntenna(false)
+    end if
+end sub
+
+' D35, D43, D44: after the search or lineup read asked for by onAntennaDiagnosis answered (a lineup answer from a
+' run that started after it), the channel is played again in place (PlayerSession.retryAction: the player wherever
+' it shows, full screen or in the guide's preview; the screen never changes), with the antenna part's fresh copy
+' (its new address, if it moved), when it still fails. Under Settings it waits for closeSettings.
+sub retryAntennaChannel(answerSerial as dynamic)
+    retry = m.antennaRetry
+    if retry = invalid then return
+    fresh = PlayerSession.channelByID(m.antenna.channels, retry.id)
+    decision = PlayerSession.retryAction(retry, m.currentChannel, m.player.failed, fresh, m.screen, answerSerial)
+    if decision.keep then return
+    m.antennaRetry = invalid
+    if not decision.replay then return
+    Log.info("Antenna", "Trying the antenna channel once more")
+    m.currentChannel = fresh
+    m.antennaRetriedID = decision.channelID
+    m.player.channel = PlayerSession.playerItem(fresh, playerLogo(fresh))
+    updatePlayback()
 end sub

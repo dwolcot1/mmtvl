@@ -16,6 +16,10 @@ end sub
 sub loadPlaylist()
     host = Log.host(m.top.playlistURL)
     try
+        if m.top.mergeOnly = true
+            mergeOnly()
+            return
+        end if
         loadPlaylistFrom(m.top.playlistURL, host)
     catch e
         ' Never the exception's message, which could quote the URL: its number only.
@@ -47,11 +51,6 @@ sub loadPlaylistFrom(url as string, host as string)
     end if
     channels = M3U.makeChannels(playlist.entries)
     guideURLs = allowedGuideURLs(playlist.guideURLs, url)
-    teamIDs = m.top.teamIDs
-    if type(teamIDs) <> "roArray" then teamIDs = []
-    upcomingGames = m.top.upcomingGames
-    if type(upcomingGames) <> "roArray" then upcomingGames = []
-    sorted = Lineup.build(channels, m.top.prefs, teamIDs, upcomingGames)
     Log.info("IPTV", "Loaded " + channels.Count().ToStr() + " channels from " + host)
     ' Step 9 (security L-5): the guide's channel fields and their key, here rather than on the render thread.
     fields = GuideSources.matchFields(channels)
@@ -60,8 +59,36 @@ sub loadPlaylistFrom(url as string, host as string)
     for each channel in channels
         teamFields.Push({ id: channel.id, name: channel.name, group: channel.group })
     end for
-    m.top.result = { ok: true, host: host, channels: channels, lineup: sorted, guideURLs: guideURLs, matchFields: fields, channelsKey: GuideSources.channelsKey(fields), teamFields: teamFields }
+    result = mergedResult({ channels: channels, matchFields: fields, teamFields: teamFields })
+    result.host = host
+    result.guideURLs = guideURLs
+    m.top.result = result
 end sub
+
+' Step 21 (D37): the scene's current playlist part (the first base.count of its merged lists) with a new antenna
+' part, so a changed antenna lineup never runs the merge, the key or Lineup.build on the render thread.
+sub mergeOnly()
+    base = m.top.base
+    count = 0
+    if type(base) = "roAssociativeArray"
+        if Refresh.isNumber(base.count) then count = Int(base.count)
+    end if
+    result = mergedResult(Lineup.playlistPart(base, count))
+    result.mergeOnly = true
+    m.top.result = result
+end sub
+
+' The playlist part merged with the task's antenna part (Lineup.mergeParts), then the lineup, the guide's key and
+' the result the scene assigns as it is.
+function mergedResult(playlistPart as object) as object
+    merged = Lineup.mergeParts(playlistPart, m.top.antenna)
+    teamIDs = m.top.teamIDs
+    if type(teamIDs) <> "roArray" then teamIDs = []
+    upcomingGames = m.top.upcomingGames
+    if type(upcomingGames) <> "roArray" then upcomingGames = []
+    sorted = Lineup.build(merged.channels, m.top.prefs, teamIDs, upcomingGames)
+    return { ok: true, mergeOnly: false, host: "", channels: merged.channels, playlistCount: merged.playlistCount, lineup: sorted, guideURLs: [], matchFields: merged.matchFields, channelsKey: GuideSources.channelsKey(merged.matchFields), teamFields: merged.teamFields }
+end function
 
 function playlistFailure(host as string) as object
     return { ok: false, host: host, status: Log.withHost("Couldn't load the playlist", host) }

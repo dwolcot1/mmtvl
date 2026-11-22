@@ -127,4 +127,29 @@ namespace GuideRuns
         return { pending: runs.pending = true, force: runs.force = true, deletePending: runs.deletePending = true, rematch: runs.rematch = true }
     end function
 
+    ' Step 21 (D38, security L-1): whether guide runs wait for the antenna: an AntennaTask may be writing
+    ' SiliconDust's guide file (downloading: the running task asked for the guide), or one the watchdog gave up on
+    ' (abandoned: { alive, wantedGuide }, or invalid) is still alive and asked for it. XMLTVScan reads by path and
+    ' offset, so a run reading meanwhile could read halves of two files.
+    function antennaBusy(downloading as boolean, abandoned as dynamic) as boolean
+        if downloading then return true
+        if type(abandoned) <> "roAssociativeArray" then return false
+        return GuideRuns.flag(abandoned.alive) and GuideRuns.flag(abandoned.wantedGuide)
+    end function
+
+    ' Step 21 (D38): whether an antenna refresh may download the guide: no guide run alive (it reads the file), none
+    ' given up on and still alive, and no AntennaTask given up on and still alive (it may still be writing the file).
+    function antennaMayDownload(guideRunAlive as boolean, abandonedGuideRunAlive as boolean, abandonedAntenna as dynamic) as boolean
+        if guideRunAlive or abandonedGuideRunAlive then return false
+        if type(abandonedAntenna) = "roAssociativeArray"
+            if GuideRuns.flag(abandonedAntenna.alive) then return false
+        end if
+        return true
+    end function
+
+    function flag(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return (kind = "boolean" or kind = "roboolean") and value
+    end function
+
 end namespace

@@ -42,20 +42,13 @@ sub serve(request as object)
         data = invalid
         holder = m.top.guideHolder
         if holder <> invalid then data = holder.matchData
-        sources = []
-        if type(data) = "roAssociativeArray"
-            if type(data.guides) = "roArray"
-                for i = 0 to data.guides.Count() - 1
-                    list = data.guides[i]
-                    if type(list) <> "roArray" then list = []
-                    sources.Push({ sourceID: i.ToStr(), channels: list })
-                end for
-            end if
-        end if
-        suggestions = EPGSuggester.rank(channel, sources, suggestionLimit, m.normalizer)
+        ' Step 21: an antenna channel gets the antenna guide's suggestions first (MMTVL M7j L12).
+        offered = EPGSuggester.suggestions(channel, data, suggestionLimit, m.normalizer)
+        suggestions = offered.suggestions
         options = MatchGuide.options(channel, data, request.overrides, suggestions, m.normalizer.nonASCII)
         #if DEBUG
-            Log.info("Guide", "Match Guide: " + options.candidates.Count().ToStr() + " candidates from " + sources.Count().ToStr() + " guide(s) in " + timer.TotalMilliseconds().ToStr() + " ms")
+            guideCount = offered.guideCount
+            Log.info("Guide", "Match Guide: " + options.candidates.Count().ToStr() + " candidates from " + guideCount.ToStr() + " guide(s) in " + timer.TotalMilliseconds().ToStr() + " ms")
         #end if
         m.top.answer = { serial: request.serial, channelID: channel.id, ok: true, options: options }
     catch e

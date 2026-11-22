@@ -456,6 +456,27 @@ namespace SettingsStoreTests
         t.assertFalse(reloaded.settings.channelLogos)
     end sub
 
+    ' Step 21: the typed tuner address is Roku-only text: it round-trips, reads a wrong type or an over-long value as
+    ' "", and an import keeps it.
+    sub test_theTunerAddressRoundTripsAndSurvivesAnImport(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        t.assertEqual(store.settings.antennaAddress, "", "none by default")
+        settings = SettingsStore.defaultSettings()
+        settings.antennaAddress = "192.168.1.20"
+        t.assertTrue(SettingsStore.save(store, "settings", settings).ok)
+        t.assertEqual(SettingsStore.load(registry).settings.antennaAddress, "192.168.1.20")
+        t.assertTrue(SettingsStore.replaceAll(store, SettingsStoreTests.bundle()).ok)
+        t.assertEqual(store.settings.antennaAddress, "192.168.1.20", "an import keeps it")
+        t.assertEqual(SettingsStore.load(registry).settings.antennaAddress, "192.168.1.20")
+        registry.data.settings = FormatJson({ antennaAddress: 5 })
+        t.assertEqual(SettingsStore.load(registry).settings.antennaAddress, "", "a number reads as none")
+        registry.data.settings = FormatJson({ antennaAddress: String(65, "1") })
+        t.assertEqual(SettingsStore.load(registry).settings.antennaAddress, "", "over 64 characters reads as none")
+        registry.data.settings = FormatJson({ antennaAddress: true })
+        t.assertEqual(SettingsStore.load(registry).settings.antennaAddress, "", "a boolean reads as none")
+    end sub
+
     sub test_anUnknownSpaceAnswerCountsAsEnough(t as object)
         registry = SettingsStoreTests.fakeRegistry(invalid)
         store = SettingsStore.load(registry)
@@ -592,7 +613,8 @@ namespace SettingsStoreTests
         return result
     end function
 
-    ' AppSettings.swift's defaults for the six migrated settings, plus the Roku-only channelLogos (on, L7 as amended).
+    ' AppSettings.swift's defaults for the six migrated settings, plus the Roku-only channelLogos (on, L7 as amended)
+    ' and antennaAddress (none, step 21).
     function mmtvlDefaults() as object
         return {
             channelUpMovesUpList: true,
@@ -601,7 +623,8 @@ namespace SettingsStoreTests
             teamMatchNicknames: false,
             antennaEnabled: true,
             antennaGuide: true,
-            channelLogos: true
+            channelLogos: true,
+            antennaAddress: ""
         }
     end function
 
@@ -625,7 +648,8 @@ namespace SettingsStoreTests
                 teamMatchNicknames: true,
                 antennaEnabled: false,
                 antennaGuide: false,
-                channelLogos: true
+                channelLogos: true,
+                antennaAddress: ""
             }
         }
     end function

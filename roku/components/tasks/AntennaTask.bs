@@ -1,0 +1,329 @@
+' AntennaTask (M12 step 21; fields in AntennaTask.xml): the real network for HDHomeRun.bs, AntennaLineup.bs and
+' AntennaGuide.bs. A crash still sets { ok: false } (as PlaylistTask), and the scene keeps what it has.
+
+sub init()
+    m.top.functionName = "runAntenna"
+end sub
+
+sub runAntenna()
+    request = m.top.request
+    if type(request) <> "roAssociativeArray" then request = {}
+    m.token = LCase(Left(CreateObject("roDeviceInfo").GetRandomUUID().Replace("-", ""), 8))
+    if HDHomeRun.isText(request.kind) and request.kind = "diagnose"
+        try
+            m.top.result = diagnoseStream(request)
+        catch e
+            Log.error("Antenna", "The antenna diagnosis stopped (error " + errorNumber(e) + ")")
+            m.top.result = { ok: false, kind: "diagnose", serial: request.serial }
+        end try
+        cleanupFiles()
+        return
+    end if
+    ' D36: the lineup answers first (lineupResult), then SiliconDust's guide when due (result). A crash still answers
+    ' both (ok false), and the run's leftovers in tmp: and cachefs: are deleted either way (security L-2).
+    m.serial = request.serial
+    config = { broadcast: AntennaConfig.discoverByBroadcast, byName: AntennaConfig.discoverByName, nameNeedsPeer: AntennaConfig.nameNeedsPeer }
+    sink = {
+        task: m.top, serial: request.serial, answered: false,
+        lineup: sub(answer as object)
+            answer.serial = m.serial
+            m.answered = true
+            m.task.lineupResult = answer
+        end sub,
+        done: sub(guide as object)
+            m.task.result = { ok: true, kind: "refresh", serial: m.serial, guide: guide }
+        end sub,
+        failed: sub()
+            if not m.answered then m.task.lineupResult = { ok: false, serial: m.serial }
+            m.task.result = { ok: false, kind: "refresh", serial: m.serial, guide: { ran: false, ok: false, message: "" } }
+        end sub
+    }
+    AntennaLineup.refreshRun(realIO(), config, request, sink)
+end sub
+
+function errorNumber(e as dynamic) as string
+    if type(e) = "roAssociativeArray"
+        if HDHomeRun.isInteger(e.number) then return e.number.ToStr()
+    end if
+    return "?"
+end function
+
+' Security L-2: what a diagnosis may leave: its GET body (its own token's; never the guide's .part, which a refresh
+' running alongside may be writing).
+sub cleanupFiles()
+    CreateObject("roFileSystem").Delete(bodyPath(m.token))
+end sub
+
+function bodyPath(token as string) as string
+    return "tmp:/mmtvl-antenna-" + token + ".body"
+end function
+
+' SiliconDust's guide into AntennaConfig.guideDataPath (AntennaGuide.fetch reads each tuner's DeviceAuth fresh, in its
+' locals). The attempt, success and next due times go next to it. { ran, ok, message }. Runs with m = the io.
+function ioDownloadGuide(devices as object, guideHours as dynamic) as object
+    fs = CreateObject("roFileSystem")
+    if not fs.Exists(AntennaConfig.guideDirectory) then fs.CreateDirectory(AntennaConfig.guideDirectory)
+    now = CreateObject("roDateTime").AsSeconds()
+    WriteAsciiFile(AntennaConfig.guideAttemptPath, now.ToStr())
+    fs.Delete(AntennaConfig.guidePartPath)
+    hours = 48
+    if HDHomeRun.isInteger(guideHours) then hours = guideHours
+    outcome = AntennaGuide.fetch(m, devices, { format: AntennaConfig.guideFormat, gzip: AntennaConfig.guideHTTPGzip, now: now, windowEnd: now + hours * 3600, partPath: AntennaConfig.guidePartPath })
+    if outcome.ok and fileBytes(AntennaConfig.guidePartPath) <= 0 then outcome = { ok: false, message: "The guide was empty" }
+    if outcome.ok
+        fs.Delete(AntennaConfig.guideDataPath)
+        if not fs.Rename(AntennaConfig.guidePartPath, AntennaConfig.guideDataPath)
+            if fs.CopyFile(AntennaConfig.guidePartPath, AntennaConfig.guideDataPath) then fs.Delete(AntennaConfig.guidePartPath) else outcome = { ok: false, message: "Couldn't save the guide" }
+        end if
+    end if
+    fs.Delete(AntennaConfig.guidePartPath)
+    if outcome.ok
+        WriteAsciiFile(AntennaConfig.guideTimePath, now.ToStr())
+        due = AntennaGuide.nextDue(now, Rnd(0))
+        WriteAsciiFile(AntennaConfig.guideDuePath, due.ToStr())
+        Log.info("Antenna", "Guide from " + AntennaGuide.host + " saved; next in about " + Int((due - now) / 3600 + 0.5).ToStr() + " h")
+    else
+        WriteAsciiFile(AntennaConfig.guideDuePath, (now + AntennaGuide.retryAfterFailureSeconds).ToStr())
+    end if
+    return { ran: true, ok: outcome.ok, message: outcome.message }
+end function
+
+' What AntennaGuide.downloadStep reads: the file and its three times.
+function guideFiles() as object
+    fs = CreateObject("roFileSystem")
+    files = { hasFile: fs.Exists(AntennaConfig.guideDataPath) }
+    files.time = readSecondsFile(fs, AntennaConfig.guideTimePath)
+    files.due = readSecondsFile(fs, AntennaConfig.guideDuePath)
+    files.attempt = readSecondsFile(fs, AntennaConfig.guideAttemptPath)
+    return files
+end function
+
+function readSecondsFile(fs as object, path as string) as dynamic
+    if not fs.Exists(path) then return invalid
+    return AntennaGuide.readSeconds(ReadAsciiFile(path))
+end function
+
+' Why an antenna stream failed, from the tuner (HDHomeRun.diagnose: status.json, lineup_status.json; no tuner taken).
+function diagnoseStream(request as object) as object
+    problem = "unreachable"
+    if HDHomeRun.isText(request.url) then problem = HDHomeRun.diagnose(realIO(), HDHomeRun.originOf(request.url), request.httpStatus, request.tunerError)
+    ' D40: the MPEG-2 hint, for a channel whose codec the lineup didn't name on a Roku that can't play MPEG-2.
+    hint = HDHomeRun.isTrue(request.codecUnknown) and not HDHomeRun.isTrue(request.mpeg2)
+    return { ok: true, kind: "diagnose", serial: request.serial, channelID: request.channelID, problem: problem, message: HDHomeRun.problemMessage(problem, request.tunerCount, hint) }
+end function
+
+' --- the real io (HDHomeRun.bs's header) ------------------------------------------------------------------------
+
+function realIO() as object
+    return {
+        token: m.token,
+        now: ioNow,
+        guideFiles: guideFiles,
+        downloadGuide: ioDownloadGuide,
+        cleanup: ioCleanup,
+        ownAddresses: ioOwnAddresses,
+        broadcast: ioBroadcast,
+        get: ioGet,
+        download: ioDownload,
+        writeText: ioWriteText,
+        log: ioLog
+    }
+end function
+
+function ioNow() as integer
+    return CreateObject("roDateTime").AsSeconds()
+end function
+
+' The end of a refresh (security L-2): its GET body (a discover.json holds a DeviceAuth) and, only when this run
+' downloaded, the guide's .part (round 2: never an abandoned run's file mid-write). Runs with m = the io.
+sub ioCleanup(downloaded as boolean)
+    fs = CreateObject("roFileSystem")
+    fs.Delete(bodyPath(m.token))
+    if downloaded then fs.Delete(AntennaConfig.guidePartPath)
+end sub
+
+function ioOwnAddresses() as object
+    return URLPolicy.deviceAddresses()
+end function
+
+sub ioLog(level as string, text as string)
+    if level = "error"
+        Log.error("Antenna", text)
+    else if level = "warn"
+        Log.warn("Antenna", text)
+    else
+        Log.info("Antenna", text)
+    end if
+end sub
+
+' The discover request to each target on UDP 65001, sent twice (300 ms apart), replies read until waitMs: at most 256
+' datagrams read and 64 kept, at most 4 per address, 1,500 bytes each. Unverified on a device: whether a Roku sends
+' broadcasts at all (probe f).
+function ioBroadcast(requestHex as string, targets as object, waitMs as integer) as object
+    kept = []
+    socket = CreateObject("roDataGramSocket")
+    if socket = invalid then return kept
+    port = CreateObject("roMessagePort")
+    socket.SetMessagePort(port)
+    try
+        socket.SetBroadcast(true)
+    catch e
+        Log.warn("Antenna", "Antenna discovery: this Roku refused the broadcast option")
+    end try
+    socket.NotifyReadable(true)
+    packet = CreateObject("roByteArray")
+    packet.FromHexString(requestHex)
+    timer = CreateObject("roTimespan")
+    read = 0
+    perSource = {}
+    sends = 0
+    while timer.TotalMilliseconds() < waitMs
+        if sends = 0 or (sends = 1 and timer.TotalMilliseconds() >= 300)
+            for each target in targets
+                address = CreateObject("roSocketAddress")
+                address.SetAddress(target + ":" + HDHomeRun.portText)
+                socket.SetSendToAddress(address)
+                socket.Send(packet, 0, packet.Count())
+            end for
+            sends += 1
+        end if
+        msg = Wait(100, port)
+        if type(msg) = "roSocketEvent"
+            while socket.IsReadable() and read < 256 and kept.Count() < 64
+                buffer = CreateObject("roByteArray")
+                buffer[1499] = 0
+                count = socket.Receive(buffer, 0, 1500)
+                if count <= 0 then exit while
+                read += 1
+                source = socket.GetReceivedFromAddress().GetAddress()
+                if HDHomeRun.isText(source)
+                    colon = Instr(1, source, ":")
+                    if colon > 0 then source = Left(source, colon - 1)
+                    seen = perSource[source]
+                    if seen = invalid then seen = 0
+                    if seen < 4
+                        perSource[source] = seen + 1
+                        data = CreateObject("roByteArray")
+                        for i = 0 to count - 1
+                            data.Push(buffer[i])
+                        end for
+                        kept.Push({ hex: data.ToHexString(), source: source })
+                    end if
+                end if
+            end while
+        end if
+        if read >= 256 or kept.Count() >= 64 then exit while
+    end while
+    socket.Close()
+    return kept
+end function
+
+' An http GET (status 200, at most maxBytes, within timeoutMs) through a file in tmp:, so the size is checked while it
+' arrives. Only the tuner's own kind of address (a private IPv4 literal, or hdhomerun.local) over http, or
+' SiliconDust's host over https. { ok, code, text, peer }. Redirects can't be turned off on a Roku: callers compare
+' peer (GetTargetIpAddress, when reported) with the address they asked.
+function ioGet(url as string, maxBytes as dynamic, timeoutMs as dynamic) as object
+    result = { ok: false, code: 0, text: "", peer: "", reason: "" }
+    if not isAllowedURL(url) then return result
+    path = bodyPath(m.token)
+    got = transferToFile(url, path, maxBytes, timeoutMs, false)
+    result.code = got.code
+    result.peer = got.peer
+    result.reason = got.reason
+    if got.ok then result.text = ReadAsciiFile(path)
+    result.ok = got.ok
+    CreateObject("roFileSystem").Delete(path)
+    if got.ok and HDHomeRun.isText(got.peer) and got.peer <> "" and LCase(Left(url, 8)) = "https://"
+        if not URLPolicy.allowsPeer(got.peer, true).ok
+            result.ok = false
+            result.text = ""
+            result.reason = "refused"
+        end if
+    end if
+    return result
+end function
+
+' The guide download into path (cachefs:), https to SiliconDust's host only; the address it reached must be public.
+function ioDownload(url as string, path as string, maxBytes as dynamic, timeoutMs as dynamic, gzip as boolean) as object
+    if LCase(Left(url, 8)) <> "https://" or Log.host(url) <> AntennaGuide.host then return { ok: false, code: 0, reason: "refused" }
+    got = transferToFile(url, path, maxBytes, timeoutMs, gzip)
+    if got.ok and HDHomeRun.isText(got.peer) and got.peer <> ""
+        if not URLPolicy.allowsPeer(got.peer, true).ok then return { ok: false, code: got.code, reason: "refused" }
+    end if
+    return { ok: got.ok, code: got.code, reason: got.reason }
+end function
+
+function ioWriteText(path as string, text as string) as boolean
+    bytes = CreateObject("roByteArray")
+    bytes.FromAsciiString(text)
+    return bytes.WriteFile(path)
+end function
+
+' http to a private IPv4 literal or hdhomerun.local; https to SiliconDust's host.
+function isAllowedURL(url as string) as boolean
+    lower = LCase(url)
+    if Left(lower, 8) = "https://" then return Log.host(url) = AntennaGuide.host
+    if Left(lower, 7) <> "http://" then return false
+    if Log.host(url) = HDHomeRun.fallbackHost then return HDHomeRun.urlParts(url) <> invalid
+    return HDHomeRun.originOf(url) <> ""
+end function
+
+' GET url into path, at most maxBytes, within timeoutMs. { ok, code, peer, reason } (reason "tooLarge", "timedOut",
+' "network" or ""); never the URL.
+function transferToFile(url as string, path as string, maxBytes as dynamic, timeoutMs as dynamic, gzip as boolean) as object
+    result = { ok: false, code: 0, peer: "", reason: "" }
+    fs = CreateObject("roFileSystem")
+    fs.Delete(path)
+    port = CreateObject("roMessagePort")
+    transfer = CreateObject("roUrlTransfer")
+    transfer.SetUrl(url)
+    transfer.SetPort(port)
+    if LCase(Left(url, 8)) = "https://" then transfer.SetCertificatesFile("common:/certs/ca-bundle.crt")
+    transfer.EnableEncodings(gzip)
+    transfer.RetainBodyOnError(false)
+    if not transfer.AsyncGetToFile(path)
+        result.reason = "network"
+        return result
+    end if
+    timer = CreateObject("roTimespan")
+    while true
+        remaining = timeoutMs - timer.TotalMilliseconds()
+        if remaining <= 0
+            transfer.AsyncCancel()
+            result.reason = "timedOut"
+            exit while
+        end if
+        if remaining > 100 then remaining = 100
+        msg = Wait(remaining, port)
+        if type(msg) = "roUrlEvent"
+            if msg.GetInt() = 1
+                result.code = msg.GetResponseCode()
+                peer = msg.GetTargetIpAddress()
+                if HDHomeRun.isText(peer) then result.peer = peer
+                result.ok = result.code = 200
+                if result.code < 0 then result.reason = "network"
+                exit while
+            end if
+        end if
+        if fileBytes(path) > maxBytes
+            transfer.AsyncCancel()
+            result.reason = "tooLarge"
+            exit while
+        end if
+    end while
+    if result.ok and fileBytes(path) > maxBytes
+        result.ok = false
+        result.reason = "tooLarge"
+    end if
+    if not result.ok then fs.Delete(path)
+    return result
+end function
+
+function fileBytes(path as string) as dynamic
+    info = CreateObject("roFileSystem").Stat(path)
+    if type(info) <> "roAssociativeArray" then return 0
+    size = info.size
+    kind = LCase(type(size))
+    if kind = "integer" or kind = "roint" or kind = "rointeger" or kind = "longinteger" or kind = "rolonginteger" or kind = "double" or kind = "rodouble" or kind = "float" or kind = "rofloat" then return size
+    return 0
+end function

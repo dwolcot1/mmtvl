@@ -25,6 +25,12 @@
 '     with a channel past XMLTVScan.maximumPerChannel. invalid: no limit.
 '   maxInflatedBytes (optional): at most this many bytes inflated across all guides (GuideTask's cachefs: budget
 '     after its downloads); a .gz that would pass it is "Too large for this Roku". invalid: no limit.
+'   antenna (optional, step 21): { keep, path, xmlPath }: SiliconDust's guide for the antenna channels (channels
+'     with source "antenna" and a guideNumber), read after the other guides when keep (Use Antenna and Guide from
+'     SiliconDust on) and there are antenna channels. Its entry is the last of result.guides (antennaIndex); the
+'     antenna channels match it by AntennaGuide's rules (an override naming a pasted guide's channel wins), or
+'     with keep false the pasted guides by EPGMatcher's. Playlist channels never match it. A missing file is
+'     "Not loaded yet" (problem "notLoaded").
 ' }
 ' result: {
 '   guides: [{ status, ok, problem, matched, channels, programmes, xmlPath, stopped, shortened }]   in request order:
@@ -38,6 +44,7 @@
 '     stopped  the observer stopped this guide
 '   matches: { channel id: { guide, sourceID, epgID } }   (sourceID: the guide's index as a string)
 '   stopped: true when the observer stopped any guide
+'   antennaIndex: the antenna guide's index in guides, or invalid when it wasn't read
 ' }
 ' Never logs or returns a URL: statuses carry Log.host only.
 namespace GuidePipeline
@@ -47,6 +54,7 @@ namespace GuidePipeline
     const tooLargeStatus = "Too large for this Roku"
     const failedPrefix = "Failed: "
     const shortenedSuffix = " (guide shortened)"
+    const notLoadedStatus = "Not loaded yet"
 
     function process(request as object) as object
         observer = request.observer
@@ -64,7 +72,32 @@ namespace GuidePipeline
             sources.Push({ sourceID: i.ToStr(), channels: entry.channels })
         end for
 
-        matches = EPGMatcher.match(request.channels, sources, request.overrides)
+        ' Step 21: the antenna guide (request.antenna), after the others, for the antenna channels only; playlist
+        ' channels never match it (MMTVL's guideMatches).
+        playlistChannels = []
+        antennaChannels = []
+        for each channel in request.channels
+            if GuidePipeline.isAntenna(channel) then antennaChannels.Push(channel) else playlistChannels.Push(channel)
+        end for
+        antennaIndex = invalid
+        antennaRequest = request.antenna
+        if type(antennaRequest) = "roAssociativeArray" and antennaChannels.Count() > 0
+            if antennaRequest.keep = true
+                entry = GuidePipeline.readAntennaGuide(antennaRequest, request, chunkBytes, observer, budget)
+                if entry.stopped then stopped = true
+                results.Push(entry)
+                antennaIndex = results.Count() - 1
+            end if
+        end if
+        matches = EPGMatcher.match(playlistChannels, sources, request.overrides)
+        if antennaChannels.Count() > 0
+            guideChannels = invalid
+            if antennaIndex <> invalid then guideChannels = results[antennaIndex].channels
+            found = AntennaGuide.matches(antennaChannels, guideChannels, sources, request.overrides, antennaIndex)
+            for each channelID in found
+                if not matches.DoesExist(channelID) then matches[channelID] = found[channelID]
+            end for
+        end if
         wanted = []
         for i = 0 to results.Count() - 1
             wanted.Push(EPGMatcher.newSet())
@@ -99,7 +132,21 @@ namespace GuidePipeline
                 if entry.shortened then entry.status += GuidePipeline.shortenedSuffix
             end if
         end for
-        return { guides: results, matches: matches, stopped: stopped }
+        return { guides: results, matches: matches, stopped: stopped, antennaIndex: antennaIndex }
+    end function
+
+    ' Step 21: the antenna guide's step 1 (AntennaGuide's file, which AntennaTask downloads; GuideTask never fetches
+    ' it). No file yet: an empty entry with status "Not loaded yet", and no warning.
+    function readAntennaGuide(antennaRequest as object, request as object, chunkBytes as integer, observer as dynamic, budget as object) as object
+        path = antennaRequest.path
+        hasFile = false
+        if GuideSources.isText(path)
+            if path <> "" then hasFile = CreateObject("roFileSystem").Exists(path)
+        end if
+        if not hasFile
+            return { status: GuidePipeline.notLoadedStatus, ok: false, problem: "notLoaded", matched: 0, channels: [], programmes: EPGMatcher.newSet(), xmlPath: "", stopped: false, shortened: false }
+        end if
+        return GuidePipeline.readChannels({ url: AntennaGuide.xmltvEndpoint, path: path, xmlPath: antennaRequest.xmlPath }, request, chunkBytes, observer, budget)
     end function
 
     ' The programmes a channel shows: its match's guide and EPG id. invalid when it has no guide or none kept.
@@ -187,6 +234,12 @@ namespace GuidePipeline
         bytes = CreateObject("roByteArray")
         if not bytes.ReadFile(path, 0, 2) then return false
         return bytes.Count() = 2 and bytes[0] = 31 and bytes[1] = 139
+    end function
+
+    function isAntenna(channel as object) as boolean
+        source = channel.source
+        if not GuideSources.isText(source) then return false
+        return source = "antenna"
     end function
 
     function isTrue(value as dynamic) as boolean

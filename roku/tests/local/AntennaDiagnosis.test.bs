@@ -1,0 +1,186 @@
+' Why an antenna stream failed (M12 step 21): MMTVL's AntennaDiagnosisTests, all 8, against a fake tuner (the io's
+' get answers status.json and lineup_status.json), plus the Roku's additions: X-HDHomeRun-Error 805, the numbers
+' read from a Video error's texts, the busy text the scene shows, and the app's own tuner count.
+namespace AntennaDiagnosisTests
+
+    sub test_allBusyIsTunersInUse(t as object)
+        problem = AntennaDiagnosisTests.diagnose(AntennaDiagnosisTests.statusJSON(2), AntennaDiagnosisTests.lineupStatusJSON(false), 503)
+        t.assertEqual(problem, "allTunersInUse")
+        t.assertEqual(HDHomeRun.problemMessage(problem, 2), "Both antenna tuners are in use")
+        ' Busy wins over a 404 and a scan: the tuners' own state decides first.
+        t.assertEqual(AntennaDiagnosisTests.diagnose(AntennaDiagnosisTests.statusJSON(2), AntennaDiagnosisTests.lineupStatusJSON(true), 404), "allTunersInUse")
+    end sub
+
+    sub test_scanIsScanning(t as object)
+        problem = AntennaDiagnosisTests.diagnose(AntennaDiagnosisTests.statusJSON(0), AntennaDiagnosisTests.lineupStatusJSON(true), 503)
+        t.assertEqual(problem, "scanning")
+        t.assertEqual(HDHomeRun.problemMessage(problem, 2), "The tuner is scanning for channels")
+    end sub
+
+    sub test_notFoundIsUnknownChannel(t as object)
+        problem = AntennaDiagnosisTests.diagnose(AntennaDiagnosisTests.statusJSON(1), AntennaDiagnosisTests.lineupStatusJSON(false), 404)
+        t.assertEqual(problem, "unknownChannel")
+        t.assertEqual(HDHomeRun.problemMessage(problem, 2), "This channel is no longer on the tuner")
+    end sub
+
+    sub test_freeTunerAnd503IsNoSignal(t as object)
+        problem = AntennaDiagnosisTests.diagnose(AntennaDiagnosisTests.statusJSON(1), AntennaDiagnosisTests.lineupStatusJSON(false), 503)
+        t.assertEqual(problem, "noSignal")
+        t.assertEqual(HDHomeRun.problemMessage(problem, 2), "No signal on this channel")
+        ' No status known: the same, with a free tuner. An unanswered lineup_status.json isn't a scan.
+        t.assertEqual(AntennaDiagnosisTests.diagnose(AntennaDiagnosisTests.statusJSON(0), AntennaDiagnosisTests.lineupStatusJSON(false), invalid), "noSignal")
+        t.assertEqual(AntennaDiagnosisTests.diagnose(AntennaDiagnosisTests.statusJSON(0), invalid, 503), "noSignal")
+    end sub
+
+    sub test_otherStatusIsUnknown(t as object)
+        problem = AntennaDiagnosisTests.diagnose(AntennaDiagnosisTests.statusJSON(0), AntennaDiagnosisTests.lineupStatusJSON(false), 500)
+        t.assertEqual(problem, "unknown")
+        t.assertEqual(HDHomeRun.problemMessage(problem, 2), "Can't play this channel")
+    end sub
+
+    sub test_unreachableStatusIsUnreachable(t as object)
+        problem = AntennaDiagnosisTests.diagnose(invalid, AntennaDiagnosisTests.lineupStatusJSON(false), 503)
+        t.assertEqual(problem, "unreachable")
+        t.assertEqual(HDHomeRun.problemMessage(problem, 2), "The antenna tuner isn't answering")
+        ' A body that isn't status.json counts as no answer; so does a stream on no private address.
+        t.assertEqual(AntennaDiagnosisTests.diagnose("<html>", invalid, invalid), "unreachable")
+        t.assertEqual(HDHomeRun.diagnose(AntennaDiagnosisTests.fakeTuner(AntennaDiagnosisTests.statusJSON(0), invalid), HDHomeRun.originOf("http://203.0.113.5:5004/auto/v5.1"), 503, invalid), "unreachable")
+    end sub
+
+    sub test_busyMessageSaysBothForTwo(t as object)
+        t.assertEqual(HDHomeRun.busyMessage(2), "Both antenna tuners are in use")
+        t.assertEqual(HDHomeRun.busyMessage(4), "All 4 antenna tuners are in use")
+        t.assertEqual(HDHomeRun.busyMessage(1), "The antenna tuner is in use")
+        t.assertEqual(HDHomeRun.problemMessage("allTunersInUse", 3), "All 3 antenna tuners are in use")
+        ' The scene's copy (it doesn't load HDHomeRun.bs) says the same.
+        for each count in [invalid, 0, 1, 2, 3, 16]
+            t.assertEqual(PlayerSession.busyText(count), HDHomeRun.busyMessage(count))
+        end for
+    end sub
+
+    ' L6: the log text never names the tuner; the diagnosis logs only it.
+    sub test_logTextHasNoAddress(t as object)
+        for each problem in ["allTunersInUse", "scanning", "noSignal", "unknownChannel", "unreachable", "unknown", "cantPlay"]
+            text = HDHomeRun.problemLogText(problem, 2)
+            t.assertEqual(Instr(1, text, "10.0.0.9"), 0)
+            t.assertEqual(Instr(1, text, "1234ABCD"), 0)
+        end for
+        io = AntennaDiagnosisTests.fakeTuner(AntennaDiagnosisTests.statusJSON(2), AntennaDiagnosisTests.lineupStatusJSON(false))
+        HDHomeRun.diagnose(io, "http://10.0.0.9", 503, invalid)
+        t.assertEqual(io.logs, ["info: Antenna stream: all tuners in use"])
+        t.assertEqual(io.asked, ["http://10.0.0.9/status.json"], "lineup_status.json isn't asked once every tuner is busy")
+    end sub
+
+    ' --- the Roku's additions ---
+
+    ' X-HDHomeRun-Error 805 ("all tuners in use") after the scan check, where the Video error shows it.
+    sub test_tunerError805IsTunersInUse(t as object)
+        t.assertEqual(HDHomeRun.problemFor([{ busy: true }, { busy: false }], { scanInProgress: false }, 503, 805), "allTunersInUse")
+        t.assertEqual(HDHomeRun.problemFor([{ busy: false }], { scanInProgress: true }, 503, 805), "scanning", "a scan still says so first")
+        t.assertEqual(HDHomeRun.problemFor([{ busy: false }], invalid, 503, 807), "noSignal")
+        t.assertEqual(HDHomeRun.problemFor([], invalid, invalid, invalid), "noSignal", "no tuners listed: not all busy")
+        t.assertEqual(HDHomeRun.problemMessage("cantPlay", 2), "This Roku can't play antenna channels")
+    end sub
+
+    ' The HTTP status and tuner error read from the Video node's error texts; the URL in them is never a status.
+    sub test_errorNumbersComeFromTheErrorTexts(t as object)
+        none = { httpStatus: invalid, tunerError: invalid }
+        cases = [
+            [["HTTP 503 Service Unavailable", invalid], { httpStatus: 503, tunerError: invalid }],
+            [["", "http: 404 not found"], { httpStatus: 404, tunerError: invalid }],
+            [["HTTP/1.1 404 Not Found"], { httpStatus: 404, tunerError: invalid }],
+            [["HTTP/1.0 503 Service Unavailable"], { httpStatus: 503, tunerError: invalid }],
+            [["Server returned 404 Not Found"], { httpStatus: 404, tunerError: invalid }],
+            [["status 503"], { httpStatus: 503, tunerError: invalid }],
+            [["error code: 404"], { httpStatus: 404, tunerError: invalid }],
+            [["X-HDHomeRun-Error: 805 All Tuners In Use"], { httpStatus: invalid, tunerError: 805 }],
+            [["HTTP/1.1 503 Service Unavailable", "X-HDHomeRun-Error: 807 No Video Data"], { httpStatus: 503, tunerError: 807 }],
+            [["error 801 unknown channel"], { httpStatus: invalid, tunerError: 801 }]
+        ]
+        for each item in cases
+            t.assertEqual(PlayerSession.errorNumbers(item[0]), item[1], FormatJson(item[0]))
+        end for
+        ' Numbers in a stream URL are never a status or a tuner error: the old reading took /auto/v805 for 805 and
+        ' would take the port or a path's number after "http" for a status.
+        for each text in ["failed to open http://192.168.1.20:5004/auto/v805", "error opening http://10.4.0.4:503/auto/v404", "error: /auto/v805", "hdhomerun stream /auto/v806", "http://192.168.1.20:5004/auto/v5.1"]
+            t.assertEqual(PlayerSession.errorNumbers([text]), none, text)
+        end for
+        t.assertEqual(PlayerSession.errorNumbers(["port 58050"]), none, "805 inside a longer number")
+        t.assertEqual(PlayerSession.errorNumbers(["error 8050"]), none, "a 4-digit number")
+        t.assertEqual(PlayerSession.errorNumbers([]), none)
+        t.assertEqual(PlayerSession.errorNumbers(["HTTP/1.1 200 OK"]), none, "not an error status")
+        t.assertEqual(PlayerSession.errorNumbers(["error 802"]), none, "not a code the diagnosis reads")
+    end sub
+
+    ' D40: an unlabelled channel on a Roku without MPEG-2 says it may need MPEG-2 instead of "no signal" or "can't
+    ' play"; the tuner's own answers (busy, scanning, gone, not answering) still say themselves.
+    sub test_anUnlabelledChannelMayNeedMPEG2(t as object)
+        hint = "This channel may need MPEG-2, which this Roku can't play"
+        t.assertEqual(HDHomeRun.problemMessage("noSignal", 2, true), hint)
+        t.assertEqual(HDHomeRun.problemMessage("unknown", 2, true), hint)
+        t.assertEqual(HDHomeRun.problemMessage("noSignal", 2, false), "No signal on this channel")
+        for each problem in ["allTunersInUse", "scanning", "unknownChannel", "unreachable"]
+            t.assertEqual(HDHomeRun.problemMessage(problem, 2, true), HDHomeRun.problemMessage(problem, 2), problem)
+        end for
+    end sub
+
+    ' MMTVL's tunerBudgetProblem: the app's own streams on the channel's tuner. The Roku passes [] (one Video, which
+    ' the channel replaces), so it never refuses; with streams held it would.
+    sub test_theAppCountsItsOwnStreams(t as object)
+        channel = { id: "antenna:5.1", source: "antenna", url: "http://10.0.0.9:5004/auto/v5.1", tunerCount: 2 }
+        other = { id: "antenna:7.1", source: "antenna", url: "http://10.0.0.9:5004/auto/v7.1", tunerCount: 2 }
+        elsewhere = { id: "antenna:9.1", source: "antenna", url: "http://10.0.0.11:5004/auto/v9.1", tunerCount: 2 }
+        playlist = { id: "name:news", url: "http://10.0.0.9:5004/news.m3u8" }
+        t.assertEqual(PlayerSession.tunerBudgetProblem(channel, []), "")
+        t.assertEqual(PlayerSession.tunerBudgetProblem(channel, [other]), "")
+        t.assertEqual(PlayerSession.tunerBudgetProblem(channel, [other, other]), "allTunersInUse")
+        t.assertEqual(PlayerSession.tunerBudgetProblem(channel, [other, elsewhere, playlist]), "", "another tuner's and a playlist's don't count")
+        t.assertEqual(PlayerSession.tunerBudgetProblem(playlist, [other, other]), "", "playlist channels never")
+    end sub
+
+    ' --- helpers ---
+
+    ' What the tuner's io answers: status.json (statusText, invalid: no answer) and lineup_status.json.
+    function fakeTuner(statusText as dynamic, lineupText as dynamic) as object
+        return {
+            statusText: statusText, lineupText: lineupText, asked: [], limits: [], logs: [],
+            get: function(url as string, maxBytes as dynamic, timeoutMs as dynamic) as object
+                m.asked.Push(url)
+                m.limits.Push([maxBytes, timeoutMs])
+                text = invalid
+                if Right(url, 12) = "/status.json" and Instr(1, url, "lineup_status") = 0 then text = m.statusText
+                if Right(url, 19) = "/lineup_status.json" then text = m.lineupText
+                if text = invalid then return { ok: false, code: 0, text: "", peer: "" }
+                return { ok: true, code: 200, text: text, peer: "" }
+            end function,
+            log: sub(level as string, text as string)
+                m.logs.Push(level + ": " + text)
+            end sub
+        }
+    end function
+
+    function diagnose(statusText as dynamic, lineupText as dynamic, httpStatus as dynamic) as string
+        return HDHomeRun.diagnose(AntennaDiagnosisTests.fakeTuner(statusText, lineupText), "http://10.0.0.9", httpStatus, invalid)
+    end function
+
+    ' status.json with busy of two tuners in use (a tuner in use lists its channel, rates and TargetIP).
+    function statusJSON(busy as integer) as string
+        q = Chr(34)
+        tuners = []
+        for i = 0 to 1
+            if i < busy
+                tuners.Push("{" + q + "Resource" + q + ":" + q + "tuner" + i.ToStr() + q + "," + q + "VctNumber" + q + ":" + q + "5.1" + q + "," + q + "TargetIP" + q + ":" + q + "10.0.0.20" + q + "}")
+            else
+                tuners.Push("{" + q + "Resource" + q + ":" + q + "tuner" + i.ToStr() + q + "}")
+            end if
+        end for
+        return "[" + tuners.Join(",") + "]"
+    end function
+
+    function lineupStatusJSON(scanning as boolean) as string
+        q = Chr(34)
+        if scanning then return "{" + q + "ScanInProgress" + q + ":1," + q + "Progress" + q + ":45," + q + "Found" + q + ":120}"
+        return "{" + q + "ScanInProgress" + q + ":0," + q + "ScanPossible" + q + ":1," + q + "Source" + q + ":" + q + "Antenna" + q + "}"
+    end function
+
+end namespace

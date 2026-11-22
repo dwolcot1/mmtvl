@@ -14,6 +14,12 @@
         <!-- Step 18: My Teams' last results (TeamsTask's liveIDs and upcoming), for the lineup. -->
         <field id="teamIDs" type="array" />
         <field id="upcomingGames" type="array" />
+        <!-- Step 21 (D37): the antenna's part { channels, matchFields, teamFields }; the result is the playlist's
+             channels then the antenna's (Lineup.mergeParts), with the lineup, fields and key over both, and
+             playlistCount. mergeOnly: no download; base is the scene's merged lists and count (its playlist part). -->
+        <field id="antenna" type="assocarray" />
+        <field id="mergeOnly" type="boolean" value="false" />
+        <field id="base" type="assocarray" />
         <field id="result" type="assocarray" />
     </interface>
     <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />

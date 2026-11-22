@@ -95,6 +95,89 @@ namespace Lineup
         }
     end function
 
+    ' Step 21 (D37): the playlist's part and the antenna's as one channel list, with the guide's and My Teams'
+    ' fields: the playlist's channels as they are, then the antenna's numbered after them (MMTVL L2). Each part:
+    ' { channels, matchFields, teamFields } (lists, [] when missing). Run off the render thread (PlaylistTask), since
+    ' it copies the antenna's channels and is linear in both. { channels, matchFields, teamFields, playlistCount }.
+    function mergeParts(playlistSide as dynamic, antennaSide as dynamic) as object
+        first = Lineup.listIn(playlistSide, "channels")
+        merged = []
+        merged.Append(first)
+        for each channel in Lineup.listIn(antennaSide, "channels")
+            copy = {}
+            for each field in channel
+                copy[field] = channel[field]
+            end for
+            copy.number = merged.Count() + 1
+            merged.Push(copy)
+        end for
+        fields = []
+        fields.Append(Lineup.listIn(playlistSide, "matchFields"))
+        fields.Append(Lineup.listIn(antennaSide, "matchFields"))
+        teams = []
+        teams.Append(Lineup.listIn(playlistSide, "teamFields"))
+        teams.Append(Lineup.listIn(antennaSide, "teamFields"))
+        return { channels: merged, matchFields: fields, teamFields: teams, playlistCount: first.Count() }
+    end function
+
+    ' The playlist's part of a merged list (its first count entries of each list), for a merge with a new antenna
+    ' part that doesn't load the playlist again.
+    function playlistPart(merged as object, count as integer) as object
+        result = {}
+        for each name in ["channels", "matchFields", "teamFields"]
+            whole = Lineup.listIn(merged, name)
+            part = []
+            last = count
+            if last > whole.Count() then last = whole.Count()
+            for i = 0 to last - 1
+                part.Push(whole[i])
+            end for
+            result[name] = part
+        end for
+        return result
+    end function
+
+    ' D37: what a new antenna lineup answer changes, from the last answer's keys and the new ones ({ matchKey,
+    ' payloadKey }, AntennaLineup.setKeys): merge (the scene's channels take the new antenna part) when the payload
+    ' key differs; rematch (the guides match again) only when the match key does.
+    function antennaChange(previous as object, answer as object) as object
+        return { merge: Lineup.textOr(previous.payloadKey) <> Lineup.textOr(answer.payloadKey), rematch: Lineup.textOr(previous.matchKey) <> Lineup.textOr(answer.matchKey) }
+    end function
+
+    ' D37 (round 2): what follows a PlaylistTask that ended (answered, or given up by the watchdog): "merge" when a
+    ' merge waits (mergePending) or the antenna part changed since the task was given it (taskRevision, -1 after a
+    ' stopped merge); else "load" when a playlist load waits; else "". The launch waits while a merge runs or waits
+    ' (launchWaits).
+    function afterTask(mergePending as boolean, taskRevision as integer, antennaRevision as integer, loadPending as boolean) as string
+        if mergePending or taskRevision <> antennaRevision then return "merge"
+        if loadPending then return "load"
+        return ""
+    end function
+
+    function launchWaits(mergeRunning as boolean, mergePending as boolean) as boolean
+        return mergeRunning or mergePending
+    end function
+
+    ' A PlaylistTask stopped (a new playlist, Remove Live TV Source, an import): nothing waits for it any more, and a
+    ' stopped merge is made again by the next task that ends (taskRevision -1), unless the caller merges itself.
+    ' { mergePending, taskRevision }.
+    function afterStop(wasMerge as boolean, taskRevision as integer) as object
+        if wasMerge then return { mergePending: false, taskRevision: -1 }
+        return { mergePending: false, taskRevision: taskRevision }
+    end function
+
+    function textOr(value as dynamic) as string
+        if Lineup.isText(value) then return value
+        return ""
+    end function
+
+    function listIn(part as dynamic, name as string) as object
+        if type(part) <> "roAssociativeArray" then return []
+        value = part[name]
+        if type(value) = "roArray" then return value
+        return []
+    end function
+
     ' Favorites (team games first), My Teams' live channels, All Channels, or a group's visible channels; [] for a
     ' group the lineup doesn't have.
     function channelsIn(current as object, group as dynamic) as object
