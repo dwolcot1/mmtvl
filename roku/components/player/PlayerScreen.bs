@@ -91,18 +91,31 @@ sub play()
         applyOverlay("channel")
         return
     end if
+    antenna = PlayerSession.isTrue(m.channel.antenna)
+    ' Step 21: how to load it (PlayerSession.antennaContent): a refusal (the scene's, or D24's antenna playback off)
+    ' shows the error panel instead; antenna streams get D25's format and no CA bundle (raw MPEG-TS over http,
+    ' straight to the Video node, never prefetched: every GET takes a tuner).
+    plan = PlayerSession.antennaContent(m.channel, { playRawTS: AntennaConfig.playRawTS, streamFormat: AntennaConfig.streamFormat })
+    if plan.refusal <> ""
+        Log.warn("Player", "Not playing " + textOf(m.channel.title) + ": " + plan.refusal)
+        m.video.control = "stop"
+        m.errorPanel.message = plan.refusal
+        showError()
+        applyOverlay("channel")
+        return
+    end if
     content = CreateObject("roSGNode", "ContentNode")
     content.url = url
-    content.streamFormat = "hls"
-    content.live = true
+    if plan.streamFormat <> "" then content.streamFormat = plan.streamFormat
     ' Roku's CA bundle for https streams (as PlaylistTask's transfers).
-    content.HttpCertificatesFile = "common:/certs/ca-bundle.crt"
+    if plan.certificates then content.HttpCertificatesFile = "common:/certs/ca-bundle.crt"
+    content.live = true
     m.video.content = content
     m.playClock.Mark()
     m.waitingForStart = true
     m.video.control = "play"
     restartTimer(m.stallTimer)
-    Log.info("Player", Log.withHost("Playing " + textOf(m.channel.title), host))
+    if antenna then Log.info("Player", "Playing " + textOf(m.channel.title) + " (antenna)") else Log.info("Player", Log.withHost("Playing " + textOf(m.channel.title), host))
     applyOverlay("channel")
 end sub
 
@@ -120,6 +133,8 @@ sub onVideoState()
         m.stallTimer.control = "stop"
     else if state = "error"
         Log.warn("Player", "Stream error " + m.video.errorCode.ToStr() + " on " + channelLabel())
+        ' Step 21: the numbers in the error's texts, for the antenna diagnosis (the texts themselves stay here).
+        m.top.failure = PlayerSession.errorNumbers([nodeField(m.video, "errorMsg"), nodeField(m.video, "errorStr"), errorInfoText("dbgmsg"), errorInfoText("errstr")])
         failed()
     else if state = "finished"
         ' A live stream doesn't end: the provider stopped sending it.
@@ -135,6 +150,8 @@ sub onStall()
     state = m.video.state
     if state = "playing" or state = "paused" then return
     Log.warn("Player", "No picture for " + Str(PlayerSession.stallSeconds).Trim() + " s on " + channelLabel())
+    ' Step 21: no numbers to give, but the antenna diagnosis still asks the tuner.
+    m.top.failure = { httpStatus: invalid, tunerError: invalid }
     failed()
 end sub
 
@@ -146,11 +163,26 @@ sub failed()
     showError()
 end sub
 
-' The channel's title and its stream's host, for the log (never the URL).
+' The channel's title and its stream's host, for the log (never the URL; step 21: never a tuner's address).
 function channelLabel() as string
     if m.channel = invalid then return "no channel"
+    if PlayerSession.isTrue(m.channel.antenna) then return textOf(m.channel.title) + " (antenna)"
     return Log.withHost(textOf(m.channel.title), Log.host(textOf(m.channel.url)))
 end function
+
+' A text field of the Video node's errorInfo (OS 9.4+), else "".
+function errorInfoText(name as string) as string
+    info = nodeField(m.video, "errorInfo")
+    if type(info) <> "roAssociativeArray" then return ""
+    return textOf(info[name])
+end function
+
+' Step 21: the scene's message for the error panel (the antenna's diagnosis); "" restores the default.
+sub onErrorMessage()
+    text = m.top.errorMessage
+    if not PlayerSession.isText(text) or text = "" then text = "Can't play this channel"
+    m.errorPanel.message = text
+end sub
 
 sub showError()
     m.errorShown = true
@@ -162,6 +194,7 @@ sub hideError()
     m.errorShown = false
     m.top.failed = false
     m.errorPanel.visible = false
+    m.errorPanel.message = "Can't play this channel"
 end sub
 
 sub onControl()

@@ -230,7 +230,15 @@ namespace GuideSources
         if type(channels) <> "roArray" then return result
         for each channel in channels
             if type(channel) = "roAssociativeArray"
-                result.Push({ id: channel.id, name: channel.name, tvgID: channel.tvgID, tvgName: channel.tvgName })
+                fields = { id: channel.id, name: channel.name, tvgID: channel.tvgID, tvgName: channel.tvgName }
+                ' Step 21: antenna channels match by their GuideNumber (AntennaGuide.match).
+                if GuideSources.isText(channel.source)
+                    if channel.source = "antenna"
+                        fields.source = "antenna"
+                        fields.guideNumber = channel.guideNumber
+                    end if
+                end if
+                result.Push(fields)
             end if
         end for
         return result

@@ -1,0 +1,46 @@
+' The antenna's switches (M12 step 21, user choice U1: every path is built, gated). Each choice step 4's probes
+' are meant to settle is one constant here, set to the plan's best guess; when the probes run, only these change.
+' Each is a decision in docs/plans/M12-decisions-log.md (D21–D28), with why, the pros and cons, and how to reverse it.
+' Pure constants: any component may load this file.
+namespace AntennaConfig
+
+    ' D21 (probe f): find tuners with SiliconDust's discover packet, broadcast with roDataGramSocket on UDP 65001
+    ' (to 255.255.255.255 and each of the Roku's /24 broadcasts), replies read for 1.5 s.
+    const discoverByBroadcast = true
+    ' D22 (probe f): when the broadcast finds nothing, ask http://hdhomerun.local/discover.json (Roku resolves the
+    ' .local name itself, through roUrlTransfer).
+    const discoverByName = true
+    ' D23 (step 8's device check on GetTargetIpAddress): an hdhomerun.local answer counts only when the transfer
+    ' reported the address it reached, that address is private and on the Roku's /24, and the answer's BaseURL is
+    ' exactly that address. false: a BaseURL that is a private address on the Roku's /24 is enough.
+    const nameNeedsPeer = true
+    ' D24 (probe b): antenna channels play at all (the tuner's raw MPEG-TS straight to the Video node). false: they
+    ' still list, and playing one says "This Roku can't play antenna channels".
+    const playRawTS = true
+    ' D25 (probe b): the Video node's streamFormat for an antenna stream: "" leaves it unset (Roku picks from the
+    ' stream), else "hls", "mp4" or "mkv", whichever probe b showed playing.
+    const streamFormat = ""
+    ' D26 (probe b and U1): MPEG-2 channels play where Capabilities reports mpeg2; elsewhere they're hidden (and
+    ' Settings → Device says so). false: MPEG-2 channels are hidden on every Roku (H.264 only). A channel whose
+    ' lineup entry names no codec is listed (it may be either).
+    const playMPEG2 = true
+    ' D27 (plan step 21, U1): SiliconDust's guide format. "xmltv": api.hdhomerun.com/api/xmltv, read by GuideTask
+    ' like any guide. "json": api.hdhomerun.com/api/guide.php (unverified), written out as XMLTV for GuideTask.
+    const guideFormat = "xmltv"
+    ' D28: HTTP gzip decoding (EnableEncodings) on the XMLTV download. false: no Accept-Encoding is sent, so the
+    ' server sends the plain XML (or a gzip body, which GuidePipeline inflates where inflate is kept).
+    const guideHTTPGzip = false
+
+    ' --- not switches: where SiliconDust's guide is kept (constants here so the scene can read them without loading
+    ' AntennaGuide.bs). cachefs: is RAM, gone after a reboot, so a reboot means a download. Not under
+    ' GuideSources.cacheDirectory, which GuideTask prunes.
+    const guideDirectory = "cachefs:/antenna"
+    const guideDataPath = "cachefs:/antenna/guide.data"
+    const guidePartPath = "cachefs:/antenna/guide.part"
+    const guideInflatedPath = "cachefs:/antenna/guide.inflated.xml"
+    ' Wall-clock seconds as text: the last success, when it's next due, the last attempt.
+    const guideTimePath = "cachefs:/antenna/guide.time"
+    const guideDuePath = "cachefs:/antenna/guide.due"
+    const guideAttemptPath = "cachefs:/antenna/guide.attempt"
+
+end namespace

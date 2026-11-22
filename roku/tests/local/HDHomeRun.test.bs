@@ -1,0 +1,315 @@
+' Finding tuners (M12 step 21): the cases of MMTVL's HDHomeRunPacketTests and HDHomeRunDiscoveryTests that apply on a
+' Roku (no interfaces or netmasks: the Roku's own /24s), with a fake io. The acceptance rules: discover.json only from
+' a private address on the Roku's subnet (not its own), BaseURL exactly that address (origin only); hdhomerun.local
+' only with the reported peer; a typed address only when it's a private literal (a public, loopback, link-local
+' broadcast, own or named address is refused, and never asked). Fake addresses and DeviceIDs only.
+namespace HDHomeRunTests
+
+    ' --- the packet ---
+
+    ' The request MMTVL sends, byte for byte: its CRC is zlib's CRC-32 (roByteArray.GetCRC32), little-endian.
+    sub test_theDiscoverRequestIsMMTVLs(t as object)
+        made = HDHomeRun.encode(2, [{ tag: 1, hex: "FFFFFFFF" }, { tag: 2, hex: "FFFFFFFF" }])
+        t.assertEqual(UCase(made), HDHomeRun.discoverRequestHex)
+        t.assertEqual(HDHomeRun.discoverRequestHex, "0002000C0104FFFFFFFF0204FFFFFFFF73CC7D8F")
+    end sub
+
+    sub test_aTunersReplyParses(t as object)
+        got = HDHomeRun.parseReply(HDHomeRunTests.reply("1234ABCD", "http://10.0.0.9:80", 2))
+        t.assertEqual(got.deviceID, "1234ABCD")
+        t.assertEqual(got.tunerCount, 2)
+        t.assertEqual(got.baseURL, "http://10.0.0.9:80")
+        t.assertEqual(got.lineupURL, "http://10.0.0.9:80/lineup.json")
+        ' DeviceAuth (0x2B) and unknown tags are skipped; trailing NULs in a URL are dropped.
+        withExtras = HDHomeRun.encode(3, [{ tag: 1, hex: "00000001" }, { tag: 2, hex: "1234ABCD" }, { tag: 43, hex: HDHomeRunTests.asciiHex("FAKEAUTHFAKEAUTH") }, { tag: 99, hex: "00" }, { tag: 42, hex: HDHomeRunTests.asciiHex("http://10.0.0.9") + "0000" }])
+        parsed = HDHomeRun.parseReply(withExtras)
+        t.assertEqual(parsed.baseURL, "http://10.0.0.9")
+        t.assertEqual(Instr(1, FormatJson(parsed), "FAKEAUTH"), 0, "no DeviceAuth kept")
+    end sub
+
+    sub test_aBadReplyIsRefused(t as object)
+        good = HDHomeRunTests.reply("1234ABCD", "http://10.0.0.9", 2)
+        t.assertInvalid(HDHomeRun.parseReply(Left(good, Len(good) - 2) + "00"), "a wrong CRC")
+        t.assertInvalid(HDHomeRun.parseReply(Left(good, Len(good) - 2)), "short")
+        t.assertInvalid(HDHomeRun.parseReply(good + "00"), "longer than its length")
+        t.assertInvalid(HDHomeRun.parseReply(HDHomeRun.discoverRequestHex), "a request, not a reply")
+        t.assertInvalid(HDHomeRun.parseReply(HDHomeRun.encode(3, [{ tag: 1, hex: "00000005" }, { tag: 2, hex: "1234ABCD" }])), "not a tuner")
+        t.assertInvalid(HDHomeRun.parseReply(HDHomeRun.encode(3, [{ tag: 1, hex: "00000001" }, { tag: 2, hex: "1234AB" }])), "a 3-byte id")
+        t.assertInvalid(HDHomeRun.parseReply(HDHomeRun.encode(3, [{ tag: 1, hex: "00000001" }])), "no id")
+        t.assertInvalid(HDHomeRun.parseReply("zz"), "not hex")
+        t.assertInvalid(HDHomeRun.parseReply(""))
+        ' A TLV claiming more than is there.
+        broken = CreateObject("roByteArray")
+        broken.FromHexString("0003000601040000000102")
+        t.assertInvalid(HDHomeRun.parseReply(broken.ToHexString() + "00000000"))
+    end sub
+
+    ' A TLV longer than 127 bytes has a 2-byte length.
+    sub test_aLongTLVHasATwoByteLength(t as object)
+        longURL = "http://10.0.0.9/" + String(150, "a")
+        got = HDHomeRun.parseReply(HDHomeRun.encode(3, [{ tag: 1, hex: "00000001" }, { tag: 2, hex: "1234ABCD" }, { tag: 39, hex: HDHomeRunTests.asciiHex(longURL) }]))
+        t.assertEqual(got.lineupURL, longURL)
+        tooLong = "http://10.0.0.9/" + String(300, "a")
+        got = HDHomeRun.parseReply(HDHomeRun.encode(3, [{ tag: 1, hex: "00000001" }, { tag: 2, hex: "1234ABCD" }, { tag: 39, hex: HDHomeRunTests.asciiHex(tooLong) }]))
+        t.assertEqual(got.lineupURL, "", "past 256 bytes a URL is ignored")
+    end sub
+
+    ' --- addresses ---
+
+    sub test_onlyPrivateAddressesOnTheRokusSubnetCount(t as object)
+        own = ["192.168.1.50"]
+        subnets = HDHomeRun.subnetsOf(own)
+        t.assertEqual(subnets, ["192.168.1."])
+        t.assertEqual(HDHomeRun.broadcastTargets(subnets), ["255.255.255.255", "192.168.1.255"])
+        t.assertEqual(HDHomeRun.acceptableSource("192.168.1.20", subnets, own), "192.168.1.20")
+        for each refused in ["192.168.2.20", "8.8.8.8", "127.0.0.1", "192.168.1.50", "192.168.1.255", "192.168.1.0", "192.168.001.20", "0x7f.0.0.1", "", "hdhomerun.local"]
+            t.assertEqual(HDHomeRun.acceptableSource(refused, subnets, own), "", refused)
+        end for
+        t.assertEqual(HDHomeRun.subnetsOf(["8.8.8.8", "fe80::1", "10.0.0.2", "10.0.0.3"]), ["10.0.0."], "public and IPv6 addresses aren't searched; one /24 once")
+        t.assertEqual(HDHomeRun.ownIPv4(["10.0.0.2", "fe80::1", 5, "010.0.0.2"]), ["10.0.0.2"])
+        t.assertTrue(HDHomeRun.isPrivate("169.254.1.2"), "a tuner on a direct cable")
+        t.assertTrue(HDHomeRun.isPrivate("172.31.0.1"))
+        t.assertFalse(HDHomeRun.isPrivate("172.32.0.1"))
+        t.assertFalse(HDHomeRun.isPrivate("100.64.0.1"))
+    end sub
+
+    ' BaseURL: http, the bare origin on the address that answered (port 80 or none); LineupURL: http on it, no query.
+    sub test_theBaseURLMustBeTheOriginOfTheAddress(t as object)
+        for each url in ["http://10.0.0.9", "http://10.0.0.9/", "http://10.0.0.9:80", "HTTP://10.0.0.9:080"]
+            t.assertTrue(HDHomeRun.isOrigin(url, "10.0.0.9"), url)
+        end for
+        for each url in ["https://10.0.0.9", "http://10.0.0.9:8080", "http://10.0.0.9/x", "http://10.0.0.9?x=1", "http://10.0.0.9#x", "http://u@10.0.0.9", "http://10.0.0.10", "http://010.0.0.9", "http://10.0.0%2E9", "http://hdhomerun.local", "http://10.0.0.9 ", "http://10.0.0.9:", "http://[::1]", 5, invalid]
+            t.assertFalse(HDHomeRun.isOrigin(url, "10.0.0.9"), FormatJson(url))
+        end for
+        t.assertTrue(HDHomeRun.isLineupURL("http://10.0.0.9/lineup.json", "10.0.0.9"))
+        t.assertFalse(HDHomeRun.isLineupURL("http://10.0.0.9/lineup.json?show=all", "10.0.0.9"))
+        t.assertFalse(HDHomeRun.isLineupURL("http://10.0.0.9:5004/lineup.json", "10.0.0.9"))
+        t.assertFalse(HDHomeRun.isLineupURL("http://10.0.0.11/lineup.json", "10.0.0.9"))
+        t.assertEqual(HDHomeRun.originOf("http://10.0.0.9:5004/auto/v5.1"), "http://10.0.0.9")
+        t.assertEqual(HDHomeRun.originOf("http://203.0.113.5:5004/auto/v5.1"), "", "never a public address")
+        t.assertEqual(HDHomeRun.originOf("http://tuner.local:5004/auto/v5.1"), "")
+    end sub
+
+    sub test_aDeviceNeedsEveryCheck(t as object)
+        own = ["10.0.0.2"]
+        device = HDHomeRun.device(HDHomeRunTests.discover({}), "10.0.0.9", "1234ABCD", own)
+        t.assertEqual(device, { id: "1234ABCD", name: "HDHomeRun CONNECT", model: "HDHR4-2US", tunerCount: 2, host: "10.0.0.9", baseURL: "http://10.0.0.9", lineupURL: "http://10.0.0.9/lineup.json" })
+        t.assertEqual(Instr(1, FormatJson(device), "FAKEAUTH"), 0, "no DeviceAuth in a device")
+        t.assertEqual(HDHomeRun.device(HDHomeRunTests.discover({ DeviceID: "1234abcd" }), "10.0.0.9", "1234ABCD", own).id, "1234ABCD", "the id ignoring case")
+        t.assertEqual(HDHomeRun.device(HDHomeRunTests.discover({ FriendlyName: Chr(8238) + " " }), "10.0.0.9", invalid, own).name, "HDHomeRun")
+        bad = [
+            { DeviceID: "1234ABC" }, { DeviceID: "1234ABCG" }, { DeviceID: 12345678 }, { TunerCount: 0 }, { TunerCount: 17 },
+            { TunerCount: "2" }, { BaseURL: "http://10.0.0.10" }, { BaseURL: "http://10.0.0.9:8080" }, { BaseURL: "http://10.0.0.9/x" },
+            { LineupURL: "http://10.0.0.9/lineup.json?x=1" }, { LineupURL: "http://10.0.0.10/lineup.json" }, { LineupURL: 5 }
+        ]
+        for each change in bad
+            t.assertInvalid(HDHomeRun.device(HDHomeRunTests.discover(change), "10.0.0.9", invalid, own), FormatJson(change))
+        end for
+        t.assertInvalid(HDHomeRun.device(HDHomeRunTests.discover({}), "10.0.0.9", "AAAA0000", own), "another reply's id")
+        t.assertInvalid(HDHomeRun.device(HDHomeRunTests.discover({ BaseURL: "http://10.0.0.2", LineupURL: "http://10.0.0.2/lineup.json" }), "10.0.0.2", invalid, own), "the Roku itself")
+        t.assertInvalid(HDHomeRun.device(HDHomeRunTests.discover({ BaseURL: "http://8.8.8.8", LineupURL: "http://8.8.8.8/lineup.json" }), "8.8.8.8", invalid, own), "a public address")
+    end sub
+
+    sub test_namesAreCleanedAndCapped(t as object)
+        t.assertEqual(HDHomeRun.displayText("  HDHomeRun" + Chr(8203) + " FLEX" + Chr(10) + " "), "HDHomeRun FLEX")
+        t.assertEqual(HDHomeRun.displayText(Chr(8238) + "WTST" + Chr(8232)), "WTST")
+        t.assertEqual(Len(HDHomeRun.displayText(String(100, "x"))), 64)
+        t.assertEqual(HDHomeRun.displayText(5), "")
+        t.assertEqual(HDHomeRun.displayText(invalid), "")
+    end sub
+
+    ' --- find, with a fake network ---
+
+    sub test_broadcastFindsATunerOnTheSubnet(t as object)
+        io = HDHomeRunTests.network()
+        io.replies = [{ hex: HDHomeRunTests.reply("1234ABCD", "http://192.168.1.20", 2), source: "192.168.1.20" }, { hex: HDHomeRunTests.reply("1234ABCD", "http://192.168.1.20", 2), source: "192.168.1.20" }]
+        io.answers["http://192.168.1.20/discover.json"] = HDHomeRunTests.answer(HDHomeRunTests.discoverAt("192.168.1.20", "1234ABCD"), "")
+        found = HDHomeRun.find(io, HDHomeRunTests.options())
+        t.assertEqual(found.devices.Count(), 1, "a tuner answers twice; one device")
+        t.assertEqual(found.devices[0].baseURL, "http://192.168.1.20")
+        t.assertEqual(io.broadcasts, [["255.255.255.255", "192.168.1.255"]])
+        t.assertEqual(io.asked, ["http://192.168.1.20/discover.json"])
+        t.assertEqual(io.requests, [[HDHomeRun.discoverRequestHex, 1500]])
+        t.assertEqual(io.limits, [[16384, 2000]], "discover.json: 16 KB in 2 s, as MMTVL")
+        t.assertEqual(found.typedProblem, "")
+        HDHomeRunTests.assertNoLeaks(t, io, ["192.168.1.20", "1234ABCD", "FAKEAUTH"])
+    end sub
+
+    ' A reply from a public address, another subnet or the Roku itself, or naming a BaseURL elsewhere, asks nothing.
+    sub test_repliesThatDontQualifyAskNothing(t as object)
+        io = HDHomeRunTests.network()
+        io.replies = [
+            { hex: HDHomeRunTests.reply("00000001", "http://8.8.8.8", 2), source: "8.8.8.8" },
+            { hex: HDHomeRunTests.reply("00000002", "http://192.168.2.20", 2), source: "192.168.2.20" },
+            { hex: HDHomeRunTests.reply("00000003", "http://192.168.1.50", 2), source: "192.168.1.50" },
+            { hex: HDHomeRunTests.reply("00000004", "http://192.168.1.21", 2), source: "192.168.1.20" },
+            { hex: HDHomeRunTests.reply("00000005", "http://192.168.1.20:5004", 2), source: "192.168.1.20" },
+            { hex: HDHomeRunTests.reply("00000006", "http://192.168.1.20/x", 2), source: "192.168.1.20" },
+            { hex: "0003", source: "192.168.1.20" }
+        ]
+        found = HDHomeRun.find(io, HDHomeRunTests.options({ byName: false }))
+        t.assertEqual(found.devices.Count(), 0)
+        t.assertEqual(io.asked, [])
+    end sub
+
+    ' discover.json that doesn't describe the device that replied (another id, a BaseURL elsewhere) is refused.
+    sub test_aDiscoverJSONThatDisagreesIsRefused(t as object)
+        io = HDHomeRunTests.network()
+        io.replies = [{ hex: HDHomeRunTests.reply("1234ABCD", "http://192.168.1.20", 2), source: "192.168.1.20" }]
+        io.answers["http://192.168.1.20/discover.json"] = HDHomeRunTests.answer(HDHomeRunTests.discoverAt("192.168.1.20", "AAAABBBB"), "")
+        t.assertEqual(HDHomeRun.find(io, HDHomeRunTests.options({ byName: false })).devices.Count(), 0)
+        io.answers["http://192.168.1.20/discover.json"] = HDHomeRunTests.answer(HDHomeRunTests.discoverAt("192.168.1.21", "1234ABCD"), "")
+        t.assertEqual(HDHomeRun.find(io, HDHomeRunTests.options({ byName: false })).devices.Count(), 0)
+        ' A transfer that reported reaching another address.
+        io.answers["http://192.168.1.20/discover.json"] = HDHomeRunTests.answer(HDHomeRunTests.discoverAt("192.168.1.20", "1234ABCD"), "192.168.1.66")
+        t.assertEqual(HDHomeRun.find(io, HDHomeRunTests.options({ byName: false })).devices.Count(), 0)
+        io.answers["http://192.168.1.20/discover.json"] = HDHomeRunTests.answer(HDHomeRunTests.discoverAt("192.168.1.20", "1234ABCD"), "192.168.1.20:80")
+        t.assertEqual(HDHomeRun.find(io, HDHomeRunTests.options({ byName: false })).devices.Count(), 1, "the same address, with its port")
+    end sub
+
+    ' At most 16 devices per search.
+    sub test_atMostSixteenDevices(t as object)
+        io = HDHomeRunTests.network()
+        for i = 1 to 20
+            id = Right("0000000" + i.ToStr(), 8)
+            address = "192.168.1." + (100 + i).ToStr()
+            io.replies.Push({ hex: HDHomeRunTests.reply(id, "http://" + address, 1), source: address })
+            io.answers["http://" + address + "/discover.json"] = HDHomeRunTests.answer(HDHomeRunTests.discoverAt(address, id), "")
+        end for
+        found = HDHomeRun.find(io, HDHomeRunTests.options({ byName: false }))
+        t.assertEqual(found.devices.Count(), 16)
+        t.assertEqual(io.asked.Count(), 16)
+        t.assertEqual(found.devices[0].id, "00000001", "DeviceID order")
+    end sub
+
+    ' hdhomerun.local only when the broadcast found nothing: its BaseURL on the Roku's subnet, and (nameNeedsPeer) the
+    ' transfer's reported address the same.
+    sub test_hdhomerunLocalNeedsAMatchingPeer(t as object)
+        io = HDHomeRunTests.network()
+        io.answers["http://hdhomerun.local/discover.json"] = HDHomeRunTests.answer(HDHomeRunTests.discoverAt("192.168.1.20", "1234ABCD"), "192.168.1.20")
+        found = HDHomeRun.find(io, HDHomeRunTests.options())
+        t.assertEqual(found.devices.Count(), 1)
+        t.assertEqual(found.devices[0].baseURL, "http://192.168.1.20", "used by address from then on")
+        io.answers["http://hdhomerun.local/discover.json"] = HDHomeRunTests.answer(HDHomeRunTests.discoverAt("192.168.1.20", "1234ABCD"), "")
+        t.assertEqual(HDHomeRun.find(io, HDHomeRunTests.options()).devices.Count(), 0, "no peer reported")
+        t.assertEqual(HDHomeRun.find(io, HDHomeRunTests.options({ nameNeedsPeer: false })).devices.Count(), 1, "the switch off")
+        io.answers["http://hdhomerun.local/discover.json"] = HDHomeRunTests.answer(HDHomeRunTests.discoverAt("192.168.1.20", "1234ABCD"), "192.168.1.66")
+        t.assertEqual(HDHomeRun.find(io, HDHomeRunTests.options({ nameNeedsPeer: false })).devices.Count(), 0, "a reported peer elsewhere, even with the switch off")
+        io.answers["http://hdhomerun.local/discover.json"] = HDHomeRunTests.answer(HDHomeRunTests.discoverAt("192.168.2.20", "1234ABCD"), "192.168.2.20")
+        t.assertEqual(HDHomeRun.find(io, HDHomeRunTests.options()).devices.Count(), 0, "off the Roku's subnet")
+        io.answers["http://hdhomerun.local/discover.json"] = HDHomeRunTests.answer(HDHomeRunTests.discoverAt("8.8.8.8", "1234ABCD"), "8.8.8.8")
+        t.assertEqual(HDHomeRun.find(io, HDHomeRunTests.options()).devices.Count(), 0, "a public address")
+        t.assertEqual(HDHomeRun.find(io, HDHomeRunTests.options({ byName: false })).devices.Count(), 0)
+        for each url in io.asked
+            t.assertEqual(url, "http://hdhomerun.local/discover.json")
+        end for
+    end sub
+
+    ' The typed address: a private literal only; anything else is refused without a request.
+    sub test_aTypedAddressIsLANOnly(t as object)
+        io = HDHomeRunTests.network()
+        io.answers["http://10.1.2.3/discover.json"] = HDHomeRunTests.answer(HDHomeRunTests.discoverAt("10.1.2.3", "1234ABCD"), "")
+        found = HDHomeRun.find(io, HDHomeRunTests.options({ broadcast: false, byName: false, typed: " http://10.1.2.3/ " }))
+        t.assertEqual(found.devices.Count(), 1, "another subnet is fine when typed")
+        t.assertEqual(found.typedProblem, "")
+        for each refused in ["8.8.8.8", "127.0.0.1", "192.168.1.50", "0.0.0.0", "10.1.2.255", "tuner.local", "hdhomerun.local", "10.1.2.3:5004", "010.1.2.3", "http://user@10.1.2.3", "[::1]", "fe80::1", "https://10.1.2.3"]
+            io.asked = []
+            result = HDHomeRun.find(io, HDHomeRunTests.options({ broadcast: false, byName: false, typed: refused }))
+            t.assertEqual(result.devices.Count(), 0, refused)
+            t.assertEqual(result.typedProblem, "refused", refused)
+            t.assertEqual(io.asked, [], refused + " asks nothing")
+            t.assertFalse(SettingsEdits.checkTunerAddress(refused, ["192.168.1.50"]).ok, refused + " is refused when typed too")
+        end for
+        result = HDHomeRun.find(io, HDHomeRunTests.options({ broadcast: false, byName: false, typed: "10.9.9.9" }))
+        t.assertEqual(result.typedProblem, "noAnswer")
+        io.answers["http://10.9.9.9/discover.json"] = HDHomeRunTests.answer("<html>", "")
+        t.assertEqual(HDHomeRun.find(io, HDHomeRunTests.options({ broadcast: false, byName: false, typed: "10.9.9.9" })).typedProblem, "notTuner")
+        io.answers["http://10.9.9.9/discover.json"] = HDHomeRunTests.answer(HDHomeRunTests.discoverAt("10.9.9.9", "1234ABCD"), "10.9.9.10")
+        t.assertEqual(HDHomeRun.find(io, HDHomeRunTests.options({ broadcast: false, byName: false, typed: "10.9.9.9" })).typedProblem, "notTuner", "the transfer reached another address")
+    end sub
+
+    ' Settings' check and the task's agree on what a typed address is.
+    sub test_theTypedChecksAgree(t as object)
+        own = ["192.168.1.50"]
+        for each typed in ["10.1.2.3", "192.168.1.20", "172.16.0.9", "169.254.3.4", " 10.1.2.3 ", "http://10.1.2.3/", "8.8.8.8", "127.0.0.1", "192.168.1.50", "10.1.2.0", "10.1.2.255", "10.01.2.3", "tuner.local", "", "10.1.2.3/x", "1.2.3"]
+            checked = SettingsEdits.checkTunerAddress(typed, own)
+            host = HDHomeRun.typedHost(typed, own)
+            if typed = ""
+                t.assertTrue(checked.ok, "empty forgets the address")
+            else
+                t.assertEqual(checked.ok, host <> "", typed)
+                if checked.ok then t.assertEqual(checked.address, host, typed)
+            end if
+        end for
+    end sub
+
+    ' --- helpers ---
+
+    ' A fake io: replies to the broadcast, answers by URL ({ ok, code, text, peer }), and what was asked and logged.
+    function network() as object
+        return {
+            own: ["192.168.1.50"], replies: [], answers: {}, asked: [], limits: [], broadcasts: [], requests: [], logs: [],
+            ownAddresses: function() as object
+                return m.own
+            end function,
+            broadcast: function(requestHex as string, targets as object, waitMs as integer) as object
+                m.broadcasts.Push(targets)
+                m.requests.Push([requestHex, waitMs])
+                return m.replies
+            end function,
+            get: function(url as string, maxBytes as dynamic, timeoutMs as dynamic) as object
+                m.asked.Push(url)
+                m.limits.Push([maxBytes, timeoutMs])
+                found = m.answers[url]
+                if found = invalid then return { ok: false, code: 0, text: "", peer: "" }
+                return found
+            end function,
+            log: sub(level as string, text as string)
+                m.logs.Push(level + ": " + text)
+            end sub
+        }
+    end function
+
+    function options(changes = {} as object) as object
+        made = { broadcast: true, byName: true, nameNeedsPeer: true, typed: "" }
+        made.Append(changes)
+        return made
+    end function
+
+    function answer(text as string, peer as string) as object
+        return { ok: true, code: 200, text: text, peer: peer }
+    end function
+
+    ' A discover reply (type 3): a tuner, its id, tuner count, BaseURL and LineupURL.
+    function reply(id as string, baseURL as string, tuners as integer) as string
+        count = Right("0" + StrI(tuners, 16), 2)
+        return HDHomeRun.encode(3, [{ tag: 1, hex: "00000001" }, { tag: 2, hex: id }, { tag: 16, hex: count }, { tag: 42, hex: HDHomeRunTests.asciiHex(baseURL) }, { tag: 39, hex: HDHomeRunTests.asciiHex(baseURL + "/lineup.json") }])
+    end function
+
+    function asciiHex(text as string) as string
+        bytes = CreateObject("roByteArray")
+        bytes.FromAsciiString(text)
+        return bytes.ToHexString()
+    end function
+
+    ' discover.json as a parsed object, with changes.
+    function discover(changes as object) as object
+        made = { FriendlyName: "HDHomeRun CONNECT", ModelNumber: "HDHR4-2US", FirmwareName: "hdhomerun4_atsc", DeviceID: "1234ABCD", DeviceAuth: "FAKEAUTHFAKEAUTH", BaseURL: "http://10.0.0.9", LineupURL: "http://10.0.0.9/lineup.json", TunerCount: 2 }
+        made.Append(changes)
+        return made
+    end function
+
+    ' discover.json's text for a device at address.
+    function discoverAt(address as string, id as string) as string
+        return FormatJson(HDHomeRunTests.discover({ DeviceID: id, BaseURL: "http://" + address, LineupURL: "http://" + address + "/lineup.json" }))
+    end function
+
+    sub assertNoLeaks(t as object, io as object, secrets as object)
+        for each line in io.logs
+            for each secret in secrets
+                t.assertEqual(Instr(1, line, secret), 0, "logged: " + line)
+            end for
+        end for
+    end sub
+
+end namespace

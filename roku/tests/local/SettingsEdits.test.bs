@@ -104,7 +104,11 @@ namespace SettingsEditsTests
         t.assertFalse(SettingsEdits.settingToggled(settings, "channelUpMovesUpList").channelUpMovesUpList)
         t.assertTrue(SettingsEdits.settingToggled(settings, "usePlaylistGuide").usePlaylistGuide)
         t.assertFalse(SettingsEdits.settingToggled(settings, "channelLogos").channelLogos)
-        t.assertEqual(SettingsEdits.settingToggled(settings, "antennaEnabled"), settings, "not Settings' switch (yet)")
+        ' Step 21: Settings → Antenna's two switches.
+        t.assertFalse(SettingsEdits.settingToggled(settings, "antennaEnabled").antennaEnabled)
+        t.assertFalse(SettingsEdits.settingToggled(settings, "antennaGuide").antennaGuide)
+        t.assertEqual(SettingsEdits.settingToggled(settings, "antennaAddress"), settings, "not a switch")
+        t.assertEqual(SettingsEdits.settingToggled(settings, "nope"), settings, "not a setting")
         t.assertTrue(settings.channelLogos, "the old settings aren't changed")
     end sub
 

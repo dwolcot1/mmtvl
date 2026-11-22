@@ -1,0 +1,345 @@
+' AntennaLineup (M12 step 21): MMTVL's AntennaLineupTests, all 19, case for case (fake addresses and DeviceIDs
+' only), plus the Roku's MPEG-2 rule (U1, D26) and the lineup's JSON as HDHomeRun.parseLineup reads it. Swift's
+' channelSourceHidesTheDeviceID becomes: no channel field holds a DeviceID (the Roku's channels carry none).
+namespace AntennaLineupTests
+
+    sub test_idsAreAntennaGuideNumbers(t as object)
+        channel = AntennaLineupTests.channels([AntennaLineupTests.entry("5.1", "WAGA-HD")]).channels[0]
+        t.assertEqual(channel.id, "antenna:5.1")
+        t.assertEqual(channel.guideNumber, "5.1")
+        t.assertEqual(channel.name, "WAGA-HD")
+        t.assertEqual(channel.source, "antenna")
+        t.assertEqual(channel.url, "http://10.0.0.9:5004/auto/v5.1")
+        t.assertEqual(channel.tunerCount, 2, "the device's, for the busy message")
+        ' The player plays it straight (isDirectStream), and Match Guide keys it by its id (L12).
+        t.assertTrue(PlayerSession.playerItem(channel, "").antenna)
+        t.assertEqual(MatchGuide.overrideKey(channel), "antenna:5.1")
+        t.assertEqual(EPGMatcher.overrideKey(channel), "antenna:5.1")
+    end sub
+
+    sub test_numbersSortNumerically(t as object)
+        shuffled = []
+        for each number in ["26.12", "2.10", "11.1", "2.2", "4.1", "2.1"]
+            shuffled.Push(AntennaLineupTests.entry(number))
+        end for
+        t.assertEqual(AntennaLineupTests.numbers(AntennaLineupTests.channels(shuffled).channels), ["2.1", "2.2", "2.10", "4.1", "11.1", "26.12"])
+        t.assertTrue(AntennaLineup.compareGuideNumbers("2.2", "2.10"))
+        t.assertFalse(AntennaLineup.compareGuideNumbers("2.10", "2.2"))
+        t.assertTrue(AntennaLineup.compareGuideNumbers("9.1", "10.1"))
+        t.assertTrue(AntennaLineup.compareGuideNumbers("5", "5.1"))
+        t.assertFalse(AntennaLineup.compareGuideNumbers("5.1", "5.1"))
+        t.assertTrue(AntennaLineup.compareGuideNumbers("5.01", "5.1"), "numbers that read the same keep a stable order")
+        t.assertTrue(AntennaLineup.compareGuideNumbers("99999.99999", "nope"), "text that isn't a number sorts last")
+    end sub
+
+    sub test_numbersContinueAfterThePlaylist(t as object)
+        entries = [AntennaLineupTests.entry("5.1"), AntennaLineupTests.entry("2.1"), AntennaLineupTests.entry("11.1")]
+        result = AntennaLineupTests.channels(entries, 41).channels
+        t.assertEqual(AntennaLineupTests.field(result, "number"), [41, 42, 43])
+        t.assertEqual(AntennaLineupTests.numbers(result), ["2.1", "5.1", "11.1"])
+        ' The scene numbers them after the playlist's when it merges (renumbered copies).
+        moved = AntennaLineup.renumbered(result, 8)
+        t.assertEqual(AntennaLineupTests.field(moved, "number"), [8, 9, 10])
+        t.assertEqual(result[0].number, 41, "the originals aren't changed")
+    end sub
+
+    sub test_displayNumberIsTheGuideNumber(t as object)
+        antenna = AntennaLineupTests.channels([AntennaLineupTests.entry("26.12")], 8).channels[0]
+        t.assertEqual(Lineup.displayNumber(antenna), "26.12")
+        t.assertEqual(antenna.number, 8)
+        ' A playlist channel: its number, plays as HLS, Match Guide keys it by name.
+        playlist = { id: "name:news", number: 7, name: "News", group: "Other", url: "https://example.com/7.m3u8" }
+        t.assertFalse(Lineup.isAntenna(playlist))
+        t.assertEqual(Lineup.displayNumber(playlist), "7")
+        t.assertInvalid(PlayerSession.playerItem(playlist, "").antenna)
+        t.assertEqual(MatchGuide.overrideKey(playlist), "News")
+    end sub
+
+    sub test_emptyNameBecomesChannelNumber(t as object)
+        entries = [AntennaLineupTests.entry("5.1", ""), AntennaLineupTests.entry("5.2", invalid), AntennaLineupTests.entry("5.3", " " + Chr(8203) + Chr(10)), AntennaLineupTests.entry("5.4", Chr(8238) + "WTST")]
+        t.assertEqual(AntennaLineupTests.field(AntennaLineupTests.channels(entries).channels, "name"), ["Channel 5.1", "Channel 5.2", "Channel 5.3", "WTST"])
+    end sub
+
+    sub test_drmTagsAndFlagAreLeftOutAndCounted(t as object)
+        result = AntennaLineupTests.channels([
+            AntennaLineupTests.entry("2.1"),
+            AntennaLineupTests.entry("2.2", "WTST-HD", "10.0.0.9", invalid, ["drm"]),
+            AntennaLineupTests.entry("2.3", "WTST-HD", "10.0.0.9", invalid, ["favorite", "drm"]),
+            AntennaLineupTests.entry("2.4", "WTST-HD", "10.0.0.9", true),
+            AntennaLineupTests.entry("2.5", "WTST-HD", "10.0.0.9", invalid, ["favorite"]),
+            AntennaLineupTests.entry("2.6", "WTST-HD", "10.0.0.9", false)
+        ])
+        t.assertEqual(AntennaLineupTests.numbers(result.channels), ["2.1", "2.5", "2.6"])
+        t.assertEqual(result.leftOut, 3)
+    end sub
+
+    ' Disabled (Enabled 0) and unsubscribed entries are left out, not counted as protected (L5).
+    sub test_disabledAndUnsubscribedAreLeftOutUncounted(t as object)
+        result = AntennaLineupTests.channels([
+            AntennaLineupTests.entry("2.1", "WTST-HD", "10.0.0.9", invalid, [], true, true),
+            AntennaLineupTests.entry("2.2", "WTST-HD", "10.0.0.9", invalid, [], false),
+            AntennaLineupTests.entry("2.3", "WTST-HD", "10.0.0.9", invalid, [], invalid, false),
+            AntennaLineupTests.entry("2.4", "WTST-HD", "10.0.0.9", true, [], false)
+        ])
+        t.assertEqual(AntennaLineupTests.numbers(result.channels), ["2.1"])
+        t.assertEqual(result.leftOut, 0)
+    end sub
+
+    ' Security M1: the host is compared as written (the Roku plays the raw string): a percent-encoded literal, a
+    ' user name, leading zeros, a name and ports outside 1…65535 are left out, uncounted.
+    sub test_urlOnAnotherHostIsLeftOut(t as object)
+        result = AntennaLineupTests.channels([
+            AntennaLineupTests.entry("2.1"),
+            AntennaLineupTests.entry("2.2", "WTST-HD", "10.0.0.10"),
+            AntennaLineupTests.entry("2.3", "WTST-HD", "203.0.113.5"),
+            AntennaLineupTests.withURL("2.4", "http://user@10.0.0.9:5004/auto/v2.4"),
+            AntennaLineupTests.withURL("2.5", "http://10.0.0%2E9:5004/auto/v2.5"),
+            AntennaLineupTests.withURL("2.6", "http://%31%30.0.0.9:5004/auto/v2.6"),
+            AntennaLineupTests.withURL("2.7", "http://10.0.0.9:99999/auto/v2.7"),
+            AntennaLineupTests.withURL("2.8", "http://10.0.0.9:0/auto/v2.8"),
+            AntennaLineupTests.withURL("2.9", "http://010.0.0.9:5004/auto/v2.9"),
+            AntennaLineupTests.withURL("2.10", "http://tuner.local:5004/auto/v2.10"),
+            AntennaLineupTests.withURL("2.11", "http://10.0.0.9/auto/v2.11"),
+            AntennaLineupTests.withURL("2.12", "HTTP://10.0.0.9:65535/auto/v2.12")
+        ])
+        t.assertEqual(AntennaLineupTests.numbers(result.channels), ["2.1", "2.11", "2.12"])
+        t.assertEqual(result.leftOut, 0)
+    end sub
+
+    ' Step 10's port low: the port is read from the URL's string.
+    sub test_streamPortIsReadAsWritten(t as object)
+        result = AntennaLineupTests.channels([
+            AntennaLineupTests.withURL("3.1", "http://10.0.0.9:99999999999999999999/auto/v3.1"),
+            AntennaLineupTests.withURL("3.2", "http://10.0.0.9:/auto/v3.2"),
+            AntennaLineupTests.withURL("3.3", "http://10.0.0.9:0/auto/v3.3"),
+            AntennaLineupTests.withURL("3.4", "http://10.0.0.9:000000/auto/v3.4"),
+            AntennaLineupTests.withURL("3.5", "http://10.0.0.9:65536/auto/v3.5"),
+            AntennaLineupTests.withURL("3.6", "http://10.0.0.9:5004/auto/v3.6"),
+            AntennaLineupTests.withURL("3.7", "http://10.0.0.9/auto/v3.7"),
+            AntennaLineupTests.withURL("3.8", "http://10.0.0.9:080/auto/v3.8"),
+            AntennaLineupTests.withURL("3.9", "http://10.0.0.9:05004/auto/v3.9"),
+            AntennaLineupTests.withURL("3.10", "http://x@10.0.0.9:/auto/v3.10")
+        ])
+        t.assertEqual(AntennaLineupTests.numbers(result.channels), ["3.6", "3.7", "3.8", "3.9"])
+        t.assertEqual(result.leftOut, 0)
+        for each url in ["http://10.0.0.9:99999999999999999999/auto/v2.1", "http://10.0.0.9:/auto/v2.1", "http://10.0.0.9:0/auto/v2.1", "http://10.0.0.9:"]
+            t.assertFalse(HDHomeRun.isStreamOnDevice(url, "10.0.0.9"), url)
+        end for
+        for each url in ["http://10.0.0.9:5004/auto/v2.1", "http://10.0.0.9/auto/v2.1", "http://10.0.0.9:080/auto/v2.1", "http://10.0.0.9:5004?x=1", "http://10.0.0.9:5004#x"]
+            t.assertTrue(HDHomeRun.isStreamOnDevice(url, "10.0.0.9"), url)
+        end for
+    end sub
+
+    sub test_nonHTTPURLIsLeftOut(t as object)
+        result = AntennaLineupTests.channels([
+            AntennaLineupTests.entry("2.1"),
+            AntennaLineupTests.withURL("2.2", "https://10.0.0.9:5004/auto/v2.2"),
+            AntennaLineupTests.withURL("2.3", "rtsp://10.0.0.9/auto/v2.3"),
+            AntennaLineupTests.withURL("2.4", "file:///etc/hosts"),
+            AntennaLineupTests.withURL("2.5", "not a url"),
+            AntennaLineupTests.withURL("2.6", "/auto/v2.6")
+        ])
+        t.assertEqual(AntennaLineupTests.numbers(result.channels), ["2.1"])
+        t.assertEqual(result.leftOut, 0)
+    end sub
+
+    ' Devices in DeviceID order, whatever order they're given in (L1); the winner's device gives the stream.
+    sub test_firstDeviceWinsADuplicateNumber(t as object)
+        first = AntennaLineupTests.device("1000AAAA", "10.0.0.9")
+        second = AntennaLineupTests.device("2000BBBB", "10.0.0.11")
+        result = AntennaLineup.channels([
+            { device: second, entries: [AntennaLineupTests.entry("5.1", "SECOND", "10.0.0.11"), AntennaLineupTests.entry("7.1", "WTST-HD", "10.0.0.11")] },
+            { device: first, entries: [AntennaLineupTests.entry("5.1", "FIRST", "10.0.0.9")] }
+        ], 1).channels
+        t.assertEqual(AntennaLineupTests.field(result, "id"), ["antenna:5.1", "antenna:7.1"])
+        t.assertEqual(result[0].name, "FIRST")
+        t.assertEqual(Log.host(result[0].url), "10.0.0.9")
+        t.assertEqual(Log.host(result[1].url), "10.0.0.11")
+        ' Each device's URLs are checked against its own address.
+        crossed = AntennaLineup.channels([{ device: first, entries: [AntennaLineupTests.entry("9.1", "WTST-HD", "10.0.0.11")] }], 1)
+        t.assertEqual(crossed.channels.Count(), 0)
+    end sub
+
+    ' Step 10 (security N2): the GuideNumbers a later device would also have kept are counted.
+    sub test_numbersOnMoreThanOneTunerAreCounted(t as object)
+        first = AntennaLineupTests.device("1000AAAA", "10.0.0.9")
+        second = AntennaLineupTests.device("2000BBBB", "10.0.0.11")
+        third = AntennaLineupTests.device("3000CCCC", "10.0.0.12")
+        e = AntennaLineupTests.entry
+        result = AntennaLineup.channels([
+            { device: third, entries: [e("5.1", "WTST-HD", "10.0.0.12"), e("6.1", "WTST-HD", "10.0.0.12")] },
+            { device: second, entries: [e("5.1", "WTST-HD", "10.0.0.11"), e("7.1", "WTST-HD", "10.0.0.11"), e("8.1", "WTST-HD", "10.0.0.11", true), e("9.1", "WTST-HD", "10.0.0.11", invalid, [], false), e("10.1", "WTST-HD", "10.0.0.9")] },
+            { device: first, entries: [e("5.1"), e("5.1"), e("7.1"), e("8.1"), e("9.1"), e("10.1")] }
+        ], 1)
+        t.assertEqual(result.sharedNumbers, 2, "5.1 (on all three) and 7.1")
+        t.assertEqual(AntennaLineupTests.field(result.channels, "id"), ["antenna:5.1", "antenna:6.1", "antenna:7.1", "antenna:8.1", "antenna:9.1", "antenna:10.1"])
+        onFirst = 0
+        for each channel in result.channels
+            if Log.host(channel.url) = "10.0.0.9" then onFirst += 1
+        end for
+        t.assertEqual(onFirst, 5)
+        t.assertEqual(result.perDevice["1000AAAA"], 5)
+        t.assertEqual(AntennaLineupTests.channels([e("5.1"), e("5.1")]).sharedNumbers, 0)
+        fallback = AntennaLineup.channels([{ device: first, entries: [e("5.1", "WTST-HD", "10.0.0.9", true)] }, { device: second, entries: [e("5.1", "WTST-HD", "10.0.0.11")] }], 1)
+        t.assertEqual(fallback.sharedNumbers, 0)
+    end sub
+
+    sub test_sharedNumbersNoticeOnlyOnAChange(t as object)
+        t.assertInvalid(AntennaLineup.sharedNumbersNotice(0, 0))
+        t.assertEqual(AntennaLineup.sharedNumbersNotice(3, 0), "Channel numbers on more than one tuner: 3 (the first tuner's are used)")
+        t.assertInvalid(AntennaLineup.sharedNumbersNotice(3, 3))
+        t.assertEqual(AntennaLineup.sharedNumbersNotice(2, 3), "Channel numbers on more than one tuner: 2 (the first tuner's are used)")
+        t.assertEqual(AntennaLineup.sharedNumbersNotice(0, 2), "Channel numbers on more than one tuner: none now")
+    end sub
+
+    sub test_protectedCopyFallsToTheNextDevice(t as object)
+        first = AntennaLineupTests.device("1000AAAA", "10.0.0.9")
+        second = AntennaLineupTests.device("2000BBBB", "10.0.0.11")
+        result = AntennaLineup.channels([
+            { device: first, entries: [AntennaLineupTests.entry("5.1", "WTST-HD", "10.0.0.9", true)] },
+            { device: second, entries: [AntennaLineupTests.entry("5.1", "WTST-HD", "10.0.0.11")] }
+        ], 1)
+        t.assertEqual(result.channels.Count(), 1)
+        t.assertEqual(Log.host(result.channels[0].url), "10.0.0.11")
+        t.assertEqual(result.leftOut, 0)
+    end sub
+
+    sub test_groupIsAntenna(t as object)
+        channel = AntennaLineupTests.channels([AntennaLineupTests.entry("5.1")]).channels[0]
+        t.assertEqual(AntennaLineup.group, "Antenna")
+        t.assertEqual(AntennaLineup.group, Lineup.antennaGroup)
+        t.assertEqual(channel.group, "Antenna")
+        t.assertInvalid(channel.tvgID)
+        t.assertInvalid(channel.tvgName)
+        t.assertInvalid(channel.logo)
+    end sub
+
+    ' The number becomes an id and a registry key: digits with at most one dot only.
+    sub test_malformedGuideNumbersAreDropped(t as object)
+        entries = []
+        for each bad in ["", "5.", ".1", "5.1.1", "5a", "5,1", Chr(1637) + "." + Chr(1633), "123456.1", "../5", "5.1 ", "-5"]
+            entries.Push(AntennaLineupTests.entry(bad))
+        end for
+        entries.Push(AntennaLineupTests.entry("702"))
+        entries.Push(AntennaLineupTests.entry("5.1"))
+        result = AntennaLineupTests.channels(entries)
+        t.assertEqual(AntennaLineupTests.field(result.channels, "id"), ["antenna:5.1", "antenna:702"])
+        t.assertEqual(result.leftOut, 0)
+    end sub
+
+    ' Security low 3: at most 1,000 kept entries per device; the rest are dropped uncounted.
+    sub test_channelsPerDeviceAreCapped(t as object)
+        entries = []
+        for i = 1 to 1001
+            entries.Push(AntennaLineupTests.entry(i.ToStr() + ".1"))
+        end for
+        result = AntennaLineupTests.channels(entries)
+        t.assertEqual(AntennaLineup.maximumChannelsPerDevice, 1000)
+        t.assertEqual(result.channels.Count(), 1000)
+        t.assertEqual(result.channels[999].guideNumber, "1000.1")
+        t.assertEqual(result.leftOut, 0)
+        second = AntennaLineupTests.device("2000BBBB", "10.0.0.11")
+        both = AntennaLineup.channels([{ device: AntennaLineupTests.device(), entries: entries }, { device: second, entries: [AntennaLineupTests.entry("2000.1", "WTST-HD", "10.0.0.11")] }], 1)
+        t.assertEqual(both.channels.Count(), 1001)
+    end sub
+
+    sub test_duplicateNumberInOneLineupKeepsTheFirst(t as object)
+        result = AntennaLineupTests.channels([AntennaLineupTests.entry("5.1", "FIRST"), AntennaLineupTests.entry("5.1", "SECOND")]).channels
+        t.assertEqual(AntennaLineupTests.field(result, "name"), ["FIRST"])
+    end sub
+
+    ' Swift's channelSourceHidesTheDeviceID: on the Roku no channel field holds the DeviceID (only AntennaTask knows
+    ' it), and a device leaves the task as its name, model and counts.
+    sub test_channelsHoldNoDeviceID(t as object)
+        result = AntennaLineupTests.channels([AntennaLineupTests.entry("5.1"), AntennaLineupTests.entry("7.1")])
+        t.assertEqual(Instr(1, FormatJson(result.channels), "1234ABCD"), 0)
+        shown = HDHomeRun.publicDevice(AntennaLineupTests.device(), 2)
+        t.assertEqual(shown, { name: "HDHomeRun CONNECT", model: "HDHR4-2US", tunerCount: 2, channelCount: 2 })
+    end sub
+
+    ' --- the Roku's MPEG-2 rule (U1, D26) ---
+
+    ' Without MPEG-2, its channels are hidden and counted (Settings → Device says so); H.264 and unnamed codecs stay.
+    ' A later device's H.264 copy of a hidden number still plays.
+    sub test_mpeg2ChannelsAreHiddenWhereTheyCantPlay(t as object)
+        entries = [AntennaLineupTests.codec("2.1", "MPEG2"), AntennaLineupTests.codec("2.2", "H264"), AntennaLineupTests.codec("2.3", invalid), AntennaLineupTests.codec("2.4", "mpeg-2")]
+        none = AntennaLineup.channels([{ device: AntennaLineupTests.device(), entries: entries }], 1, { mpeg2: false })
+        t.assertEqual(AntennaLineupTests.numbers(none.channels), ["2.2", "2.3"])
+        t.assertEqual(none.mpeg2Hidden, 2)
+        t.assertEqual(none.leftOut, 0, "not counted as protected")
+        both = AntennaLineup.channels([{ device: AntennaLineupTests.device(), entries: entries }], 1, { mpeg2: true })
+        t.assertEqual(AntennaLineupTests.numbers(both.channels), ["2.1", "2.2", "2.3", "2.4"])
+        t.assertEqual(both.mpeg2Hidden, 0)
+        t.assertEqual(AntennaLineup.channels([{ device: AntennaLineupTests.device(), entries: entries }], 1).mpeg2Hidden, 0, "no options: MPEG-2 plays")
+        second = AntennaLineupTests.device("2000BBBB", "10.0.0.11")
+        fallback = AntennaLineup.channels([
+            { device: AntennaLineupTests.device("1000AAAA", "10.0.0.9"), entries: [AntennaLineupTests.codec("5.1", "MPEG2")] },
+            { device: second, entries: [AntennaLineupTests.codec("5.1", "H264", "10.0.0.11")] }
+        ], 1, { mpeg2: false })
+        t.assertEqual(Log.host(fallback.channels[0].url), "10.0.0.11")
+        t.assertEqual(fallback.mpeg2Hidden, 0)
+    end sub
+
+    ' lineup.json as the tuner sends it: GuideNumber as text or a number, flags as 0/1 or booleans, Tags a comma
+    ' string; an entry without a GuideNumber or a string URL is dropped; not an array is invalid.
+    sub test_theLineupsJSONIsReadLeniently(t as object)
+        q = Chr(34)
+        text = "[{" + q + "GuideNumber" + q + ":" + q + "5.1" + q + "," + q + "GuideName" + q + ":" + q + "WAGA-HD" + q + "," + q + "VideoCodec" + q + ":" + q + "MPEG2" + q + "," + q + "URL" + q + ":" + q + "http://10.0.0.9:5004/auto/v5.1" + q + "," + q + "DRM" + q + ":1," + q + "Tags" + q + ":" + q + " Favorite , DRM " + q + "},"
+        text += "{" + q + "GuideNumber" + q + ":702," + q + "URL" + q + ":" + q + "http://10.0.0.9:5004/auto/v702" + q + "," + q + "Enabled" + q + ":false},"
+        text += "{" + q + "GuideName" + q + ":" + q + "no number" + q + "," + q + "URL" + q + ":" + q + "http://10.0.0.9/x" + q + "},"
+        text += "{" + q + "GuideNumber" + q + ":" + q + "9.1" + q + "," + q + "URL" + q + ":5},"
+        text += "7]"
+        entries = HDHomeRun.parseLineup(text)
+        t.assertEqual(entries.Count(), 2)
+        t.assertEqual(entries[0].guideNumber, "5.1")
+        t.assertEqual(entries[0].guideName, "WAGA-HD")
+        t.assertEqual(entries[0].videoCodec, "MPEG2")
+        t.assertTrue(entries[0].drm)
+        t.assertEqual(entries[0].tags, ["favorite", "drm"])
+        t.assertEqual(entries[1].guideNumber, "702")
+        t.assertFalse(entries[1].enabled)
+        t.assertInvalid(entries[1].guideName)
+        t.assertInvalid(HDHomeRun.parseLineup("{}"))
+        t.assertInvalid(HDHomeRun.parseLineup("<html>"))
+        t.assertEqual(HDHomeRun.parseLineup("[]"), [])
+    end sub
+
+    ' --- helpers ---
+
+    function device(id = "1234ABCD" as string, host = "10.0.0.9" as string) as object
+        return { id: id, name: "HDHomeRun CONNECT", model: "HDHR4-2US", tunerCount: 2, host: host, baseURL: "http://" + host, lineupURL: "http://" + host + "/lineup.json" }
+    end function
+
+    function entry(number as string, name = "WTST-HD" as dynamic, host = "10.0.0.9" as string, drm = invalid as dynamic, tags = [] as object, enabled = invalid as dynamic, subscribed = invalid as dynamic) as object
+        return { guideNumber: number, guideName: name, videoCodec: invalid, url: "http://" + host + ":5004/auto/v" + number, drm: drm, enabled: enabled, subscribed: subscribed, hd: invalid, tags: tags }
+    end function
+
+    function withURL(number as string, url as string) as object
+        made = AntennaLineupTests.entry(number)
+        made.url = url
+        return made
+    end function
+
+    function codec(number as string, videoCodec as dynamic, host = "10.0.0.9" as string) as object
+        made = AntennaLineupTests.entry(number, "WTST-HD", host)
+        made.videoCodec = videoCodec
+        return made
+    end function
+
+    function channels(entries as object, firstNumber = 1 as integer) as object
+        return AntennaLineup.channels([{ device: AntennaLineupTests.device(), entries: entries }], firstNumber)
+    end function
+
+    function numbers(list as object) as object
+        return AntennaLineupTests.field(list, "guideNumber")
+    end function
+
+    function field(list as object, name as string) as object
+        result = []
+        for each item in list
+            result.Push(item[name])
+        end for
+        return result
+    end function
+
+end namespace

@@ -29,8 +29,10 @@
 '   description(list, id) -> the band's text for a focused row ("" for none).
 '   guidePage(id) -> "guide:<id>"; guideIDOf(page) -> the id, or "" when page isn't a guide's.
 '
-' Seam for a later step: step 21 adds the Antenna row (first in Channels; with no playlist, Channels with the
-' Antenna row alone, as MMTVL's liveTVSections). It draws no placeholder now.
+' Step 21: Live TV → Antenna ("antenna"): the Antenna row first in Channels (frame wjg72); with nothing set up,
+' Channels with the Antenna row alone while the antenna is off, as MMTVL's liveTVSections. Actions
+' { type: "findTuners" } and { type: "editURL", field: "antennaAddress" }; toggles antennaEnabled and antennaGuide.
+' messages may carry antennaAddress (a refused typed address).
 namespace SettingsPages
 
     const rootPage = "root"
@@ -45,10 +47,13 @@ namespace SettingsPages
     const aboutPage = "about"
     const teamsPage = "teams"
     const teamsPrefix = "teams:"
+    const antennaPage = "antenna"
 
     const playlistEditHint = "Type the M3U address on the Roku's keyboard"
     const guideEditHint = "Type an XMLTV address on the Roku's keyboard"
     const guideSourceDescription = "Use the guide the playlist names, or the guides you added. The guides you added are kept either way."
+    ' Step 21: Settings → Device's MPEG-2 row (the plan's wording) and Settings → Antenna's footer.
+    const mpeg2HiddenText = "Some antenna channels need MPEG-2, which this Roku can't play"
     const channelLogosDescription = "Shows channel logos in the guide and the banner. On at first. On Rokus with 512 MB or less, logos can slow the guide: turn them off if it feels slow."
 
     function sections(page as string, model as object, messages = invalid as dynamic) as object
@@ -62,6 +67,7 @@ namespace SettingsPages
         if page = SettingsPages.importPage then return SettingsPages.importSections()
         if page = SettingsPages.aboutPage then return SettingsPages.aboutSections(model)
         if page = SettingsPages.teamsPage then return SettingsPages.teamsSections(model)
+        if page = SettingsPages.antennaPage then return SettingsPages.antennaSections(model, messages)
         teamsAt = SettingsPages.teamsPlace(page)
         if teamsAt <> invalid
             if teamsAt.conference <> "" then return SettingsPages.conferenceSections(model, teamsAt.league, teamsAt.conference)
@@ -83,6 +89,7 @@ namespace SettingsPages
         if page = SettingsPages.importPage then return "Import from MMTVL"
         if page = SettingsPages.aboutPage then return "About"
         if page = SettingsPages.teamsPage then return "My Teams"
+        if page = SettingsPages.antennaPage then return "Antenna"
         teamsAt = SettingsPages.teamsPlace(page)
         if teamsAt <> invalid
             if teamsAt.conference <> "" then return teamsAt.conference
@@ -168,11 +175,21 @@ namespace SettingsPages
         if playlist.has then editTitle = "Change Playlist URL…"
         playlistRows.Push(SettingsPages.newRow({ id: "playlist.edit", title: editTitle, detail: SettingsPages.messageOr(messages, "playlist", SettingsPages.playlistEditHint), action: { type: "editURL", field: "playlist" } }))
         list = [SettingsPages.newSection("playlist", "Playlist", playlistRows, "")]
-        ' Step 21: with no playlist and the antenna on, MMTVL shows Channels with the Antenna row here.
-        if not model.hasLiveSource then return list
+        ' M7j L13, L14 (step 21): with nothing set up, the Antenna row alone while the antenna is off (so it can be
+        ' turned back on), else the Channels section with it.
+        if not model.hasLiveSource
+            if not SettingsPages.antennaModel(model).enabled
+                list.Push(SettingsPages.newSection("channels", "Channels", [SettingsPages.antennaRow(model)], ""))
+            else
+                list.Push(SettingsPages.channelsSection(model))
+            end if
+            return list
+        end if
         list.Push(SettingsPages.guidesSection(model, messages))
         list.Push(SettingsPages.channelsSection(model))
-        manageRows = [SettingsPages.newRow({ id: "refresh", title: "Refresh Now", action: { type: "refresh" }, description: "Downloads the playlist and the guides again now." })]
+        refreshText = "Downloads the playlist and the guides again now."
+        if not playlist.has then refreshText = "Reads the tuner's channels and downloads the guides again now."
+        manageRows = [SettingsPages.newRow({ id: "refresh", title: "Refresh Now", action: { type: "refresh" }, description: refreshText })]
         if playlist.has
             manageRows.Push(SettingsPages.newRow({ id: "removeSource", title: "Remove Live TV Source", disclosure: true, action: SettingsPages.push(SettingsPages.confirmRemovePage), description: "Forgets the playlist and guide addresses on this Roku." }))
         end if
@@ -226,10 +243,83 @@ namespace SettingsPages
         ' Step 21: the Antenna row first (frame wjg72 draws it). The footer is the frame's (step 20 brought Match
         ' Guide, so "match" is back).
         return SettingsPages.newSection("channels", "Channels", [
+            SettingsPages.antennaRow(model),
             SettingsPages.newRow({ id: "groups", title: "Groups", value: groupsValue, disclosure: true, action: SettingsPages.push(SettingsPages.groupsPage), description: "Which groups show in the guide." }),
             SettingsPages.newRow({ id: "hiddenChannels", title: "Hidden Channels", value: hiddenValue, disclosure: true, action: SettingsPages.push(SettingsPages.hiddenChannelsPage), description: "Channels hidden from the guide." }),
             SettingsPages.newRow({ id: "teams", title: "My Teams", value: TeamPicker.teamCountLabel(SettingsPages.pickedTeams(model).Count()), disclosure: true, action: SettingsPages.push(SettingsPages.teamsPage), description: "Your teams' live and upcoming games, pro and college, in the guide's My Teams group." })
         ], "To favorite, hide or match one channel: in the guide, press * on it.")
+    end function
+
+    ' --- Antenna (step 21; MMTVL M7j L14, frame wjg72's row; no frame for the page, so MMTVL's wording) ---------
+
+    ' Live TV → Antenna: "1 Tuner · 185 Channels", "Searching…", "No Tuner Found", "Off".
+    function antennaRow(model as object) as object
+        antenna = SettingsPages.antennaModel(model)
+        value = "No Tuner Found"
+        if not antenna.enabled
+            value = "Off"
+        else if antenna.devices.Count() > 0
+            value = SettingsStatus.countText(antenna.devices.Count(), "Tuner", "Tuners") + " " + URLDisplay.separator() + " " + SettingsPages.channelCount(antenna.channelCount)
+        else if antenna.searching
+            value = "Searching…"
+        end if
+        return SettingsPages.newRow({ id: "antenna", title: "Antenna", value: value, disclosure: true, action: SettingsPages.push(SettingsPages.antennaPage), description: "Channels from an HDHomeRun tuner on your network." })
+    end function
+
+    ' Use Antenna; then the tuners (name, tuner count, model and channels: never an address or DeviceID), Find
+    ' Tuners and the typed Address; then Guide from SiliconDust and its status. No channel scan on a Roku (the
+    ' tuner's own page or MMTVL does that).
+    function antennaSections(model as object, messages as dynamic) as object
+        antenna = SettingsPages.antennaModel(model)
+        list = [SettingsPages.newSection("antenna", "Antenna", [
+            SettingsPages.newRow({ id: "antenna.enabled", title: "Use Antenna", value: SettingsPages.onOff(antenna.enabled), action: SettingsPages.toggle("antennaEnabled"), description: "Finds HDHomeRun tuners on your network and adds their channels to Live TV's Antenna group." })
+        ], "")]
+        if not antenna.enabled then return list
+        rows = []
+        for i = 0 to antenna.devices.Count() - 1
+            device = antenna.devices[i]
+            detail = device.model
+            channels = antenna.lineupLine
+            if channels = "" then channels = SettingsStatus.countText(device.channelCount, "channel", "channels")
+            if detail <> "" then detail += " " + URLDisplay.separator() + " " + channels else detail = channels
+            rows.Push(SettingsPages.newRow({ id: "antenna.tuner." + i.ToStr(), title: device.name, value: SettingsStatus.countText(device.tunerCount, "tuner", "tuners"), detail: detail }))
+        end for
+        findLine = antenna.findLine
+        if antenna.searching
+            findLine = "Searching…"
+        else if findLine = "" and antenna.devices.Count() = 0
+            findLine = "No HDHomeRun found on this network"
+        end if
+        rows.Push(SettingsPages.newRow({ id: "antenna.find", title: "Find Tuners", detail: findLine, action: { type: "findTuners" }, description: "Looks for HDHomeRun tuners on your network again." }))
+        addressValue = "None"
+        if antenna.addressSet then addressValue = "Set"
+        addressDetail = antenna.addressLine
+        if addressDetail = "" then addressDetail = "Only if Find Tuners doesn't find it"
+        rows.Push(SettingsPages.newRow({ id: "antenna.address", title: "Address…", value: addressValue, detail: SettingsPages.messageOr(messages, "antennaAddress", addressDetail), action: { type: "editURL", field: "antennaAddress" }, description: "The tuner's IP address on your network, typed on the Roku's keyboard. It's kept on this Roku and never shown. Choose OK with nothing typed to forget it." }))
+        footer = "Channels come from the tuner's lineup. To find them again after moving the antenna, scan for channels on the tuner's own page or in MMTVL."
+        if antenna.leftOut = 1
+            footer += " 1 protected channel can't play and is left out."
+        else if antenna.leftOut > 1
+            footer += " " + SettingsStatus.grouped(antenna.leftOut) + " protected channels can't play and are left out."
+        end if
+        if antenna.mpeg2Hidden > 0 then footer += " " + SettingsPages.mpeg2HiddenText
+        list.Push(SettingsPages.newSection("antennaTuners", "Tuners", rows, footer))
+        list.Push(SettingsPages.newSection("antennaGuide", "Guide", [
+            SettingsPages.newRow({ id: "antenna.guide", title: "Guide from SiliconDust", value: SettingsPages.onOff(antenna.guideOn), action: SettingsPages.toggle("antennaGuide"), description: "Downloads 2 days of listings from SiliconDust (api.hdhomerun.com) about once a day, signed in with your tuner. Off: antenna channels use the guides you added." }),
+            SettingsPages.newRow({ id: "antenna.guide.status", title: "Status", detail: antenna.guideLine })
+        ], ""))
+        return list
+    end function
+
+    ' SettingsStatus.antennaOf's model (its defaults when the model has none).
+    function antennaModel(model as object) as object
+        if type(model.antenna) = "roAssociativeArray" then return model.antenna
+        return SettingsStatus.antennaOf(invalid)
+    end function
+
+    function onOff(flag as dynamic) as string
+        if SettingsStatus.isTrue(flag) then return "On"
+        return "Off"
     end function
 
     function groupsSections(model as object) as object
@@ -395,13 +485,17 @@ namespace SettingsPages
         if model.channelLogos then logos = "On"
         mpeg2 = "Off: No MPEG-2"
         if device.mpeg2 then mpeg2 = "On"
+        ' Step 21 (D26): AntennaConfig.playMPEG2 off plays H.264 only, whatever the Roku decodes.
+        if device.mpeg2 and SettingsStatus.isBoolean(device.mpeg2Switch) and not SettingsStatus.isTrue(device.mpeg2Switch) then mpeg2 = "Off: H.264 Only"
+        mpeg2Detail = ""
+        if SettingsPages.antennaModel(model).mpeg2Hidden > 0 then mpeg2Detail = SettingsPages.mpeg2HiddenText
         ac3 = "Off: No AC-3"
         if device.ac3 then ac3 = "On"
         features = SettingsPages.newSection("features", "Features", [
             SettingsPages.newRow({ id: "device.guideWindow", title: "Guide Window", value: device.guideHours.ToStr() + " Hours" }),
             SettingsPages.newRow({ id: "device.channelLogos", title: "Channel Logos", value: logos, action: SettingsPages.toggle("channelLogos"), description: SettingsPages.channelLogosDescription }),
             SettingsPages.newRow({ id: "device.compressedGuides", title: "Compressed Guides", value: device.compressed }),
-            SettingsPages.newRow({ id: "device.mpeg2", title: "Antenna MPEG-2 Channels", value: mpeg2 }),
+            SettingsPages.newRow({ id: "device.mpeg2", title: "Antenna MPEG-2 Channels", value: mpeg2, detail: mpeg2Detail }),
             SettingsPages.newRow({ id: "device.ac3", title: "Dolby Digital", value: ac3 })
         ], "")
         return [thisRoku, features]

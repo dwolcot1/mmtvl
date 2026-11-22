@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The antenna off the render thread (M12 step 21). One task per request, like PlaylistTask: the scene sets
+     request, then control = "run"; the task sets result once. The logic is in source/lib (HDHomeRun, AntennaLineup,
+     AntennaGuide), which this task gives its real network (io): UDP discovery with roDataGramSocket, http GETs to
+     the tuner (private IPv4 literals and hdhomerun.local only), and SiliconDust's https guide.
+       request: { kind: "refresh", serial, typed, mpeg2, guide, manual, guideHours, previous }
+         typed    the address from Settings → Antenna ("" for none); mpeg2: this Roku plays MPEG-2 channels;
+         guide    download SiliconDust's guide in this run when it's due and the run finds channels; manual: Refresh Now
+         previous the last answer's antenna channels (a tuner whose lineup can't be read keeps its own, D41)
+       lineupResult (D36, set first, before any download): { ok, serial, devices, channels, matchFields, teamFields,
+                  matchKey, payloadKey, leftOut, mpeg2Hidden, sharedNumbers, typedProblem, lineupFailed }
+         devices  HDHomeRun.publicDevice's { name, model, tunerCount, channelCount }: never a DeviceID or address
+         channels AntennaLineup.channels' (numbered from 1; the scene numbers them after the playlist's)
+         matchKey, payloadKey  AntennaLineup.setKeys (D37): a rematch on the first, a new merge on the second
+       result (then): { ok, kind: "refresh", serial, guide: { ran, ok, message } }
+       request: { kind: "diagnose", serial, channelID, url, tunerCount, httpStatus, tunerError, codecUnknown, mpeg2 }
+       result:  { ok, kind: "diagnose", serial, channelID, problem, message } (HDHomeRun.diagnose, problemMessage)
+     DeviceIDs, DeviceAuth and the guide's URL never leave the task's locals; nothing here logs an address, DeviceID,
+     DeviceAuth, TargetIP or stream URL (L6): counts, and the guide's host. No channel scan (the plan: the tuner's
+     own page or MMTVL does that). -->
+<component name="AntennaTask" extends="Task">
+    <interface>
+        <field id="request" type="assocarray" />
+        <field id="lineupResult" type="assocarray" />
+        <field id="result" type="assocarray" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/URLPolicy.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Unicode.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/EPGMatcher.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/AntennaConfig.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/HDHomeRun.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/AntennaLineup.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/AntennaGuide.bs" />
+</component>

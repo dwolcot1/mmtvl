@@ -19,7 +19,9 @@
 '     playlist still has it; else the screen Settings came from, the guide instead of an empty player.
 '   channelByID(channels, id) -> the channel or invalid.
 '   playerItem(channel, logo) -> what PlayerScreen.channel takes: { id, title, url, logo } (logo "" for none). The
-'     title is MMTVL's banner line "<number>  <name>".
+'     title is MMTVL's banner line "<number>  <name>". Step 21: antenna true for an antenna channel.
+'   errorNumbers(texts), tunerBudgetProblem(channel, held), retryAction(…), antennaContent(item, config) (step 21,
+'     below).
 '
 ' Overlays (MMTVL's banner, showsTimeshiftBar and pausedOverlayVisible): overlays is { banner, bar, paused }, all
 ' booleans. apply(overlays, event) -> { overlays, timers: { banner, bar, paused } }, each timer "start" (restart
@@ -93,7 +95,156 @@ namespace PlayerSession
         if PlayerSession.isText(channel.name) then name = channel.name
         url = ""
         if PlayerSession.isText(channel.url) then url = channel.url
-        return { id: channel.id, title: Lineup.displayNumber(channel) + "  " + name, url: url, logo: shownLogo }
+        item = { id: channel.id, title: Lineup.displayNumber(channel) + "  " + name, url: url, logo: shownLogo }
+        ' Step 21: an antenna channel plays the tuner's raw MPEG-TS (AntennaConfig's switches, in the player).
+        if Lineup.isAntenna(channel) then item.antenna = true
+        return item
+    end function
+
+    ' Step 21: the HTTP status and X-HDHomeRun-Error code in a Video node's error texts (errorMsg, errorStr,
+    ' errorInfo's dbgmsg and errstr), as { httpStatus, tunerError } (each invalid when absent). The texts may hold
+    ' the stream URL, so they're never logged or passed on; only these numbers are. Unverified: what a Roku puts in
+    ' them for a 503 or 404 from a tuner.
+    '   httpStatus  a 4xx or 5xx standing alone (no digit either side) within 12 characters after "http" (a
+    '               "/1.0" or "/1.1" after it skipped), "status", "code" or "returned", never in a URL (a "://"
+    '               between the word and the number, or a "/" right before it).
+    '   tunerError  801, 805, 806 or 807 standing alone within 24 characters after "hdhomerun" or "error", never
+    '               right after a "/" or a "v" (a stream path such as /auto/v805).
+    function errorNumbers(texts as object) as object
+        joined = ""
+        for each text in texts
+            if PlayerSession.isText(text) then joined += " " + LCase(text) + " "
+        end for
+        return { httpStatus: PlayerSession.httpStatusIn(joined), tunerError: PlayerSession.tunerErrorIn(joined) }
+    end function
+
+    function httpStatusIn(text as string) as dynamic
+        for each word in ["http", "status", "code", "returned"]
+            found = PlayerSession.numberAfter(text, word, 12, 400, 599)
+            if found <> invalid then return found
+        end for
+        return invalid
+    end function
+
+    function tunerErrorIn(text as string) as dynamic
+        for each word in ["hdhomerun", "error"]
+            found = PlayerSession.numberAfter(text, word, 24, 801, 807)
+            if found <> invalid
+                if found = 801 or found >= 805 then return found
+            end if
+        end for
+        return invalid
+    end function
+
+    ' The first 3-digit number in [low, high] that stands alone within reach characters after an occurrence of word
+    ' (a "/1.x" after "http" skipped; none past a "://"; none right after "/" or "v").
+    function numberAfter(text as string, word as string, reach as integer, low as integer, high as integer) as dynamic
+        start = 1
+        while true
+            at = Instr(start, text, word)
+            if at = 0 then return invalid
+            i = at + Len(word)
+            if word = "http" and Mid(text, i, 3) = "/1."
+                i = i + 3
+                while PlayerSession.isDigitAt(text, i)
+                    i = i + 1
+                end while
+            end if
+            limit = i + reach
+            while i <= Len(text) and i < limit and not PlayerSession.isDigitAt(text, i)
+                if Mid(text, i, 3) = "://" then exit while
+                i = i + 1
+            end while
+            if PlayerSession.isDigitAt(text, i) and i < limit and Mid(text, i, 3) <> "://"
+                before = Mid(text, i - 1, 1)
+                if before <> "/" and before <> "v" and not PlayerSession.isDigitAt(text, i - 1) and PlayerSession.isDigitAt(text, i + 1) and PlayerSession.isDigitAt(text, i + 2) and not PlayerSession.isDigitAt(text, i + 3)
+                    value = Int(Val(Mid(text, i, 3), 10))
+                    if value >= low and value <= high then return value
+                end if
+            end if
+            start = at + Len(word)
+        end while
+        return invalid
+    end function
+
+    ' Step 21 (D35, D43): what to do with a failed antenna channel's pending retry when a lineup answer comes (or
+    ' Settings closes). retry: { id, minSerial } (the diagnosis asked for a search; minSerial: the first refresh run
+    ' that can have seen it, D43), or invalid. answerSerial: the lineup answer's run (the minSerial itself when
+    ' Settings closes). screen: m.screen. { replay, keep, channelID, screen }:
+    '   replay  play it again in place, on the player wherever it shows (full screen, or the guide's preview); the
+    '           screen never changes (screen is always "")
+    '   keep    leave the retry pending: the answer is from an older run (a search started before the diagnosis),
+    '           or Settings shows (D44: no unprompted audio behind Settings; closeSettings runs it)
+    ' Neither: drop it (it plays again by itself, another channel is current, or the lineup no longer has it).
+    function retryAction(retry as dynamic, current as dynamic, isFailed as boolean, fresh as dynamic, screen as dynamic, answerSerial as dynamic) as object
+        none = { replay: false, keep: false, channelID: "", screen: "" }
+        if type(retry) <> "roAssociativeArray" then return none
+        if not PlayerSession.isText(retry.id) or retry.id = "" then return none
+        if not isFailed or type(current) <> "roAssociativeArray" then return none
+        if current.id <> retry.id then return none
+        if PlayerSession.isNumber(retry.minSerial) and PlayerSession.isNumber(answerSerial)
+            if answerSerial < retry.minSerial then return { replay: false, keep: true, channelID: retry.id, screen: "" }
+        end if
+        if type(fresh) <> "roAssociativeArray" then return none
+        if fresh.id <> retry.id then return none
+        if PlayerSession.isText(screen) and screen = "settings" then return { replay: false, keep: true, channelID: retry.id, screen: "" }
+        return { replay: true, keep: false, channelID: retry.id, screen: "" }
+    end function
+
+    function isNumber(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "integer" or kind = "roint" or kind = "rointeger" or kind = "longinteger" or kind = "rolonginteger" or kind = "float" or kind = "rofloat" or kind = "double" or kind = "rodouble"
+    end function
+
+    ' Step 21: how the player loads a channel (AntennaConfig's switches passed in as config { playRawTS,
+    ' streamFormat }): { refusal, streamFormat, certificates }. refusal: "" or the error panel's message instead of
+    ' playing (the scene's own refusal first; then, D24, antenna playback off). streamFormat: "" leaves it unset.
+    ' Playlist channels are HLS with Roku's CA bundle; antenna ones the switch's format (D25) and no bundle (http).
+    function antennaContent(item as object, config as object) as object
+        refusal = ""
+        if PlayerSession.isText(item.refusal) then refusal = item.refusal
+        if not PlayerSession.isTrue(item.antenna) then return { refusal: refusal, streamFormat: "hls", certificates: true }
+        if refusal = "" and not PlayerSession.isTrue(config.playRawTS) then refusal = "This Roku can't play antenna channels"
+        streamFormat = ""
+        if PlayerSession.isText(config.streamFormat) then streamFormat = config.streamFormat
+        return { refusal: refusal, streamFormat: streamFormat, certificates: false }
+    end function
+
+    function isDigitAt(text as string, position as integer) as boolean
+        if position < 1 or position > Len(text) then return false
+        code = Asc(Mid(text, position, 1))
+        return code >= 48 and code <= 57
+    end function
+
+    ' Step 21, MMTVL's tunerBudgetProblem (M7j L8): "allTunersInUse" when the app's own antenna streams on channel's
+    ' tuner (held: the channels its other players hold, loading, playing or paused) already take every tuner, else
+    ' "". A tuner is its stream's host. The Roku plays one Video at a time and the player about to load a channel is
+    ' never counted (a zap replaces its stream), so the scene passes [] today; Multiview (M13) would pass its other
+    ' windows.
+    function tunerBudgetProblem(channel as object, held as object) as string
+        if not Lineup.isAntenna(channel) or not PlayerSession.isText(channel.url) then return ""
+        count = channel.tunerCount
+        kind = LCase(type(count))
+        if kind <> "integer" and kind <> "roint" and kind <> "rointeger" then return ""
+        tuner = Log.host(channel.url)
+        if tuner = "" then return ""
+        holding = 0
+        for each other in held
+            if Lineup.isAntenna(other) and PlayerSession.isText(other.url)
+                if Log.host(other.url) = tuner then holding += 1
+            end if
+        end for
+        if holding >= count then return "allTunersInUse"
+        return ""
+    end function
+
+    ' HDHomeRun.busyMessage's text, for the scene, which doesn't load HDHomeRun.bs (a test checks they agree).
+    function busyText(tunerCount as dynamic) as string
+        kind = LCase(type(tunerCount))
+        if kind <> "integer" and kind <> "roint" and kind <> "rointeger" then return "The antenna tuners are in use"
+        if tunerCount = 2 then return "Both antenna tuners are in use"
+        if tunerCount <= 1 then return "The antenna tuner is in use"
+        return "All " + tunerCount.ToStr() + " antenna tuners are in use"
     end function
 
     ' --- overlays -------------------------------------------------------------------------------------------------
@@ -146,6 +297,11 @@ namespace PlayerSession
     function isText(value as dynamic) as boolean
         kind = LCase(type(value))
         return kind = "string" or kind = "rostring"
+    end function
+
+    function textOr(value as dynamic) as string
+        if PlayerSession.isText(value) then return value
+        return ""
     end function
 
     ' true only for a boolean true (comparing invalid with true is a type mismatch on a Roku).

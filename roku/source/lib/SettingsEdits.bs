@@ -14,6 +14,7 @@
 '   groupToggled(prefs, name) -> prefs with the group hidden or shown again; channelShown(prefs, id) -> prefs with the
 '     channel no longer hidden. Other fields are kept; the lists are new.
 '   settingToggled(settings, name) -> settings with that boolean flipped (only the settings Settings switches).
+'   checkTunerAddress(typed, own) -> { ok, address, message } (step 21, below).
 namespace SettingsEdits
 
     const emptyMessage = "Nothing was typed"
@@ -156,9 +157,40 @@ namespace SettingsEdits
 
     function settingToggled(settings as object, name as string) as object
         result = SettingsEdits.copied(settings)
-        if name <> "channelUpMovesUpList" and name <> "usePlaylistGuide" and name <> "channelLogos" and name <> "teamMatchInitials" and name <> "teamMatchNicknames" then return result
+        allowed = ["channelUpMovesUpList", "usePlaylistGuide", "channelLogos", "teamMatchInitials", "teamMatchNicknames", "antennaEnabled", "antennaGuide"]
+        known = false
+        for each setting in allowed
+            if setting = name then known = true
+        end for
+        if not known then return result
         result[name] = not SettingsStatus.isTrue(settings[name])
         return result
+    end function
+
+    ' Step 21: a tuner address typed in Settings → Antenna. { ok, address, message }: "" (forget the address) is ok;
+    ' else a private (10/8, 172.16/12, 192.168/16) or link-local IPv4 literal, written plainly (no leading zeros),
+    ' with an optional "http://" and trailing "/", that isn't one of own (the Roku's addresses) and doesn't end in
+    ' .0 or .255. Names, public, loopback and other addresses are refused. The same rule as HDHomeRun.typedHost,
+    ' which AntennaTask applies again (the tests check the two agree).
+    function checkTunerAddress(typed as dynamic, own as dynamic) as object
+        refused = { ok: false, address: "", message: SettingsStatus.tunerAddressMessage }
+        if not SettingsStatus.isText(typed) then return refused
+        text = typed.Trim()
+        if text = "" then return { ok: true, address: "", message: "" }
+        if LCase(Left(text, 7)) = "http://" then text = Mid(text, 8)
+        if Right(text, 1) = "/" then text = Left(text, Len(text) - 1)
+        bytes = URLPolicy.parseDottedQuad(text)
+        if bytes = invalid then return refused
+        canonical = bytes[0].ToStr() + "." + bytes[1].ToStr() + "." + bytes[2].ToStr() + "." + bytes[3].ToStr()
+        if canonical <> text then return refused
+        isLAN = bytes[0] = 10 or (bytes[0] = 172 and bytes[1] >= 16 and bytes[1] <= 31) or (bytes[0] = 192 and bytes[1] = 168) or (bytes[0] = 169 and bytes[1] = 254)
+        if not isLAN or bytes[3] = 0 or bytes[3] = 255 then return refused
+        if type(own) = "roArray"
+            for each address in own
+                if address = canonical then return refused
+            end for
+        end if
+        return { ok: true, address: canonical, message: "" }
     end function
 
     function copied(value as object) as object

@@ -30,7 +30,16 @@
      shows Automatic, No Guide and the suggestions in the channel menu's view (wide); Back returns to the channel
      menu, on its Match Guide row (D49); a choice saves the overrides (SettingsStore; a refused save shows its
      message in the menu) and starts a rematch run that downloads nothing (GuideRuns' rematch, GuideTask's
-     cachedOnly). Back never leaves the app (D49): the scene handles every key that reaches it. -->
+     cachedOnly). Step 21: the antenna. AntennaTask (one per request) finds HDHomeRun tuners and reads their lineups
+     at launch and on the playlist's cadence (and Refresh Now, Find Tuners, a setting change), downloading SiliconDust's
+     guide in the same run when due (guide runs wait meanwhile, so no run reads a half-written file); the scene merges
+     the antenna's channels after the playlist's (m.channels), rematches the guides when they or the antenna guide
+     change, and waits for the antenna's first answer before the launch target opens. A failed antenna stream is
+     diagnosed by another AntennaTask (status.json, lineup_status.json) and the player's error panel says why; an
+     unreachable tuner or a channel gone from it is searched for or read again and played once more. Settings →
+     Antenna (Use Antenna, the tuners, Find Tuners, Address, Guide from SiliconDust). No DeviceID, DeviceAuth or
+     tuner address reaches the scene's fields or Settings (the stream URLs in the lineup are on the tuner, as the
+     playlist's are on the provider). Back never leaves the app (D49): the scene handles every key that reaches it. -->
 <component name="MainScene" extends="Scene">
     <interface>
         <!-- Lineup.build's result for the last playlist that loaded (kept when a later load fails). -->
@@ -95,6 +104,8 @@
     <!-- Step 20: Match Guide (its menu, the overrides it saves, the guides' labels). -->
     <script type="text/brighterscript" uri="pkg:/source/lib/Unicode.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/MatchGuide.bs" />
+    <!-- Step 21: the antenna's switches and file paths (constants only); the antenna's logic runs in AntennaTask. -->
+    <script type="text/brighterscript" uri="pkg:/source/lib/AntennaConfig.bs" />
     <children>
         <!-- The guide's background too: the guide has none, so the player's Video shows through in its preview place. -->
         <Poster id="background" />

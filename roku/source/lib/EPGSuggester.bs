@@ -18,9 +18,45 @@
 '     tells apart (and split some it ties), so the log is computed here in Doubles; sums run in sorted token order,
 '     so equal token sets always give equal scores.
 ' Only the channel's own tokens get a document frequency, so nothing but the kept candidates outlives the pass.
+'   suggestions(channel, matchData, limit, normalizer) (step 21) -> { suggestions, guideCount }: rank over Match
+'     Guide's data, the antenna guide's first for antenna channels (below).
 namespace EPGSuggester
 
     const ln2 = 0.6931471805599453#
+
+    ' Step 21: Match Guide's suggestions for a channel over GuideFetch.matchData (MMTVL's guideMatchOptions): the
+    ' pasted and playlist guides ranked (rank, at most limit); an antenna channel (id "antenna:…") gets the antenna
+    ' guide's (matchData.antennaIndex) first, ranked on their own (at most limit); playlist channels never get the
+    ' antenna guide's. Each suggestion's guide is its index in matchData.guides. { suggestions, guideCount }.
+    function suggestions(channel as object, matchData as dynamic, limit as integer, normalizer = invalid as dynamic) as object
+        pasted = []
+        antennaSource = invalid
+        antennaIndex = -1
+        if type(matchData) = "roAssociativeArray"
+            kind = LCase(type(matchData.antennaIndex))
+            if kind = "integer" or kind = "roint" or kind = "rointeger" then antennaIndex = matchData.antennaIndex
+            if type(matchData.guides) = "roArray"
+                for i = 0 to matchData.guides.Count() - 1
+                    list = matchData.guides[i]
+                    if type(list) <> "roArray" then list = []
+                    if i = antennaIndex then antennaSource = { sourceID: i.ToStr(), channels: list } else pasted.Push({ sourceID: i.ToStr(), channels: list })
+                end for
+            end if
+        end if
+        result = []
+        isAntenna = false
+        if EPGSuggester.isText(channel.id) then isAntenna = Left(channel.id, 8) = "antenna:"
+        if antennaSource <> invalid and isAntenna
+            for each suggestion in EPGSuggester.rank(channel, [antennaSource], limit, normalizer)
+                suggestion.guide = antennaIndex
+                result.Push(suggestion)
+            end for
+        end if
+        result.Append(EPGSuggester.rank(channel, pasted, limit, normalizer))
+        count = pasted.Count()
+        if antennaSource <> invalid then count += 1
+        return { suggestions: result, guideCount: count }
+    end function
 
     function rank(channel as object, sources as object, limit as integer, normalizer = invalid as dynamic) as object
         n = normalizer
