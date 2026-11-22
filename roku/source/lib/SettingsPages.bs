@@ -223,13 +223,13 @@ namespace SettingsPages
         if hiddenGroups > 0 then groupsValue = hiddenGroups.ToStr() + " Hidden"
         hiddenValue = "None"
         if model.hiddenChannels.Count() > 0 then hiddenValue = SettingsStatus.grouped(model.hiddenChannels.Count())
-        ' Step 21: the Antenna row first (frame wjg72 draws it). Step 20 (Match Guide) restores the frame's footer:
-        ' "To favorite, hide or match one channel: in the guide, press * on it."
+        ' Step 21: the Antenna row first (frame wjg72 draws it). The footer is the frame's (step 20 brought Match
+        ' Guide, so "match" is back).
         return SettingsPages.newSection("channels", "Channels", [
             SettingsPages.newRow({ id: "groups", title: "Groups", value: groupsValue, disclosure: true, action: SettingsPages.push(SettingsPages.groupsPage), description: "Which groups show in the guide." }),
             SettingsPages.newRow({ id: "hiddenChannels", title: "Hidden Channels", value: hiddenValue, disclosure: true, action: SettingsPages.push(SettingsPages.hiddenChannelsPage), description: "Channels hidden from the guide." }),
             SettingsPages.newRow({ id: "teams", title: "My Teams", value: TeamPicker.teamCountLabel(SettingsPages.pickedTeams(model).Count()), disclosure: true, action: SettingsPages.push(SettingsPages.teamsPage), description: "Your teams' live and upcoming games, pro and college, in the guide's My Teams group." })
-        ], "To favorite or hide one channel: in the guide, press * on it.")
+        ], "To favorite, hide or match one channel: in the guide, press * on it.")
     end function
 
     function groupsSections(model as object) as object

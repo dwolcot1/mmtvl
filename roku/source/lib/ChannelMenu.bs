@@ -5,15 +5,18 @@
 ' Rows (MMTVL's order, without what Roku hasn't got or later steps add):
 '   Watch; Add to Favorites / Remove from Favorites; Move Up and Move Down (only from the guide's Favorites group,
 '   for a saved favorite below the team games, lineup.movableFavorites, and only where there is a neighbour);
-'   step 18: Add … to My Teams / Remove … from My Teams (MyTeams.menuItems); Hide Channel. Not here: Add to Multiview
-'   (Out of scope), Match Guide (step 20).
+'   step 18: Add … to My Teams / Remove … from My Teams (MyTeams.menuItems); step 20: Match Guide… (the frame's
+'   wording, with MMTVL's value: the matched guide's label, else "None"); Hide Channel. Not here: Add to Multiview
+'   (Out of scope).
 '
-'   items(context) -> [{ id, title, action }]  context: { channelID, isFavorite, group, movableIDs, teamItems }
+'   items(context) -> [{ id, title, action }]  context: { channelID, isFavorite, group, movableIDs, teamItems,
+'     matchValue }
 '     group: the guide's selected group, or "" when the menu opens over the player (no Move Up/Down: the guide
 '     isn't open, MMTVL M7 L5). movableIDs: lineup.movableFavorites' ids, in order. teamItems: MyTeams.menuItems'
-'     rows (missing: none), in place before Hide Channel.
-'     action: { type: "watch" | "toggleFavorite" | "moveFavorite" | "hideChannel" | "toggleTeam", channelID,
-'     step (moveFavorite), teamID (toggleTeam) }
+'     rows (missing: none), in place before Match Guide. matchValue (step 20): the Match Guide row's value
+'     (MatchGuide.rowValue; missing: "None"); that row alone has a value field.
+'     action: { type: "watch" | "toggleFavorite" | "moveFavorite" | "hideChannel" | "toggleTeam" | "openMatchGuide",
+'     channelID, step (moveFavorite), teamID (toggleTeam) }
 '   make(title, subtitle, items, focusedIndex, visibleRows) -> menu { title, subtitle, items, focusedIndex,
 '     firstVisible, visibleRows }: the focused index clamped, the window of visibleRows rows (Theme's
 '     liveMenuVisibleRows, the rows ChannelMenuView draws; at least 1) showing it.
@@ -50,6 +53,12 @@ namespace ChannelMenu
         end if
         teamRows = context.teamItems
         if LCase(type(teamRows)) = "roarray" then rows.Append(teamRows)
+        ' Step 20: MMTVL's place for it, after the team rows (LiveTVModel.swift:937-938).
+        matchValue = "None"
+        if ChannelMenu.isText(context.matchValue) then matchValue = context.matchValue
+        matchRow = ChannelMenu.item("matchGuide", "Match Guide…", { type: "openMatchGuide", channelID: id })
+        matchRow.value = matchValue
+        rows.Push(matchRow)
         rows.Push(ChannelMenu.item("hide", "Hide Channel", { type: "hideChannel", channelID: id }))
         return rows
     end function

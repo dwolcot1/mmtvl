@@ -94,7 +94,7 @@ namespace MyTeamsLineupTests
         saved = Lineup.build(channels, { favorites: [espn, games[0]] }, games)
         t.assertEqual(LineupTests.ids(Lineup.channelsIn(saved, "Favorites")), [games[0], games[1], espn])
         rows = ChannelMenu.items({ channelID: games[0], isFavorite: true, group: "Favorites", movableIDs: LineupTests.ids(saved.movableFavorites) })
-        t.assertEqual(MyTeamsLineupTests.rowIDs(rows), ["watch", "favorite", "hide"])
+        t.assertEqual(MyTeamsLineupTests.rowIDs(rows), ["watch", "favorite", "matchGuide", "hide"])
         ' A team channel doesn't move, saved or not: the saved list stays as it was.
         prefs = { favorites: [espn, games[0]] }
         t.assertEqual(ChannelMenu.prefsAfter(prefs, { type: "moveFavorite", channelID: games[0], step: -1 }, LineupTests.ids(saved.movableFavorites)).favorites, [espn, games[0]])
@@ -124,9 +124,9 @@ namespace MyTeamsLineupTests
         end for
         ' The first saved row below the games moves only down, the last only up.
         espnRows = MyTeamsLineupTests.rowIDs(ChannelMenu.items({ channelID: espn, isFavorite: true, group: "Favorites", movableIDs: movable }))
-        t.assertEqual(espnRows, ["watch", "favorite", "moveDown", "hide"])
+        t.assertEqual(espnRows, ["watch", "favorite", "moveDown", "matchGuide", "hide"])
         replayRows = MyTeamsLineupTests.rowIDs(ChannelMenu.items({ channelID: replay, isFavorite: true, group: "Favorites", movableIDs: movable }))
-        t.assertEqual(replayRows, ["watch", "favorite", "moveUp", "hide"])
+        t.assertEqual(replayRows, ["watch", "favorite", "moveUp", "matchGuide", "hide"])
         ' Moving ESPN down swaps it with the replay in the saved list (past the saved home feed).
         moved = ChannelMenu.prefsAfter(prefs, { type: "moveFavorite", channelID: espn, step: 1 }, movable)
         t.assertEqual(moved.favorites, [replay, home, espn])
@@ -311,7 +311,7 @@ namespace MyTeamsLineupTests
         ' The rows go before Hide Channel, after Watch and the favorite row.
         teams = MyTeams.menuTeams(TeamsWork.menuSides(MyTeamsLineupTests.nbaTVChannel(), programme, index), picked)
         rows = ChannelMenu.items({ channelID: LineupTests.nba(), isFavorite: false, group: "", movableIDs: [], teamItems: MyTeams.menuItems(teams, picked, LineupTests.nba()) })
-        t.assertEqual(MyTeamsLineupTests.rowIDs(rows), ["watch", "favorite", "team.ncaam.houston-cougars", "team.ncaam.byu-cougars", "team.ncaam.cincinnati-bearcats", "hide"])
+        t.assertEqual(MyTeamsLineupTests.rowIDs(rows), ["watch", "favorite", "team.ncaam.houston-cougars", "team.ncaam.byu-cougars", "team.ncaam.cincinnati-bearcats", "matchGuide", "hide"])
         t.assertEqual(rows[2].action, { type: "toggleTeam", teamID: "ncaam.houston-cougars", channelID: LineupTests.nba() })
     end sub
 
@@ -369,19 +369,20 @@ namespace MyTeamsLineupTests
         opened = ChannelMenu.make("NBA TV", "", base, 0, 3)
         moved = ChannelMenu.handle(opened, "down", true).menu
         moved = ChannelMenu.handle(moved, "down", true).menu
+        moved = ChannelMenu.handle(moved, "down", true).menu
         t.assertEqual(moved.items[moved.focusedIndex].id, "hide")
         teams = [{ id: "a", title: "A" }, { id: "b", title: "B" }, { id: "c", title: "C" }]
         withTeams = ChannelMenu.items({ channelID: LineupTests.nba(), isFavorite: false, group: "", movableIDs: [], teamItems: MyTeams.menuItems(teams, [], LineupTests.nba()) })
         updated = ChannelMenu.withItems(moved, withTeams)
         t.assertEqual(updated.items[updated.focusedIndex].id, "hide")
-        t.assertEqual(updated.focusedIndex, 5)
+        t.assertEqual(updated.focusedIndex, 6)
         t.assertTrue(updated.focusedIndex >= updated.firstVisible and updated.focusedIndex < updated.firstVisible + updated.visibleRows, "in view")
-        t.assertEqual(updated.items.Count(), 6)
-        t.assertEqual(moved.items.Count(), 3, "the old menu is unchanged")
+        t.assertEqual(updated.items.Count(), 7)
+        t.assertEqual(moved.items.Count(), 4, "the old menu is unchanged")
         ' A row that's gone: the same index, clamped.
         gone = ChannelMenu.withItems(updated, base)
-        t.assertEqual(gone.focusedIndex, 2)
-        t.assertTrue(gone.firstVisible <= 2)
+        t.assertEqual(gone.focusedIndex, 3)
+        t.assertTrue(gone.firstVisible <= 3)
     end sub
 
     ' QA fix 5: a catalog that couldn't be made says so, in Choose Teams and Settings.
@@ -570,7 +571,7 @@ namespace MyTeamsLineupTests
         t.assertEqual(row.title, "My Teams")
         t.assertEqual(row.value, "3 Teams")
         t.assertEqual(row.action, { type: "push", page: "teams" })
-        t.assertEqual(channels.footer, "To favorite or hide one channel: in the guide, press * on it.")
+        t.assertEqual(channels.footer, "To favorite, hide or match one channel: in the guide, press * on it.")
         t.assertEqual(SettingsPages.pageTitle("teams", model), "My Teams")
         list = SettingsPages.sections("teams", model)
         t.assertEqual([list[0].title, list[1].title, list[2].title], ["Pro", "College", "Matching"])

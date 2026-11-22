@@ -1,46 +1,59 @@
 ' ChannelMenu (M12 step 12): the channel menu's rows per context, its keys (LiveMenu.handle) and the favorites and
 ' hiding edits. Ported from MMTVL's LiveMenuTests and LiveTVModelTests channel menu cases (Watch, Add/Remove
-' Favorites, Move Up/Down only in Favorites and only with a neighbour, Hide Channel; the menu over the player has
-' no Move) and IPTVLibraryTests (setFavorite, moveFavorite, setChannelHidden). Not here: Add to Multiview (Out of
-' scope), the teams' rows (step 18), Match Guide (step 20). Off-device.
+' Favorites, Move Up/Down only in Favorites and only with a neighbour, Match Guide (step 20) before Hide Channel; the
+' menu over the player has no Move) and IPTVLibraryTests (setFavorite, moveFavorite, setChannelHidden). Not here: Add
+' to Multiview (Out of scope), the teams' rows (step 18, MyTeamsLineupTests), Match Guide's own menu (MatchGuideTests).
+' Off-device.
 namespace ChannelMenuTests
 
     ' MARK: rows per context
 
     sub test_theGuideOutsideFavorites(t as object)
         rows = ChannelMenu.items({ channelID: "id:c3", isFavorite: false, group: "Live", movableIDs: [] })
-        t.assertEqual(ChannelMenuTests.idsOf(rows), ["watch", "favorite", "hide"])
-        t.assertEqual(ChannelMenuTests.titlesOf(rows), ["Watch", "Add to Favorites", "Hide Channel"])
+        t.assertEqual(ChannelMenuTests.idsOf(rows), ["watch", "favorite", "matchGuide", "hide"])
+        t.assertEqual(ChannelMenuTests.titlesOf(rows), ["Watch", "Add to Favorites", "Match Guide" + Chr(8230), "Hide Channel"])
         t.assertEqual(rows[0].action, { type: "watch", channelID: "id:c3" })
         t.assertEqual(rows[1].action, { type: "toggleFavorite", channelID: "id:c3" })
-        t.assertEqual(rows[2].action, { type: "hideChannel", channelID: "id:c3" })
+        t.assertEqual(rows[2].action, { type: "openMatchGuide", channelID: "id:c3" })
+        t.assertEqual(rows[2].value, "None", "step 20: no match")
+        t.assertEqual(rows[3].action, { type: "hideChannel", channelID: "id:c3" })
+        t.assertInvalid(rows[3].value, "only the Match Guide row has a value")
     end sub
 
     sub test_inFavoritesTheMovesFollowTheNeighbours(t as object)
         movable = ["id:c1", "id:c2", "id:c3"]
         first = ChannelMenu.items({ channelID: "id:c1", isFavorite: true, group: "Favorites", movableIDs: movable })
-        t.assertEqual(ChannelMenuTests.titlesOf(first), ["Watch", "Remove from Favorites", "Move Down", "Hide Channel"])
+        t.assertEqual(ChannelMenuTests.titlesOf(first), ["Watch", "Remove from Favorites", "Move Down", "Match Guide" + Chr(8230), "Hide Channel"])
         t.assertEqual(first[2].action, { type: "moveFavorite", channelID: "id:c1", step: 1 })
         middle = ChannelMenu.items({ channelID: "id:c2", isFavorite: true, group: "Favorites", movableIDs: movable })
-        t.assertEqual(ChannelMenuTests.idsOf(middle), ["watch", "favorite", "moveUp", "moveDown", "hide"])
+        t.assertEqual(ChannelMenuTests.idsOf(middle), ["watch", "favorite", "moveUp", "moveDown", "matchGuide", "hide"])
         t.assertEqual(middle[2].action, { type: "moveFavorite", channelID: "id:c2", step: -1 })
         last = ChannelMenu.items({ channelID: "id:c3", isFavorite: true, group: "Favorites", movableIDs: movable })
-        t.assertEqual(ChannelMenuTests.idsOf(last), ["watch", "favorite", "moveUp", "hide"])
+        t.assertEqual(ChannelMenuTests.idsOf(last), ["watch", "favorite", "moveUp", "matchGuide", "hide"])
         alone = ChannelMenu.items({ channelID: "id:c1", isFavorite: true, group: "Favorites", movableIDs: ["id:c1"] })
-        t.assertEqual(ChannelMenuTests.idsOf(alone), ["watch", "favorite", "hide"])
+        t.assertEqual(ChannelMenuTests.idsOf(alone), ["watch", "favorite", "matchGuide", "hide"])
+    end sub
+
+    ' Step 20 (LiveTVModelTests.matchGuideValueNamesTheGuide): the row's value names the matched guide, else None.
+    sub test_theMatchGuideRowNamesTheGuide(t as object)
+        rows = ChannelMenu.items({ channelID: "id:c1", isFavorite: false, group: "Live", movableIDs: [], matchValue: "custom" })
+        t.assertEqual(rows[2].id, "matchGuide")
+        t.assertEqual(rows[2].value, "custom")
+        rows = ChannelMenu.items({ channelID: "id:c1", isFavorite: false, group: "Live", movableIDs: [], matchValue: invalid })
+        t.assertEqual(rows[2].value, "None")
     end sub
 
     ' M7l 8b: a team game leading Favorites isn't movable.
     sub test_aTeamGameInFavoritesDoesntMove(t as object)
         rows = ChannelMenu.items({ channelID: "id:c9", isFavorite: false, group: "Favorites", movableIDs: ["id:c1", "id:c2"] })
-        t.assertEqual(ChannelMenuTests.idsOf(rows), ["watch", "favorite", "hide"])
+        t.assertEqual(ChannelMenuTests.idsOf(rows), ["watch", "favorite", "matchGuide", "hide"])
     end sub
 
     ' M7 L5: the menu over the player has no Move Up/Down (the guide isn't open).
     sub test_overThePlayerThereIsNoMove(t as object)
         rows = ChannelMenu.items({ channelID: "id:c2", isFavorite: true, group: "", movableIDs: ["id:c1", "id:c2", "id:c3"] })
-        t.assertEqual(ChannelMenuTests.titlesOf(rows), ["Watch", "Remove from Favorites", "Hide Channel"])
-        t.assertEqual(ChannelMenuTests.idsOf(ChannelMenu.items({ channelID: "id:c2", isFavorite: invalid, group: invalid, movableIDs: invalid })), ["watch", "favorite", "hide"])
+        t.assertEqual(ChannelMenuTests.titlesOf(rows), ["Watch", "Remove from Favorites", "Match Guide" + Chr(8230), "Hide Channel"])
+        t.assertEqual(ChannelMenuTests.idsOf(ChannelMenu.items({ channelID: "id:c2", isFavorite: invalid, group: invalid, movableIDs: invalid })), ["watch", "favorite", "matchGuide", "hide"])
     end sub
 
     ' MARK: keys (LiveMenu.handle)
@@ -156,7 +169,7 @@ namespace ChannelMenuTests
         after = ChannelMenu.items({ channelID: "id:c1", isFavorite: true, group: "Favorites", movableIDs: movable })
         t.assertEqual(ChannelMenu.focusAfterMove(after, "moveDown", 3), 2)
         t.assertEqual(ChannelMenu.focusAfterMove(after, "moveUp", 2), 2, "Move Up went: the row now at its place")
-        t.assertEqual(ChannelMenu.focusAfterMove(after, "moveUp", 9), 3, "clamped")
+        t.assertEqual(ChannelMenu.focusAfterMove(after, "moveUp", 9), 4, "clamped")
     end sub
 
     function makeRows(count as integer) as object

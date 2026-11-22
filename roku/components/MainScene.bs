@@ -73,6 +73,7 @@ sub init()
     m.importWatchdog.observeField("fire", "onImportWatchdog")
     startTeams()
     startSearch()
+    startMatchGuide()
     info = CreateObject("roAppInfo")
     m.versionShort = info.GetValue("major_version") + "." + info.GetValue("minor_version")
     m.buildNumber = info.GetValue("build_version")
@@ -230,6 +231,8 @@ sub startGuides()
     m.guideRunChannelsKey = invalid
     ' Step 13: what Settings asked of the guide runs (GuideRuns: pending, force, deletePending).
     m.guideRuns = GuideRuns.newState()
+    ' Step 20: whether the running (or last) guide run was a rematch (cachedOnly), for GuideRuns.runFailed.
+    m.guideRunCachedOnly = false
     m.guideWatchdog = CreateObject("roSGNode", "Timer")
     m.guideWatchdog.duration = GuideSources.watchdogSeconds
     m.guideWatchdog.repeat = false
@@ -271,7 +274,8 @@ sub refreshGuideIfDue()
     hasChannels = m.channels.Count() > 0
     verdict = invalid
     if hasChannels and not m.guideRuns.force then verdict = GuideSources.isRunDue(sources, m.guideState, now)
-    chosen = GuideRuns.choose(m.guideRuns, hasChannels, verdict)
+    ' QA of step 20: a failed rematch is tried again once the failure wait is over.
+    chosen = GuideRuns.choose(m.guideRuns, hasChannels, verdict, GuideRuns.isWaitingAfterFailure(m.guideState.failedRunAt, now))
     m.guideRuns = chosen.runs
     if not chosen.run then return
     ' Refresh Now: every guide is downloaded again (MMTVL's "Downloads the playlist and the guides again now"):
@@ -285,6 +289,9 @@ sub refreshGuideIfDue()
     ' QA-M1: the url-tvg list goes in the task's own field, set just before it runs (no getScene() in the task).
     task.playlistGuideURLs = urls
     task.expectedGuides = sources.Count()
+    ' Step 20: Match Guide's rematch reads the files there are and downloads nothing.
+    task.cachedOnly = chosen.cachedOnly
+    m.guideRunCachedOnly = chosen.cachedOnly
     task.observeField("result", "onGuideResult")
     m.guideTask = task
     task.control = "run"
@@ -321,6 +328,7 @@ sub onGuideWatchdog()
     task.playlistGuideURLs = []
     m.guideTask = invalid
     m.guideState.failedRunAt = CreateObject("roDateTime").AsSeconds()
+    m.guideRuns = GuideRuns.runFailed(m.guideRuns, m.guideRunCachedOnly)
     Log.error("Guide", "No answer from the guide task; keeping the last guide")
     if not isFinishedTask(task)
         m.abandonedGuideTask = task
@@ -361,6 +369,7 @@ sub onGuideResult()
     if type(result) = "roAssociativeArray" then ok = result.ok = true
     if not ok
         m.guideState.failedRunAt = CreateObject("roDateTime").AsSeconds()
+        m.guideRuns = GuideRuns.runFailed(m.guideRuns, m.guideRunCachedOnly)
         Log.warn("Guide", "The guide run failed; keeping the last guide")
         afterGuideRun()
         return
@@ -386,6 +395,8 @@ sub onGuideResult()
         m.searchTask.guideHolder = task
         m.searchTask.guideRevision = m.top.guideRevision
     end if
+    ' Step 20: Match Guide reads the new run's matches and channel lists.
+    if m.matchTask <> invalid then m.matchTask.guideHolder = task
     pushProgrammes()
     m.guideStatusByID = statusesByID(result.sourcesKey, result.statuses)
     afterGuideRun()
@@ -626,7 +637,8 @@ function menuItemsContext() as object
     id = m.menuContext.channelID
     teamItems = []
     if m.menuContext.teamSides <> invalid then teamItems = MyTeams.menuItems(MyTeams.menuTeams(m.menuContext.teamSides, m.store.prefs.teams), m.store.prefs.teams, id)
-    return { channelID: id, isFavorite: ChannelMenu.isFavorite(m.store.prefs, id), group: m.menuContext.group, movableIDs: movableIDs(), teamItems: teamItems }
+    matchValue = MatchGuide.rowValue(m.guide.callFunc("matchFor", id), guideLabels())
+    return { channelID: id, isFavorite: ChannelMenu.isFavorite(m.store.prefs, id), group: m.menuContext.group, movableIDs: movableIDs(), teamItems: teamItems, matchValue: matchValue }
 end function
 
 function movableIDs() as object
@@ -642,6 +654,9 @@ sub closeChannelMenu()
     m.menu.visible = false
     m.menuOpen = false
     m.menuContext = invalid
+    ' Step 20: a Match Guide still loading never opens after this, and its parent menu is let go.
+    m.matchPending = invalid
+    m.matchParent = invalid
     focusCurrent()
 end sub
 
@@ -650,13 +665,20 @@ end sub
 sub onMenuChoice()
     choice = m.menu.choice
     if type(choice) <> "roAssociativeArray" or m.menuContext = invalid then return
+    ' Step 20: Match Guide's own menu (in the same view): Back or * goes back to the channel menu (D49).
+    if isMatchGuideMenu()
+        if choice.outcome = "choose" then applyGuideMatch(choice.action) else backToChannelMenu()
+        return
+    end if
     if choice.outcome <> "choose"
         closeChannelMenu()
         return
     end if
     chosen = choice.action
     kind = chosen.type
-    if kind = "watch"
+    if kind = "openMatchGuide"
+        openMatchGuide(chosen.channelID)
+    else if kind = "watch"
         closeChannelMenu()
         watch(chosen.channelID)
     else if kind = "moveFavorite"
@@ -713,7 +735,8 @@ sub onIdle()
         end if
         return
     end if
-    result = GuideIdle.outcome({ screen: m.screen, menuOpen: m.menuOpen, pickerOpen: m.pickerOpen, searchOpen: m.searchOpen, isPlaying: isPlaying() })
+    ' Step 20: a Match Guide still loading counts as an open menu (MMTVL cancels it), so it can't open after this.
+    result = GuideIdle.outcome({ screen: m.screen, menuOpen: m.menuOpen or m.matchPending <> invalid, pickerOpen: m.pickerOpen, searchOpen: m.searchOpen, isPlaying: isPlaying() })
     if result.closeMenu then closeChannelMenu()
     if result.closePicker then closeTeamPicker()
     if result.closeSearch then closeSearch()
@@ -1610,3 +1633,132 @@ end sub
         focusCurrent()
     end sub
 #end if
+
+' --- step 20: Match Guide --------------------------------------------------------------------------------------
+
+sub startMatchGuide()
+    m.matchTask = invalid
+    m.matchSerial = 0
+    ' { serial, channelID, screen } while Match Guide's options load; the channel menu it came from, while the
+    ' options load and Match Guide is open ({ channelID, group, teamSides }).
+    m.matchPending = invalid
+    m.matchParent = invalid
+    m.unicodeFinder = Unicode.newNonASCIIFinder()
+end sub
+
+' Whether the open menu is Match Guide's (the channel menu's context has no kind).
+function isMatchGuideMenu() as boolean
+    if m.menuContext = invalid then return false
+    kind = m.menuContext.kind
+    if not PlayerSession.isText(kind) then return false
+    return kind = "matchGuide"
+end function
+
+' Each guide's short label, by the index the last guide run gave it (MatchGuide.labels; no URL leaves here).
+function guideLabels() as object
+    urls = m.top.playlistGuideURLs
+    if type(urls) <> "roArray" then urls = []
+    sources = GuideSources.chooseSources(m.store.guides, urls, m.store.settings.usePlaylistGuide, m.store.source)
+    return MatchGuide.labels(m.guideState.lastKey, sources)
+end function
+
+' MMTVL's openMatchGuide: the channel menu closes and Match Guide opens once its options load (nothing shows
+' meanwhile); the channel menu is kept to go back to.
+sub openMatchGuide(id as dynamic)
+    channel = PlayerSession.channelByID(m.channels, id)
+    context = m.menuContext
+    if channel = invalid or context = invalid
+        closeChannelMenu()
+        return
+    end if
+    parent = { channelID: channel.id, group: context.group, teamSides: context.teamSides }
+    closeChannelMenu()
+    m.matchParent = parent
+    if m.matchTask = invalid
+        m.matchTask = CreateObject("roSGNode", "MatchGuideTask")
+        m.matchTask.guideHolder = m.top.guideHolder
+        m.matchTask.observeField("answer", "onMatchGuideAnswer")
+        m.matchTask.control = "run"
+    end if
+    m.matchSerial = m.matchSerial + 1
+    m.matchPending = { serial: m.matchSerial, channelID: channel.id, screen: m.screen }
+    m.matchTask.request = { serial: m.matchSerial, channel: { id: channel.id, name: channel.name, tvgID: channel.tvgID, tvgName: channel.tvgName }, overrides: m.store.overrides }
+end sub
+
+' The options came: Match Guide opens, unless something else opened or the screen changed meanwhile (MMTVL's
+' guard: not over Choose Teams, Search or another menu, and in the same mode).
+sub onMatchGuideAnswer()
+    answer = m.matchTask.answer
+    pending = m.matchPending
+    if type(answer) <> "roAssociativeArray" or pending = invalid then return
+    if answer.serial <> pending.serial then return
+    m.matchPending = invalid
+    parent = m.matchParent
+    blocked = m.menuOpen or m.pickerOpen or m.searchOpen or m.keyboard <> invalid or m.importView <> invalid or m.notice <> invalid
+    if blocked or m.screen <> pending.screen or (m.screen <> "guide" and m.screen <> "player") or parent = invalid
+        m.matchParent = invalid
+        return
+    end if
+    channel = PlayerSession.channelByID(m.channels, pending.channelID)
+    if channel = invalid
+        m.matchParent = invalid
+        return
+    end if
+    name = ""
+    if PlayerSession.isText(channel.name) then name = channel.name
+    built = MatchGuide.menu(name, channel.id, answer.options, guideLabels())
+    shown = ChannelMenu.make(built.title, "", built.items, built.focusedIndex, m.theme.layout.liveMenuVisibleRows)
+    shown.wide = true
+    shown.note = ""
+    m.menuContext = { channelID: channel.id, group: parent.group, kind: "matchGuide", teamSides: invalid, teamSerial: -1 }
+    m.menu.menu = shown
+    m.menu.visible = true
+    m.menuOpen = true
+    focusCurrent()
+    noteInput()
+end sub
+
+' M7m L3: Back from Match Guide goes back to the channel menu, focused on its Match Guide row.
+sub backToChannelMenu()
+    parent = m.matchParent
+    m.matchParent = invalid
+    if parent = invalid
+        closeChannelMenu()
+        return
+    end if
+    m.menuContext = { channelID: parent.channelID, group: parent.group, teamSides: parent.teamSides, teamSerial: -1 }
+    focus = ChannelMenu.focusAfterMove(ChannelMenu.items(menuItemsContext()), "matchGuide", 0)
+    openChannelMenu(parent.channelID, parent.group, focus)
+end sub
+
+' MMTVL's setGuideMatch: the overrides saved (the channel's keys out, then its choice under its overrideKey), then
+' matched again from the guide files there are, downloading nothing (GuideRuns' rematch). A refused save (L5: under
+' 4 KB left, or too large; or more matches than the store keeps) keeps Match Guide open with the message.
+sub applyGuideMatch(chosen as dynamic)
+    if type(chosen) <> "roAssociativeArray" then return
+    channel = PlayerSession.channelByID(m.channels, chosen.channelID)
+    if channel = invalid or type(chosen.choice) <> "roAssociativeArray"
+        closeChannelMenu()
+        return
+    end if
+    overrides = MatchGuide.overridesAfter(m.store.overrides, channel, chosen.choice, m.unicodeFinder)
+    if MatchGuide.tooMany(overrides)
+        Log.warn("Guide", "Match Guide not saved: more guide matches than the store keeps")
+        m.menu.callFunc("showNote", { text: MatchGuide.tooManyMessage })
+        return
+    end if
+    saved = SettingsStore.save(m.store, "overrides", overrides)
+    if not saved.ok
+        m.menu.callFunc("showNote", { text: saved.message })
+        return
+    end if
+    if not MatchGuide.isApplied(m.store.overrides, channel, chosen.choice, m.unicodeFinder)
+        Log.warn("Guide", "Match Guide's choice wasn't kept by the store")
+        m.menu.callFunc("showNote", { text: SettingsStore.saveFailedMessage })
+        return
+    end if
+    Log.info("Guide", "Match Guide: " + chosen.choice.kind + " saved; matching again from the guides there are")
+    closeChannelMenu()
+    m.guideRuns = GuideRuns.overridesChanged(m.guideRuns)
+    refreshGuideIfDue()
+end sub

@@ -25,8 +25,12 @@
      Choose Teams first opens. Step 19: Search (SearchView) opens over the guide from its Search row; its queries go to
      SearchTask (channels and programmes, against a title index built once per guide load) and TeamsTask (teams); OK
      on a channel or a programme on now plays it, on a later programme shows it in the guide, on a team adds or
-     removes it (Search stays open); Back and the 3-minute idle return close it. Back never leaves the app (D49): the
-     scene handles every key that reaches it. -->
+     removes it (Search stays open); Back and the 3-minute idle return close it. Step 20: Match Guide, from the channel
+     menu's Match Guide… row: MatchGuideTask ranks the guide channels (from the holder's matchData) and the scene
+     shows Automatic, No Guide and the suggestions in the channel menu's view (wide); Back returns to the channel
+     menu, on its Match Guide row (D49); a choice saves the overrides (SettingsStore; a refused save shows its
+     message in the menu) and starts a rematch run that downloads nothing (GuideRuns' rematch, GuideTask's
+     cachedOnly). Back never leaves the app (D49): the scene handles every key that reaches it. -->
 <component name="MainScene" extends="Scene">
     <interface>
         <!-- Lineup.build's result for the last playlist that loaded (kept when a later load fails). -->
@@ -88,6 +92,9 @@
     <script type="text/brighterscript" uri="pkg:/source/lib/TeamCatalog.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/TeamPicker.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/MyTeams.bs" />
+    <!-- Step 20: Match Guide (its menu, the overrides it saves, the guides' labels). -->
+    <script type="text/brighterscript" uri="pkg:/source/lib/Unicode.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/MatchGuide.bs" />
     <children>
         <!-- The guide's background too: the guide has none, so the player's Video shows through in its preview place. -->
         <Poster id="background" />

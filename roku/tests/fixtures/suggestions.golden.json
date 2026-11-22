@@ -1,0 +1,1630 @@
+{
+  "cases" : [
+    {
+      "channel" : {
+        "name" : "FanDuel Sports Network Indiana",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "FanDuel Sports Indiana",
+          "ref" : {
+            "epgID" : "fanduel.sports.indiana.us",
+            "sourceID" : "fd"
+          },
+          "scoreNanos" : 734389434
+        },
+        {
+          "name" : "FanDuel Sports Network Detroit HD",
+          "ref" : {
+            "epgID" : "fanduel.sports.network.detroit.hd.us",
+            "sourceID" : "fd"
+          },
+          "scoreNanos" : 627168436
+        },
+        {
+          "name" : "FanDuel Sports Network Florida",
+          "ref" : {
+            "epgID" : "fanduel.sports.network.florida.us",
+            "sourceID" : "fd"
+          },
+          "scoreNanos" : 627168436
+        },
+        {
+          "name" : "Fanduel Racing",
+          "ref" : {
+            "epgID" : "fanduel.racing.us",
+            "sourceID" : "fd"
+          },
+          "scoreNanos" : 151066477
+        },
+        {
+          "name" : "FanDuel TV",
+          "ref" : {
+            "epgID" : "fanduel.tv.us",
+            "sourceID" : "fd"
+          },
+          "scoreNanos" : 151066477
+        }
+      ],
+      "limit" : 30,
+      "name" : "EPGSuggesterTests.rareTokensWin",
+      "sources" : [
+        {
+          "channels" : [
+            {
+              "id" : "fanduel.sports.network.detroit.hd.us",
+              "names" : [
+                "FanDuel Sports Network Detroit HD"
+              ]
+            },
+            {
+              "id" : "fanduel.sports.network.florida.us",
+              "names" : [
+                "FanDuel Sports Network Florida"
+              ]
+            },
+            {
+              "id" : "fanduel.sports.indiana.us",
+              "names" : [
+                "FanDuel Sports Indiana"
+              ]
+            },
+            {
+              "id" : "fanduel.tv.us",
+              "names" : [
+                "FanDuel TV"
+              ]
+            },
+            {
+              "id" : "fanduel.racing.us",
+              "names" : [
+                "Fanduel Racing"
+              ]
+            },
+            {
+              "id" : "espn.us",
+              "names" : [
+                "ESPN"
+              ]
+            }
+          ],
+          "sourceID" : "fd"
+        }
+      ]
+    },
+    {
+      "channel" : {
+        "name" : "FanDuel Sports Network Indiana",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "FanDuel Sports Indiana",
+          "ref" : {
+            "epgID" : "fanduel.sports.indiana.us",
+            "sourceID" : "fd"
+          },
+          "scoreNanos" : 734389434
+        },
+        {
+          "name" : "FanDuel Sports Network Detroit HD",
+          "ref" : {
+            "epgID" : "fanduel.sports.network.detroit.hd.us",
+            "sourceID" : "fd"
+          },
+          "scoreNanos" : 627168436
+        }
+      ],
+      "limit" : 2,
+      "name" : "EPGSuggesterTests.limit",
+      "sources" : [
+        {
+          "channels" : [
+            {
+              "id" : "fanduel.sports.network.detroit.hd.us",
+              "names" : [
+                "FanDuel Sports Network Detroit HD"
+              ]
+            },
+            {
+              "id" : "fanduel.sports.network.florida.us",
+              "names" : [
+                "FanDuel Sports Network Florida"
+              ]
+            },
+            {
+              "id" : "fanduel.sports.indiana.us",
+              "names" : [
+                "FanDuel Sports Indiana"
+              ]
+            },
+            {
+              "id" : "fanduel.tv.us",
+              "names" : [
+                "FanDuel TV"
+              ]
+            },
+            {
+              "id" : "fanduel.racing.us",
+              "names" : [
+                "Fanduel Racing"
+              ]
+            },
+            {
+              "id" : "espn.us",
+              "names" : [
+                "ESPN"
+              ]
+            }
+          ],
+          "sourceID" : "fd"
+        }
+      ]
+    },
+    {
+      "channel" : {
+        "name" : "NBA TV",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "NBA TV HD",
+          "ref" : {
+            "epgID" : "nba.tv.hd.us",
+            "sourceID" : "one"
+          },
+          "scoreNanos" : 1000000000
+        },
+        {
+          "name" : "NBA TV",
+          "ref" : {
+            "epgID" : "nba.tv.us",
+            "sourceID" : "one"
+          },
+          "scoreNanos" : 1000000000
+        },
+        {
+          "name" : "NBA TV",
+          "ref" : {
+            "epgID" : "nba.tv.us",
+            "sourceID" : "two"
+          },
+          "scoreNanos" : 1000000000
+        },
+        {
+          "name" : "NBA TV Canada",
+          "ref" : {
+            "epgID" : "nba.tv.canada.us",
+            "sourceID" : "one"
+          },
+          "scoreNanos" : 1000000000
+        }
+      ],
+      "limit" : 30,
+      "name" : "EPGSuggesterTests.ties",
+      "sources" : [
+        {
+          "channels" : [
+            {
+              "id" : "nba.tv.canada.us",
+              "names" : [
+                "NBA TV Canada"
+              ]
+            },
+            {
+              "id" : "nba.tv.us",
+              "names" : [
+                "NBA TV"
+              ]
+            },
+            {
+              "id" : "nba.tv.hd.us",
+              "names" : [
+                "NBA TV HD"
+              ]
+            }
+          ],
+          "sourceID" : "one"
+        },
+        {
+          "channels" : [
+            {
+              "id" : "nba.tv.us",
+              "names" : [
+                "NBA TV"
+              ]
+            }
+          ],
+          "sourceID" : "two"
+        }
+      ]
+    },
+    {
+      "channel" : {
+        "name" : "NFL Net",
+        "tvgID" : "nflnetwork.us",
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Something",
+          "ref" : {
+            "epgID" : "nflnetwork.us2",
+            "sourceID" : "g"
+          },
+          "scoreNanos" : 333333333
+        }
+      ],
+      "limit" : 30,
+      "name" : "EPGSuggesterTests.tvgIDDropsItsLastToken",
+      "sources" : [
+        {
+          "channels" : [
+            {
+              "id" : "nflnetwork.us2",
+              "names" : [
+                "Something"
+              ]
+            },
+            {
+              "id" : "x.y",
+              "names" : [
+                "US"
+              ]
+            }
+          ],
+          "sourceID" : "g"
+        }
+      ]
+    },
+    {
+      "channel" : {
+        "name" : "FanDuel TV",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "FanDuel TV",
+          "ref" : {
+            "epgID" : "fanduel.tv.us",
+            "sourceID" : "fd"
+          },
+          "scoreNanos" : 1000000000
+        },
+        {
+          "name" : "Fanduel Racing",
+          "ref" : {
+            "epgID" : "fanduel.racing.us",
+            "sourceID" : "fd"
+          },
+          "scoreNanos" : 288350910
+        },
+        {
+          "name" : "FanDuel Sports Indiana",
+          "ref" : {
+            "epgID" : "fanduel.sports.indiana.us",
+            "sourceID" : "fd"
+          },
+          "scoreNanos" : 288350910
+        },
+        {
+          "name" : "FanDuel Sports Network Detroit HD",
+          "ref" : {
+            "epgID" : "fanduel.sports.network.detroit.hd.us",
+            "sourceID" : "fd"
+          },
+          "scoreNanos" : 288350910
+        },
+        {
+          "name" : "FanDuel Sports Network Florida",
+          "ref" : {
+            "epgID" : "fanduel.sports.network.florida.us",
+            "sourceID" : "fd"
+          },
+          "scoreNanos" : 288350910
+        }
+      ],
+      "limit" : 30,
+      "name" : "EPGSuggesterTests.suggestRunsOffTheMainActor",
+      "sources" : [
+        {
+          "channels" : [
+            {
+              "id" : "fanduel.sports.network.detroit.hd.us",
+              "names" : [
+                "FanDuel Sports Network Detroit HD"
+              ]
+            },
+            {
+              "id" : "fanduel.sports.network.florida.us",
+              "names" : [
+                "FanDuel Sports Network Florida"
+              ]
+            },
+            {
+              "id" : "fanduel.sports.indiana.us",
+              "names" : [
+                "FanDuel Sports Indiana"
+              ]
+            },
+            {
+              "id" : "fanduel.tv.us",
+              "names" : [
+                "FanDuel TV"
+              ]
+            },
+            {
+              "id" : "fanduel.racing.us",
+              "names" : [
+                "Fanduel Racing"
+              ]
+            },
+            {
+              "id" : "espn.us",
+              "names" : [
+                "ESPN"
+              ]
+            }
+          ],
+          "sourceID" : "fd"
+        }
+      ]
+    },
+    {
+      "channel" : {
+        "name" : "NBA TV",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "NBA TV",
+          "ref" : {
+            "epgID" : "zzz.us",
+            "sourceID" : "first"
+          },
+          "scoreNanos" : 1000000000
+        },
+        {
+          "name" : "NBA TV",
+          "ref" : {
+            "epgID" : "aaa.us",
+            "sourceID" : "second"
+          },
+          "scoreNanos" : 1000000000
+        }
+      ],
+      "limit" : 30,
+      "name" : "tie: guide order before id",
+      "sources" : [
+        {
+          "channels" : [
+            {
+              "id" : "zzz.us",
+              "names" : [
+                "NBA TV"
+              ]
+            }
+          ],
+          "sourceID" : "first"
+        },
+        {
+          "channels" : [
+            {
+              "id" : "aaa.us",
+              "names" : [
+                "NBA TV"
+              ]
+            }
+          ],
+          "sourceID" : "second"
+        }
+      ]
+    },
+    {
+      "channel" : {
+        "name" : "Sports One",
+        "tvgID" : "Sports.One.us",
+        "tvgName" : "Sports One HD"
+      },
+      "expected" : [
+        {
+          "name" : "Sports One",
+          "ref" : {
+            "epgID" : "sports.one.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 1000000000
+        },
+        {
+          "name" : "Merge One",
+          "ref" : {
+            "epgID" : "merge.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 538159217
+        },
+        {
+          "name" : "Sports HD",
+          "ref" : {
+            "epgID" : "sports.hd.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 461840783
+        },
+        {
+          "name" : "Sports Plus",
+          "ref" : {
+            "epgID" : "sports.plus.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 461840783
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture id:sports.one.us",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Sports One Backup",
+        "tvgID" : "sports.one.US",
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Sports One",
+          "ref" : {
+            "epgID" : "sports.one.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 597486507
+        },
+        {
+          "name" : "Merge One",
+          "ref" : {
+            "epgID" : "merge.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 321542871
+        },
+        {
+          "name" : "Sports HD",
+          "ref" : {
+            "epgID" : "sports.hd.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 275943636
+        },
+        {
+          "name" : "Sports Plus",
+          "ref" : {
+            "epgID" : "sports.plus.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 275943636
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture id:sports.one.us#2",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Upper Key",
+        "tvgID" : "Upper.Key.us",
+        "tvgName" : null
+      },
+      "expected" : [
+
+      ],
+      "limit" : 30,
+      "name" : "fixture id:upper.key.us",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Local News",
+        "tvgID" : null,
+        "tvgName" : "Local News"
+      },
+      "expected" : [
+        {
+          "name" : "Local News Network",
+          "ref" : {
+            "epgID" : "local.news.b",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 1000000000
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:local news",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Evening News",
+        "tvgID" : "Both.Guides.us",
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Both Guides",
+          "ref" : {
+            "epgID" : "both.guides.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 444085416
+        },
+        {
+          "name" : "Both Guides B",
+          "ref" : {
+            "epgID" : "both.guides.us",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 444085416
+        },
+        {
+          "name" : "Local News Network",
+          "ref" : {
+            "epgID" : "local.news.b",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 277957292
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture id:both.guides.us",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Fallback Name",
+        "tvgID" : null,
+        "tvgName" : "Fallback Name"
+      },
+      "expected" : [
+        {
+          "name" : "FALLBACK NAME 4K",
+          "ref" : {
+            "epgID" : "fallback.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 1000000000
+        },
+        {
+          "name" : "Shared Name",
+          "ref" : {
+            "epgID" : "name.first.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 354813972
+        },
+        {
+          "name" : "Shared Name HD",
+          "ref" : {
+            "epgID" : "name.second.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 354813972
+        },
+        {
+          "name" : "Plain Name A",
+          "ref" : {
+            "epgID" : "plain.name.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 354813972
+        },
+        {
+          "name" : "Ticker Name B",
+          "ref" : {
+            "epgID" : "ticker.b",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 354813972
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:fallback name",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Channel 7",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Case Channel",
+          "ref" : {
+            "epgID" : "case.b",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 500000000
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:channel 7",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "No Group Channel",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Case Channel",
+          "ref" : {
+            "epgID" : "case.b",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 333333333
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:no group channel",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Movie Channel",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Case Channel",
+          "ref" : {
+            "epgID" : "case.b",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 500000000
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:movie channel",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Kids Zone",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Kids-Zone",
+          "ref" : {
+            "epgID" : "kids.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 1000000000
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:kids zone",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Kids Zone",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Kids-Zone",
+          "ref" : {
+            "epgID" : "kids.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 1000000000
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:kids zone#2",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "KIDS ZONE",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Kids-Zone",
+          "ref" : {
+            "epgID" : "kids.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 1000000000
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:kids zone#3",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Lions @ Bears (Home Feed)",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Lions Bears Game",
+          "ref" : {
+            "epgID" : "lions.bears.b",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 500000000
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:lions @ bears-h",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Lions @ Bears (Away Feed)",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Lions Bears Game",
+          "ref" : {
+            "epgID" : "lions.bears.b",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 500000000
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:lions @ bears-a",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Lions @ Bears-X",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Lions Bears Game",
+          "ref" : {
+            "epgID" : "lions.bears.b",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 666666667
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:lions @ bears-x",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Newsroom-H",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+
+      ],
+      "limit" : 30,
+      "name" : "fixture name:newsroom-h",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Lions @ -H",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Lions Bears Game",
+          "ref" : {
+            "epgID" : "lions.bears.b",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 500000000
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:lions @ -h",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Talk Time, Late Edition",
+        "tvgID" : null,
+        "tvgName" : "Hello, World"
+      },
+      "expected" : [
+        {
+          "name" : "Hello World",
+          "ref" : {
+            "epgID" : "hello.world.b",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 333333333
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:talk time, late edition",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Odd Channel tvg-logo=\"https://logo.example/odd.png\"",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Case Channel",
+          "ref" : {
+            "epgID" : "case.b",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 142857143
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:odd channel tvg-logo=\"https://logo.example/odd.png\"",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Café Télé FHD",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Cafe Tele",
+          "ref" : {
+            "epgID" : "cafe.tele.fr",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 1000000000
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:café télé fhd",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Nandu Deportes UHD",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Ñandú Deportes",
+          "ref" : {
+            "epgID" : "nandu.deportes.b",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 1000000000
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:nandu deportes uhd",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "A&E",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "A & E",
+          "ref" : {
+            "epgID" : "a.and.e.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 1000000000
+        },
+        {
+          "name" : "Plain Name A",
+          "ref" : {
+            "epgID" : "plain.name.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 285417606
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:a&e",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Sports+ HD",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Sports Plus",
+          "ref" : {
+            "epgID" : "sports.plus.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 1000000000
+        },
+        {
+          "name" : "Sports HD",
+          "ref" : {
+            "epgID" : "sports.hd.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 406722289
+        },
+        {
+          "name" : "Sports One",
+          "ref" : {
+            "epgID" : "sports.one.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 406722289
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:sports+ hd",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Cinema Max SD HEVC",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Cinema Max",
+          "ref" : {
+            "epgID" : "cinema.max.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 1000000000
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:cinema max sd hevc",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Both Guides",
+        "tvgID" : "BOTH.GUIDES.US",
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Both Guides",
+          "ref" : {
+            "epgID" : "both.guides.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 1000000000
+        },
+        {
+          "name" : "Both Guides B",
+          "ref" : {
+            "epgID" : "both.guides.us",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 1000000000
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture id:both.guides.us#2",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Only In B",
+        "tvgID" : "only.in.b.us",
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Only In B",
+          "ref" : {
+            "epgID" : "decoy.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 1000000000
+        },
+        {
+          "name" : "Only In B Network",
+          "ref" : {
+            "epgID" : "only.in.b.us",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 1000000000
+        },
+        {
+          "name" : "Both Guides B",
+          "ref" : {
+            "epgID" : "both.guides.us",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 275660519
+        },
+        {
+          "name" : "Ticker Name B",
+          "ref" : {
+            "epgID" : "ticker.b",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 275660519
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture id:only.in.b.us",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Plain Name A",
+        "tvgID" : null,
+        "tvgName" : "Ticker Name B"
+      },
+      "expected" : [
+        {
+          "name" : "Plain Name A",
+          "ref" : {
+            "epgID" : "plain.name.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 593605119
+        },
+        {
+          "name" : "Ticker Name B",
+          "ref" : {
+            "epgID" : "ticker.b",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 545380996
+        },
+        {
+          "name" : "A & E",
+          "ref" : {
+            "epgID" : "a.and.e.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 201889669
+        },
+        {
+          "name" : "Both Guides B",
+          "ref" : {
+            "epgID" : "both.guides.us",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 153665546
+        },
+        {
+          "name" : "Only In B",
+          "ref" : {
+            "epgID" : "decoy.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 153665546
+        },
+        {
+          "name" : "Only In B Network",
+          "ref" : {
+            "epgID" : "only.in.b.us",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 153665546
+        },
+        {
+          "name" : "FALLBACK NAME 4K",
+          "ref" : {
+            "epgID" : "fallback.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 138986115
+        },
+        {
+          "name" : "Shared Name",
+          "ref" : {
+            "epgID" : "name.first.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 138986115
+        },
+        {
+          "name" : "Shared Name HD",
+          "ref" : {
+            "epgID" : "name.second.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 138986115
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:plain name a",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Merge Two",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Merge One",
+          "ref" : {
+            "epgID" : "merge.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 1000000000
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:merge two",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Many 16",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Many 01",
+          "ref" : {
+            "epgID" : "many.names.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 1000000000
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:many 16",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Many 17",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Many 01",
+          "ref" : {
+            "epgID" : "many.names.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 500000000
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:many 17",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Shared Name",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Shared Name",
+          "ref" : {
+            "epgID" : "name.first.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 1000000000
+        },
+        {
+          "name" : "Shared Name HD",
+          "ref" : {
+            "epgID" : "name.second.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 1000000000
+        },
+        {
+          "name" : "FALLBACK NAME 4K",
+          "ref" : {
+            "epgID" : "fallback.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 407732438
+        },
+        {
+          "name" : "Plain Name A",
+          "ref" : {
+            "epgID" : "plain.name.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 407732438
+        },
+        {
+          "name" : "Ticker Name B",
+          "ref" : {
+            "epgID" : "ticker.b",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 407732438
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:shared name",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "TvgKey Channel",
+        "tvgID" : "Key.By.Tvg",
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Case Channel",
+          "ref" : {
+            "epgID" : "case.b",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 250000000
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture id:key.by.tvg",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Name Wins",
+        "tvgID" : "Tvg.Loses",
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "FALLBACK NAME 4K",
+          "ref" : {
+            "epgID" : "fallback.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 215667995
+        },
+        {
+          "name" : "Shared Name",
+          "ref" : {
+            "epgID" : "name.first.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 215667995
+        },
+        {
+          "name" : "Shared Name HD",
+          "ref" : {
+            "epgID" : "name.second.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 215667995
+        },
+        {
+          "name" : "Plain Name A",
+          "ref" : {
+            "epgID" : "plain.name.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 215667995
+        },
+        {
+          "name" : "Ticker Name B",
+          "ref" : {
+            "epgID" : "ticker.b",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 215667995
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture id:tvg.loses",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Missing Target",
+        "tvgID" : "Sports.Plus.us",
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Sports Plus",
+          "ref" : {
+            "epgID" : "sports.plus.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 457340340
+        },
+        {
+          "name" : "Unrelated Words",
+          "ref" : {
+            "epgID" : "override.target.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 271329830
+        },
+        {
+          "name" : "Sports HD",
+          "ref" : {
+            "epgID" : "sports.hd.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 186010510
+        },
+        {
+          "name" : "Sports One",
+          "ref" : {
+            "epgID" : "sports.one.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 186010510
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture id:sports.plus.us",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Missing Then Tvg",
+        "tvgID" : "Fallthrough.Tvg",
+        "tvgName" : null
+      },
+      "expected" : [
+
+      ],
+      "limit" : 30,
+      "name" : "fixture id:fallthrough.tvg",
+      "sources" : null
+    },
+    {
+      "channel" : {
+        "name" : "Override Both",
+        "tvgID" : null,
+        "tvgName" : null
+      },
+      "expected" : [
+        {
+          "name" : "Unrelated Words",
+          "ref" : {
+            "epgID" : "override.target.a",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 555914584
+        },
+        {
+          "name" : "Both Guides",
+          "ref" : {
+            "epgID" : "both.guides.us",
+            "sourceID" : "guide-a.xml"
+          },
+          "scoreNanos" : 444085416
+        },
+        {
+          "name" : "Both Guides B",
+          "ref" : {
+            "epgID" : "both.guides.us",
+            "sourceID" : "guide-b.xml"
+          },
+          "scoreNanos" : 444085416
+        }
+      ],
+      "limit" : 30,
+      "name" : "fixture name:override both",
+      "sources" : null
+    }
+  ],
+  "fixtureSources" : [
+    {
+      "channels" : [
+        {
+          "id" : "sports.one.us",
+          "names" : [
+            "Sports One"
+          ]
+        },
+        {
+          "id" : "a.and.e.us",
+          "names" : [
+            "A & E"
+          ]
+        },
+        {
+          "id" : "sports.plus.us",
+          "names" : [
+            "Sports Plus"
+          ]
+        },
+        {
+          "id" : "sports.hd.us",
+          "names" : [
+            "Sports HD"
+          ]
+        },
+        {
+          "id" : "cafe.tele.fr",
+          "names" : [
+            "Cafe Tele"
+          ]
+        },
+        {
+          "id" : "cinema.max.us",
+          "names" : [
+            "Cinema Max"
+          ]
+        },
+        {
+          "id" : "both.guides.us",
+          "names" : [
+            "Both Guides"
+          ]
+        },
+        {
+          "id" : "fallback.a",
+          "names" : [
+            "FALLBACK NAME 4K"
+          ]
+        },
+        {
+          "id" : "kids.a",
+          "names" : [
+            "Kids-Zone"
+          ]
+        },
+        {
+          "id" : "decoy.a",
+          "names" : [
+            "Only In B"
+          ]
+        },
+        {
+          "id" : "plain.name.a",
+          "names" : [
+            "Plain Name A"
+          ]
+        },
+        {
+          "id" : "name.first.a",
+          "names" : [
+            "Shared Name"
+          ]
+        },
+        {
+          "id" : "name.second.a",
+          "names" : [
+            "Shared Name HD"
+          ]
+        },
+        {
+          "id" : "override.target.a",
+          "names" : [
+            "Unrelated Words"
+          ]
+        },
+        {
+          "id" : "merge.us",
+          "names" : [
+            "Merge One",
+            "Merge One",
+            "Merge Two",
+            "MERGE ONE"
+          ]
+        },
+        {
+          "id" : "many.names.us",
+          "names" : [
+            "Many 01",
+            "Many 02",
+            "Many 03",
+            "Many 04",
+            "Many 05",
+            "Many 06",
+            "Many 07",
+            "Many 08",
+            "Many 09",
+            "Many 10",
+            "Many 11",
+            "Many 12",
+            "Many 13",
+            "Many 14",
+            "Many 15",
+            "Many 16"
+          ]
+        },
+        {
+          "id" : "unmatched.a",
+          "names" : [
+            "Nobody Watches This"
+          ]
+        }
+      ],
+      "sourceID" : "guide-a.xml"
+    },
+    {
+      "channels" : [
+        {
+          "id" : "local.news.b",
+          "names" : [
+            "Local News Network"
+          ]
+        },
+        {
+          "id" : "both.guides.us",
+          "names" : [
+            "Both Guides B"
+          ]
+        },
+        {
+          "id" : "only.in.b.us",
+          "names" : [
+            "Only In B Network"
+          ]
+        },
+        {
+          "id" : "ticker.b",
+          "names" : [
+            "Ticker Name B"
+          ]
+        },
+        {
+          "id" : "hello.world.b",
+          "names" : [
+            "Hello World"
+          ]
+        },
+        {
+          "id" : "lions.bears.b",
+          "names" : [
+            "Lions Bears Game"
+          ]
+        },
+        {
+          "id" : "nandu.deportes.b",
+          "names" : [
+            "Ñandú Deportes"
+          ]
+        },
+        {
+          "id" : "case.b",
+          "names" : [
+            "Case Channel",
+            "CASE CHANNEL"
+          ]
+        }
+      ],
+      "sourceID" : "guide-b.xml"
+    }
+  ]
+}

@@ -49,6 +49,9 @@
         <function name="programmesFor" />
         <function name="programmeDetails" />
         <function name="focusChannel" />
+        <!-- Step 20: matchFor(channelID) -> the channel's guide match { guide, epgID } from the one copy of the guide
+             data, or invalid (the channel menu's Match Guide row). -->
+        <function name="matchFor" />
     </interface>
     <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/Lineup.bs" />

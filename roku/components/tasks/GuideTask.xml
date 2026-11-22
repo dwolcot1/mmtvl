@@ -7,7 +7,7 @@
          fetchedAt  { cache id: when the guide's fresh file was downloaded (wall-clock seconds) }
          failures   { cache id: { at, kind } }, for the guides waiting after a failure
          note       "" or why the memory guard was inactive
-       guideData: GuideFetch.guideData's shape (see GuideFetch.bs). The scene keeps the finished task as the
+       guideData: GuideFetch.guideData's shape (see GuideFetch.bs); matchData: GuideFetch.matchData's (step 20). The scene keeps the finished task as the
          holder of guideData (its guideHolder field), so the programmes are never relayed or copied by the scene.
      ({ ok: false }: the task failed or was given up; the scene keeps what it has). Logs show hosts only (L6). -->
 <component name="GuideTask" extends="Task">
@@ -23,7 +23,13 @@
         <field id="expectedGuides" type="integer" value="0" />
         <!-- Security M-3 of step 9: set by the scene's watchdog; downloads and the observer give up. -->
         <field id="cancel" type="boolean" value="false" />
+        <!-- Step 20: Match Guide's rematch. true: no guide is downloaded; each is read from its cachefs: file
+             whatever its age (GuideFetch.withoutDownload), so the run only matches again with the saved overrides. -->
+        <field id="cachedOnly" type="boolean" value="false" />
         <field id="guideData" type="assocarray" />
+        <!-- Step 20: GuideFetch.matchData (the matches and each guide's channel list, no programmes), set before
+             result; Match Guide (MatchGuideTask) reads it from the holder. -->
+        <field id="matchData" type="assocarray" />
         <field id="result" type="assocarray" />
     </interface>
     <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />

@@ -234,7 +234,7 @@ namespace SettingsPageTests
         list = SettingsPages.sections("liveTV", SettingsStatus.make(input))
         t.assertEqual(SettingsPages.rowWithID(list, "groups").value, "All Shown")
         t.assertEqual(SettingsPages.rowWithID(list, "hiddenChannels").value, "None")
-        t.assertEqual(SettingsPageTests.section(list, "channels").footer, "To favorite or hide one channel: in the guide, press * on it.")
+        t.assertEqual(SettingsPageTests.section(list, "channels").footer, "To favorite, hide or match one channel: in the guide, press * on it.")
         input.store.prefs.hiddenGroups = ["Sports"]
         input.store.prefs.hiddenChannels = ["id:a", "id:b", "id:gone"]
         list = SettingsPages.sections("liveTV", SettingsStatus.make(input))

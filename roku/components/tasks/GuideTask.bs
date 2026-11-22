@@ -26,6 +26,10 @@
 ' it and give up. This run's .part and .inflated.xml files carry its own token, and leftovers of dead runs are
 ' deleted when a run starts (the scene starts one only when no other task is alive).
 ' A crash in here still sets { ok: false } (as PlaylistTask), and the scene keeps what it has. Logs: hosts only.
+'
+' Step 20: with cachedOnly (Match Guide's rematch) nothing is downloaded: each guide is read from the file it has,
+' fresh or not (a refused one, or one waiting after a failure, as always), and every guide is matched again with the
+' overrides just saved.
 
 sub init()
     m.top.functionName = "loadGuides"
@@ -50,6 +54,7 @@ end function
 
 sub loadGuidesNow()
     m.token = LCase(Left(CreateObject("roDeviceInfo").GetRandomUUID().Replace("-", ""), 8))
+    m.cachedOnly = m.top.cachedOnly = true
     m.peerWarned = false
     store = SettingsStore.load(SettingsStore.deviceRegistry())
     named = m.top.playlistGuideURLs
@@ -80,6 +85,9 @@ sub loadGuidesNow()
     ' unverified). The scene keeps this node as their holder.
     data = readout.Lookup("data")
     readout.Delete("data")
+    ' Step 20: Match Guide's channel lists and matches, a plain set (small: names only).
+    m.top.matchData = readout.Lookup("matchData")
+    readout.Delete("matchData")
     if FieldMove.put(m.top, "guideData", data) then how = "moved into" else how = "copied into"
     Log.info("Guide", "Programmes " + how + " the guide task's field")
     m.top.result = { ok: true, sourcesKey: GuideSources.sourcesKey(sources), fetchedAt: fetched.fetchedAt, failures: fetched.failures, statuses: readout.rows, note: readout.note, programmeCount: readout.programmeCount }
@@ -116,7 +124,7 @@ end function
 ' GuidePipeline.process over the files, window [now - 2 h, now + the class's guide hours), with the observer's
 ' cancel check, size cap, time limit and memory guard, the class's programme limit, and what's left of the
 ' cachefs: budget for inflating. Then the unreadable files (QA minor) and the rows. { rows, note, programmeCount,
-' data }.
+' data, matchData }.
 function readGuides(sources as object, fetched as object, overrides as object) as object
     deviceCaps = Capabilities.detectDevice()
     nowSeconds = wallClock()
@@ -165,8 +173,9 @@ function readGuides(sources as object, fetched as object, overrides as object) a
     end if
     if observer.stops.Count() > 0 then Log.warn("Guide", "Stopped reading a guide: " + observer.stops.Join(", "))
     data = GuideFetch.guideData(processed, windowStart, windowEnd)
+    lists = GuideFetch.matchData(processed)
     Log.info("Guide", "Read " + sources.Count().ToStr() + " guide(s) in " + (timer.TotalMilliseconds() \ 1000).ToStr() + " s: " + data.programmeCount.ToStr() + " programmes, lowest memory left " + megabytesText(observer.lowestMB))
-    return { rows: rows, note: note, programmeCount: data.programmeCount, data: data }
+    return { rows: rows, note: note, programmeCount: data.programmeCount, data: data, matchData: lists }
 end function
 
 ' The observer's cancel check (m = the observer): the task's cancel field, read at most every 500 ms (a field read
@@ -206,8 +215,12 @@ function fetchGuide(source as object, paths as object, usedBytes as dynamic) as 
         return outcome
     end if
 
+    ' What to do with this guide (GuideFetch.fetchStep): use its fresh file, wait after a failure, read its file
+    ' without downloading (step 20's rematch), or download it.
     fetched = cachedTime(paths)
-    if fetched <> invalid and not GuideSources.isGuideDue(fetched, now)
+    failure = failureRecord(paths)
+    plannedStep = GuideFetch.fetchStep(fetched, failure, m.cachedOnly, now)
+    if plannedStep = "fresh"
         if not useFile(outcome, paths, usedBytes)
             Log.warn("Guide", label + ": its file doesn't fit this run's cachefs: budget")
             outcome.failure = recordFailure(paths, "tooLarge")
@@ -220,14 +233,24 @@ function fetchGuide(source as object, paths as object, usedBytes as dynamic) as 
         return outcome
     end if
 
-    failure = failureRecord(paths)
-    if GuideSources.isRetryWaiting(failure, now)
+    if plannedStep = "waiting"
         Log.info("Guide", label + ": " + failure.kind + " " + Int((now - failure.at) / 60).ToStr() + " min ago; not tried again yet")
         outcome.failure = failure
         outcome.state = failure.kind
         if failure.kind = "failed"
             if useFile(outcome, paths, usedBytes) then outcome.state = "stale"
         end if
+        return outcome
+    end if
+
+    ' Step 20 (Match Guide's rematch): no download. The file there is read whatever its age; its real download
+    ' time goes back to the scene, so a guide that is due is still downloaded by the run that follows.
+    if plannedStep = "noDownload"
+        hasFile = useFile(outcome, paths, usedBytes)
+        plan = GuideFetch.withoutDownload(hasFile, fetched)
+        outcome.state = plan.state
+        outcome.fetchedAt = plan.fetchedAt
+        if hasFile then Log.info("Guide", label + ": matching again from its file, not downloaded") else Log.warn("Guide", label + ": no file to match again from; not downloaded")
         return outcome
     end if
 

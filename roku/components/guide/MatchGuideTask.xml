@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Match Guide's options off the render thread (M12 step 20; MMTVL's IPTVLibrary.guideMatchOptions and
+     EPGSuggester.suggest, which MMTVL also runs off the main actor). One task for the app's life, made when Match
+     Guide first opens. Per request it reads guideHolder's matchData (GuideFetch.matchData: the matches and each
+     guide's channel list, no programmes), ranks the guide channels for the channel (EPGSuggester.rank, at most
+     MatchGuideTask's limit of 30, MMTVL's) and works out the current choice from the overrides
+     (MatchGuide.options). The newest request wins: one waits at a time. Logs: DEBUG builds only, counts and times
+     (never a channel or guide name). -->
+<component name="MatchGuideTask" extends="Task">
+    <interface>
+        <!-- The scene's guideHolder (the finished GuideTask), or invalid with no guide yet. -->
+        <field id="guideHolder" type="node" />
+        <!-- In: { serial, channel: { id, name, tvgID, tvgName }, overrides } (SettingsStore's). alwaysNotify: every
+             set is a request. -->
+        <field id="request" type="assocarray" alwaysNotify="true" />
+        <!-- Out: { serial, channelID, ok, options: MatchGuide.options' { choice, current, candidates } } (ok false
+             with Automatic and No Guide only, when the request failed). -->
+        <field id="answer" type="assocarray" alwaysNotify="true" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Unicode.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/EPGMatcher.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/EPGSuggester.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Refresh.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/SettingsStore.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/URLPolicy.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/URLDisplay.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/GuideSources.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/MatchGuide.bs" />
+</component>

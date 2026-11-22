@@ -252,6 +252,16 @@ function focusChannel(args as dynamic) as boolean
     return true
 end function
 
+' Step 20: the channel menu's Match Guide row names the guide the channel matches (callFunc copies this small AA).
+function matchFor(channelID as dynamic) as dynamic
+    data = currentData()
+    if type(data) <> "roAssociativeArray" or not GuideKeys.isText(channelID) then return invalid
+    if type(data.matches) <> "roAssociativeArray" then return invalid
+    ref = data.matches[channelID]
+    if type(ref) <> "roAssociativeArray" then return invalid
+    return { guide: ref.guide, epgID: ref.epgID }
+end function
+
 function currentData() as dynamic
     return GuideReader.read(m.reader, m.top.guideHolder, m.top.guideRevision)
 end function
