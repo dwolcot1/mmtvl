@@ -14,8 +14,8 @@
   - Every decision taken without the user is in **[M12-decisions-log.md](M12-decisions-log.md)**, with the reason and pros and cons.
   - Git: after QA, each step is committed, scanned with gitleaks and pushed. Each phase gets a PR when it's done, stacked on the one before. Once phase 6's automated steps are done, every gate runs again and the PRs are squash-merged in order (#1, #2, #4, #5, then phases 4–6), each rebased onto `master` first.
   - Device steps (1, 4, 15, 23) stay open for the user.
-- **Branches stack:** `m12-phase0` (PR #1) → `m12-phase1` (#2) → `m12-step13` (#4, phase 2) → `m12-step14` (#5, phase 3) → `m12-step16` → `m12-step17` → `m12-step18` → `m12-step19` → `m12-step20` (#6, phase 4: base `m12-step14`) → **`m12-step21`** (phase 5's PR: head `m12-step21`, base `m12-step20`). Worktree `.claude/worktrees/step9`. Done and QA-passed: steps 2, 3, 5–14 and 16–21. `test:local`: 713 passed; script tests 40; MMTVL full suite 2096.
-- **Next: step 22** (phase 6), then step 24 (security review) and step 25 (docs). Step 21 (Antenna) is built with every path gated (U1, D21–D44); its device checks are in its Deviations entry. Step 22 is the low-end pass: memory alerts drop logos and the search index; SearchView's render-thread imports (D19). Pencil: read frames with `execute` on the file's `uri`, read-only, and never save from this session.
+- **Branches stack:** `m12-phase0` (PR #1) → `m12-phase1` (#2) → `m12-step13` (#4, phase 2) → `m12-step14` (#5, phase 3) → `m12-step16` → `m12-step17` → `m12-step18` → `m12-step19` → `m12-step20` (#6, phase 4: base `m12-step14`) → `m12-step21` (#7, phase 5: base `m12-step20`) → **`m12-step22`** (phase 6 is steps 22, 24 and 25 on stacked branches; its PR opens after step 25, base `m12-step21`). Worktree `.claude/worktrees/step9`. Done and QA-passed: steps 2, 3, 5–14 and 16–21; step 22 is built and QA-passed, its done-when (a 2-hour stick run under 80 % of `GetChannelMemoryLimit`) waits for step 23. `test:local`: 736 passed; script tests 40; MMTVL full suite 2096.
+- **Next: step 24 (security review)** of the whole `roku/` tree and the script, then step 25 (docs), then the phase 6 PR, the final gates and the squash-merges in order. Steps 21 and 22 are built with every unprobed path gated or guarded (U1, D21–D55); their device checks are in their Deviations entries. Pencil: read frames with `execute` on the file's `uri`, read-only, and never save from this session.
 - Gates for every Roku step: `cd roku && npm run build && npm run lint && npm run test:local` (264 passed at the end of phase 1), plus `npm run build:release`. No simulator runs with network access. Use a separate git worktree for parallel steps (`git worktree add -b m12-stepN .claude/worktrees/stepN <commit>`); the built-in isolation started from the wrong commit.
 
 ## Goal
@@ -871,3 +871,54 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
     - **Accepted, no change:** the remaining O(n) field copies (D37's cons, with the 10k device check), and "Searching…" during a queued Find (D42).
     - **Orchestrator's review:** the merge watchdog's branch also cleared no `mergePending` that was set while the merge ran, so the launch could still wait. It now clears it (the revision −1 brings the merge back at the next task's end; restarting it there could loop every watchdog period).
     - `test:local`: 713 passed. Security review (step 21's done-when): no findings above low; L-1, L-2 and L-3 fixed, L-4 and L-5 recorded (L-5 must be fixed before D27 flips to "json").
+- **2026-11-22, step 22 (built by the implementer; QA to follow; checkbox left open: the done-when is a device check).** Decisions D45–D55 in [M12-decisions-log.md](M12-decisions-log.md).
+  - **New:**
+    - `MemoryRelief.bs`: per alert, what goes (D45–D48), Roku's fallback (D47), the guards and the DEBUG line (D54);
+    - `LiveSearchIndex.bs` and `components/search/SearchFolder.*` (D53);
+    - tests: MemoryReliefTests, SearchTypingTests, Layout720pTests.
+  - **Changed:**
+    - `main.bs` subscribes to the alerts and gives them to the scene's new `memoryAlert` field;
+    - MainScene drops what `MemoryRelief.apply` says: logos through `logoSettings()`, LogoTask `{ clear: true }`, SearchTask `{ kind: "dropIndex" }`, GuideTask's new `windowHours` with a rematch run, TeamsTask's `skipGuide`;
+    - logos load at their display size (D49);
+    - Settings → Device's texts (D52);
+    - `npm run build:release` checks that no DEBUG memory line is left (D54).
+  - **Counts:** `test:local` 735 passed (713 + 22); release 124 files. `Search.test.bs` is unchanged.
+  - **API source:** developer.roku.com answered 403, so `roAppMemoryMonitor`, `ifAppMemoryMonitor`, `roAppMemoryNotificationEvent`, `roDeviceInfoEvent`, "Memory management", "Specifying display resolution", Poster and the 15.2 release notes were read from Roku's GitHub docs repo (`rokudev/dev-doc`, branch v2.0).
+  - **Unverified:**
+    - the event's value type;
+    - whether 15.2+ sends the 85–95 % alerts, and how they are throttled;
+    - `GetChannelMemoryLimit`'s units;
+    - how a Poster scales a non-square logo with both load fields set;
+    - whether a component's scripts compile only when its first node is made (D53).
+  - **Plan items handed to step 22, as decided:**
+    - 720p images: not made (D50);
+    - Settings' animation and D5's one-line game: left as is (D55);
+    - D2's fallback: built as the critical-level `skipGuide` (D48);
+    - the search index: dropped by every alert from 80 % (D45).
+  - **Device checks (step 23):**
+    - **The done-when:** on a Streaming Stick, a 2-hour run with guide browsing stays under 80 % of `GetChannelMemoryLimit`. Read the DEBUG `[MMTVL][Memory] Using … highest since launch … (under 80 %)` line every 5 minutes on port 8085.
+    - **Memory alerts:**
+      - The launch line says which alerts are on: "(80, 85, 90 and 95 %)" on 15.2+, "(one, at 80 %)" earlier, or the device fallback.
+      - At an alert, the `Warning: Memory alert: N % …` line appears. Logos leave the guide and the banner, and Settings → Device says "Off: Low Memory".
+      - At 85 %, a guide run with no download follows, and Guide Window reads "12 Hours: Low Memory".
+      - At 90 %, My Teams keeps only game entries.
+      - The next Search after an alert shows "Searching…" while the index builds.
+      - Relaunching brings everything back.
+      - To force an alert, a DEBUG build could load a large guide on a stick. **Unverified** whether Roku's tools can raise one.
+    - **Texture memory:** `loaded_textures` on port 8080 shows the logos at 48 and 96 px, whatever their file size.
+    - **720p, on an HD Roku (or a Roku set to 720p):**
+      - no screen clips at 1280 × 720 (the guide, its group column, the channel menu and the wide Match Guide menu, Search, Choose Teams, Settings and its band, the banner, the timeshift bar and badge, the low-memory notice, Import);
+      - text widths in the system font;
+      - the 9-patch corners scaled by 2/3 (D50);
+      - Settings → Device's texts for that Roku's class (D52).
+    - **Search:** typing a non-ASCII letter from the Roku mobile app narrows as on the Mac (the SearchFolder node), and the first such letter causes no stall.
+    - **Fallback forced (QA round 1):** on a Roku without app memory alerts (or with `EnableMemoryWarningEvent` returning false), a "low" or "critical" `roDeviceInfoEvent` reaches the scene and drops what D47 says.
+  - **QA round 1 (qa-deep FAIL, 1 major): fixes.**
+    1. **(major)** The fallback's `roDeviceInfo` is kept in the AA Main holds for its whole loop, with the monitor, so it isn't released and stays able to send (D47).
+    2. `onMemoryAlert(event)` reads each event's own data, so a 90 % alert followed at once by an 89 % one is still applied (D47).
+    3. A memory shrink's run skips the failure wait (`GuideRuns.rematchWaits`, tested). Settings → Device shows "12 Hours: Low Memory" only once a run with that window has answered (D46).
+    4. `SearchFolder` loads only `LiveSearchFold.bs` (new: `newFolder`, `folded`), `EPGMatcher.bs` and `Unicode.bs`: 124,273 → 49,396 bytes (D53).
+    5. D53's numbers are corrected: SearchView after = 105,289 bytes (LiveSearch 20,590).
+    6. The logos' `loadWidth`/`loadHeight` are in the XML markup, before any `uri`, and no longer set in `init()` (D49).
+    7. A `dropIndex` that arrives during an index build is done right after that request (a waiting query uses the index once), so the index isn't kept (D45).
+    - **Counts:** `test:local` 736 passed; release 125 files.
