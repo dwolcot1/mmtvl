@@ -400,3 +400,137 @@ Each entry has:
 - **Why:** A replay behind Settings starts audio nobody asked for.
 - **Pros:** No surprise audio. **Cons:** The channel stays failed under Settings until it closes.
 - **To reverse:** Drop the "settings" case in `PlayerSession.retryAction`.
+
+### D45. Memory alerts drop logos and Search's index first, and what goes stays gone until the next launch
+- **Step:** 22. **Decision (Recommended):** `MemoryRelief.apply` (pure, tested) decides, per alert:
+  - **80 % (level 1):** channel logos off (the guide's rows and the banner drop theirs, LogoTask's queue empties) and SearchTask's title index dropped;
+  - **85 % (level 2):** also the guide window shrinks (D46);
+  - **90 % or more (level 3):** also My Teams stops copying the guide (D48).
+
+  Logos, the window and the My Teams change stay until the app is opened again. The search index is dropped again by every alert from level 1, since the next search builds it again. A fall below a threshold (Roku OS 15.2 alerts both ways) brings nothing back. The saved Channel Logos setting is unchanged; Settings → Device says why they're off (D52).
+- **Why:** The plan asks alerts to drop logos and shrink the guide window, and step 19 (D7) handed the index to these alerts. Bringing things back when memory falls would load them again and push memory back up, so a Roku near its limit would cycle.
+- **Explained:** On a Roku that runs short once, the guide loses its logos (and, if it gets worse, some hours) for the rest of that session. Opening the app again starts fresh.
+- **Pros:**
+  - Cheapest, least visible things go first; the index costs only a rebuild.
+  - No cycling near the limit.
+- **Cons:**
+  - A single short spike costs the logos for the whole session.
+  - With Search open, a rebuilt index can raise memory again and draw another alert (each one drops it again).
+  - QA round 1: a drop that arrives while the index is being built (the build can't stop, D7) is done right after that request. A query already waiting uses the new index once, then it goes, so the index isn't kept after the alert.
+  - The levels are Roku's documented thresholds, not measured on a stick (step 23).
+- **To reverse:** Change `MemoryRelief.apply`; to bring things back on a fall, act on level 0 in `onMemoryAlert`.
+
+### D46. The guide window shrinks to 12 hours, read again from the files there are
+- **Step:** 22. **Decision (Recommended):** At level 2, `MemoryRelief.shrunkGuideHours` (12) becomes the window. GuideTask's new `windowHours` field carries it to every run from then on, and the scene asks for a rematch run at once (GuideRuns' rematch: it downloads nothing and reads the cached files for the shorter window). The antenna guide's download uses the same window.
+- **QA round 1:**
+  - The shrink's run doesn't wait out the hour after a failed run (`GuideRuns.rematchWaits` with the scene's `shrinkPending`, tested). A Match Guide rematch still waits.
+  - Settings → Device shows "12 Hours: Low Memory" only once a run with the 12-hour window has answered (the window of the guide held, `m.guideShownHours`). Until then it shows the class's hours, which is what the guide holds. Of the two options QA gave, this was the simpler, and the page never claims a window the guide doesn't have.
+- **Why:** The guide data is the biggest thing the app keeps. Trimming it in place would take a long loop on the render thread; a guide run does the work in a Task with its memory guard.
+- **Explained:** The guide shows 12 hours ahead (plus the past 2 hours) instead of 24 or 36.
+- **Pros:**
+  - Roughly halves the programmes kept.
+  - No download, and the work stays off the render thread.
+- **Cons:**
+  - While the run reads, the old guide is still held, a brief peak at a bad time. GuideTask's memory guard stops reading if memory runs out.
+  - One step only (no 6-hour step at 90 %).
+  - If the shrink's own run fails, its retry waits out the normal hour (`shrinkPending` clears when a run starts).
+- **To reverse:** Change `shrunkGuideHours`, or drop `shrinkGuide` from `MemoryRelief.apply`.
+
+### D47. Alerts are read on the main thread, with Roku's own fallback, and an old Roku OS counts its one alert as level 2
+- **Step:** 22. **Decision (Recommended):**
+  - `main.bs` creates `roAppMemoryMonitor`, calls `EnableMemoryWarningEvent(true)` on its port and hands each `roAppMemoryNotificationEvent` to the scene's `memoryAlert` field.
+  - QA round 1: the monitor and the fallback's `roDeviceInfo` are both kept in the AA Main holds for its whole loop, as Roku's example keeps its object. A released `roDeviceInfo` would send nothing.
+  - QA round 1: the scene observes `memoryAlert` with a handler that reads each event's own data (`event.getData()`), not the field's latest value. Two alerts set back to back (a 90 going up, then an 89 going down) are therefore both applied. Of QA's two options, this keeps every alert. Sending only the highest level from main would also work, since drops stay (D45), but it would re-send old alerts.
+  - The level reads the higher of the event's `memoryUsagePercent` and `GetMemoryLimitPercent()` at that moment.
+  - Where the monitor is missing or its alerts can't be turned on, `roDeviceInfo.EnableLowGeneralMemoryEvent(true)` is used, as Roku's own example does: "low" is level 2, "critical" level 3.
+  - With neither, nothing is dropped early, as before.
+  - Before Roku OS 15.2 there is one alert, at 80 %, so that alert counts as level 2 (the 85 % one will never come).
+  - Every call is guarded.
+- **Why:** Roku's docs (rokudev/dev-doc, `roappmemorymonitor.md`, `ifappmemorymonitor.md`, `roappmemorynotificationevent.md`, release notes 15.2). developer.roku.com refused the fetch (403); the same pages in Roku's own GitHub docs repo were read instead.
+- **Explained:** Newer Roku OS versions warn at 80, 85, 90 and 95 %; older ones warn once. The app reacts to whichever it gets.
+- **Pros:** Works on every Roku OS the app runs on, and never crashes for a missing call.
+- **Cons:**
+  - **Unverified:** the event's value type, the throttling, and whether a 15.2 Roku really sends the 85–95 % alerts (step 23). The units of `GetChannelMemoryLimit` aren't documented (Capabilities reads them by size).
+  - A Roku with no monitor gets only the device's "low", which may come late.
+- **To reverse:** In `MemoryRelief.levelOf` and `subscribe`.
+
+### D48. At a critical level, My Teams matches game entries only (D2's cheap fallback)
+- **Step:** 22. **Decision (Recommended):** From level 3, the scene's match requests carry `skipGuide: true`, and TeamsTask then makes no copy of the guide. Game entries ("Away @ Home" channels) still match; programmes on networks and upcoming games don't, until the next launch.
+- **Why:** D2's 5-minute copy (up to 25,000 programmes on a Low Roku) is a memory peak. Skipping it costs one field and one check, whereas D2's other fallback (a pre-filtered team set per guide load) is new work.
+- **Explained:** On a Roku about to run out of memory, My Teams keeps its game channels but stops reading the guide.
+- **Pros:** Removes the largest periodic peak exactly when it matters.
+- **Cons:** My Teams loses its network games and upcoming games for the rest of the session.
+- **To reverse:** Drop `skipGuide` from `requestTeams`, or build D2's pre-filtered set.
+
+### D49. Logos load at their display size; no WebP conversion
+- **Step:** 22. **Decision (Recommended):** The guide's channel cell and the banner set the Poster's `loadWidth`/`loadHeight` to the size shown (48 and 96 px), keeping `scaleToFit`. Nothing is converted to WebP. QA round 1: the two fields are set in the XML markup, so they are in place before any `uri` (Roku's Poster doc). Their values are Theme's `guideLogoSize` and `liveBannerLogoSize` written out; no test ties them together, so change both together.
+- **Why:**
+  - Roku's "Memory management" page: texture memory is width × height × 4 bytes, whatever the file's size or format. LogoCache keeps logos up to 512 KB, which can be a 2000-pixel square (16 MB of texture each).
+  - WebP only shrinks files. The app's own bitmaps are 9-patches (PNG by definition) and icons of at most 86 px. The provider's logos arrive in whatever format the provider uses, and LogoCache already keeps `.webp` ones as they are.
+  - The plan's logo cache (cachefs, LogoTask) is unchanged.
+- **Explained:** A logo now takes at most 48 × 48 × 4 bytes (9 KB) in the guide, whatever its file.
+- **Pros:** Bounded texture memory for logos.
+- **Cons:** **Unverified:** how a Poster scales a non-square logo with both load fields set (it should keep the aspect ratio). Check with `loaded_textures` on port 8080 (step 23).
+- **To reverse:** Remove the two attributes in `GuideChannelCell.xml` and `PlayerBanner.xml`.
+
+### D50. No separate 720p images
+- **Step:** 22. **Decision (Recommended):** No HD image set (`uri_resolution_autosub`). An HD Roku scales the FHD bitmaps by 2/3.
+- **Why:** Roku recommends 720p images "for performance reasons". Here every bitmap is a 9-patch or icon of at most 86 × 86 px (under 30 KB of texture each), with corners and borders on the 3-px grid. The splash and the app icon already have HD versions in the manifest.
+- **Pros:** One image set, with no URI rewriting.
+- **Cons:** Corners scaled by 2/3 may be slightly soft at 720p (a device check).
+- **To reverse:** Run `gen-ninepatch.py` at 2/3 into `images/hd/`, and add `uri_resolution_autosub` plus `$$RES$$` paths in `Theme.images()`.
+
+### D51. The 720p layout check is a test of the FHD layout
+- **Step:** 22. **Decision (Recommended):** `Layout720pTests` checks that:
+  - the manifest designs for FHD only (`ui_resolutions=fhd`, so an HD Roku scales by 2/3);
+  - every layout value in Theme is a multiple of 3 (counts of rows and lines aside);
+  - fonts are at least 24 px;
+  - each screen's boxes fit 1920 × 1080: the guide's grid and hint, the group column, Search's results and hint, Choose Teams' columns, Settings' columns, track and band, the menus, the banner and badge.
+- **Why:** With auto-scaling, nothing clips at 1280 × 720 that fits 1920 × 1080, and values on the 3-px grid land on whole pixels.
+- **Pros:** Runs on every `test:local`; a new value off the grid fails it.
+- **Cons:** Text widths in Roku's system font can only be checked on a Roku: long titles, the wide menu's values and the Device rows (step 23).
+- **To reverse:** Delete the test.
+
+### D52. Settings → Device texts per class and after memory alerts
+- **Step:** 22. **Decision (Recommended):**
+  - Channel Logos' description says "On a Low Roku (see Memory above)" instead of "On Rokus with 512 MB or less". A 720p UI or an unknown memory limit also makes a Roku Low.
+  - After an alert: Channel Logos reads "Off: Low Memory", with "This Roku ran low on memory, so logos are off until MMTVL Live TV opens again. This switch keeps your choice for next time." Guide Window reads "12 Hours: Low Memory", with the detail "Shorter until MMTVL Live TV opens again".
+  - The other texts were checked for each class and kept (tested): Low by memory, Low by its 720p UI ("Low (720p UI)"), Low with an unknown limit ("Unknown · Low"), and High.
+- **Why:** The page follows the "On" / "Off: <reason>" pattern (L7), and the old description was wrong for 720p-only Low Rokus.
+- **Pros:** The page says why something is off.
+- **Cons:** Unreviewed wording; the lengths still need checking at 720p.
+- **To reverse:** The constants in `SettingsPages.bs`.
+
+### D53. D19: SearchView's imports slimmed; the fold tables load only for non-ASCII typing
+- **Step:** 22. **Decision (Recommended):**
+  - `LiveSearch.bs` is split in two. The model and texts stay in `LiveSearch.bs`, which SearchView loads. The folding, the entries, the title index and `searchProgrammes` move to `LiveSearchIndex.bs`, the same namespace, which SearchTask and TeamsTask load.
+  - SearchView no longer loads `EPGMatcher.bs`.
+  - ASCII text is lowercased in the view. Other text (only the Roku mobile app's keyboard sends it) goes to a `SearchFolder` node, made on first use, which loads the fold tables and folds exactly as SearchTask does.
+  - QA round 1: `newFolder` and `folded` moved into their own small file, `LiveSearchFold.bs`. SearchFolder loads only that file, `EPGMatcher.bs` (the fold table) and `Unicode.bs`; the Tasks load it with the other two LiveSearch files.
+  - The state's `searching` flag, set by `textChanged`, replaces the view's calls to `isSearching`.
+- **Why:** Moving the narrowing into SearchTask would make it wait for the Task (busy while it builds the index, D7), so typing would no longer narrow at once. The split keeps the behaviour identical. `Search.test.bs` is unchanged and passes, and `SearchTypingTests` checks that `typedWords` equals `queryWords` and `searching` equals `isSearching` for ASCII, accented and combining-mark texts.
+- **Measured** (compiled `.brs` in `out/staging`, comments included):
+  - **Before:** 153,082 bytes. Theme 21,021; Unicode 10,346; EPGMatcher 35,199; TeamCatalog 8,745; TeamPicker 20,979; BannerText 4,749; MyTeams 5,416; LiveSearch 33,296; SearchView 11,915; bslib 1,416.
+  - **After** (corrected in QA round 1): 105,289 bytes. LiveSearch 20,590; SearchView 12,027; no EPGMatcher. That is 77,665 bytes of code without comments.
+  - **SearchFolder** (QA round 1): 124,273 bytes before (Unicode, EPGMatcher, TeamCatalog, TeamPicker, BannerText, MyTeams, LiveSearch, LiveSearchIndex). 49,396 bytes after: Unicode 10,346; EPGMatcher 35,199; LiveSearchFold 2,133; SearchFolder 302; bslib 1,416.
+- **Pros:**
+  - About 48 KB less on the render thread (the 35 KB fold tables included), and about 49 KB, not 124 KB, if non-ASCII is ever typed.
+  - Same results and timing.
+- **Cons:**
+  - One more component.
+  - **Unverified:** whether Roku compiles a component's scripts when the first node of it is made (so SearchFolder costs nothing until then) or when the app starts.
+- **To reverse:** Merge the two files and import `EPGMatcher.bs` in SearchView again.
+
+### D54. The DEBUG memory line: every 5 minutes, from the main thread
+- **Step:** 22. **Decision (Recommended):** In DEBUG builds, `main.bs` waits at most 5 minutes on its port and then prints `[MMTVL][Memory] Using N % of the limit (GetChannelMemoryLimit M MB, available A MB); highest since launch H % (under 80 % | reached 80 %); alerts K`, plus one line at launch. The highest value counts the 5-minute samples and the alerts. All of it sits inside `#if DEBUG`, and `npm run build:release` now fails if the release staging's code (comments aside) holds it.
+- **Why:** This is the step's done-when: a 2-hour stick run stays under 80 %. The main thread already has a port loop and no render work.
+- **Pros:** One line answers the done-when, and the release build has none of it.
+- **Cons:** A spike between samples shows only if it caused an alert.
+- **To reverse:** In `main.bs` and `MemoryRelief.consoleLine`.
+
+### D55. Left as is: Settings' animation and the one-line upcoming game
+- **Step:** 22. **Decision (Recommended):** The plan's "Step 22 may revisit" items are unchanged:
+  - Settings' animation (only the track slides; rows are clipped, not faded);
+  - D5's one-line upcoming game cell.
+- **Why:** Each needs a device to judge (fades cost render time on a stick), and neither affects memory.
+- **To reverse:** Revisit after step 23's look at 1080p and 720p.
