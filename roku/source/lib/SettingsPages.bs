@@ -3,18 +3,23 @@
 ' remoteInputSections, aboutSections, liveTVSections, guidesSection, channelsSection, iptvGroupsSections,
 ' iptvHiddenChannelsSections, guideSourceSections, confirmRemoveIPTVSections) for the Roku: MMTVL's pages, wording
 ' and footers, with keyboard rows for the paste rows and no Preview on Home, plus the Roku-only Device, Import from
-' MMTVL and About pages. Pure functions over SettingsStatus.make's model, so no URL ever reaches a row. Uses
-' SettingsStatus (countText) and URLDisplay (separator).
+' MMTVL and About pages. Step 18: Live TV → My Teams (iptvTeamsSections, iptvLeagueSections,
+' iptvConferenceSections): the leagues with their picked counts, a pro league's teams or a college league's
+' conferences, a conference's teams, and the Matching switches. Pure functions over SettingsStatus.make's model, so
+' no URL ever reaches a row. Uses SettingsStatus (countText), URLDisplay (separator) and TeamPicker (the team lists,
+' over model.teamCatalog: TeamsTask's slim catalog, which SettingsScreen adds; invalid until it arrives).
 '
 ' Pages are strings: "root", "liveTV", "guide:<cache id>", "groups", "hiddenChannels", "confirmRemoveSource",
-' "remoteInput", "device", "import", "about".
+' "remoteInput", "device", "import", "about", and (step 18) "teams", "teams:<league>", "teams:<league>:<conference>".
 '   sections(page, model, messages) -> [{ id, title, rows, footer, warning }]: title and footer "" for none;
 '     warning: the footer is a warning (warningText). messages { playlist, guide }: a refused URL's message, shown
 '     as its row's detail (MMTVL's pasteMessage) until the next push or pop.
 '   row: { id, title, value, detail, disclosure, dimmed, action, description }: value, detail and description ""
 '     for none; action invalid for an info row (never focused), else one of
 '       { type: "push", page }, { type: "pop" }
-'       { type: "toggle", setting }        channelUpMovesUpList, usePlaylistGuide, channelLogos
+'       { type: "toggle", setting }        channelUpMovesUpList, usePlaylistGuide, channelLogos, teamMatchInitials,
+'                                          teamMatchNicknames
+'       { type: "toggleTeam", teamID }     add or remove a team (step 18)
 '       { type: "editURL", field }         "playlist" or "guide": the scene opens the keyboard
 '       { type: "moveGuide", id, step }, { type: "removeGuide", id }
 '       { type: "toggleGroupHidden", name }, { type: "unhideChannel", id }
@@ -24,9 +29,8 @@
 '   description(list, id) -> the band's text for a focused row ("" for none).
 '   guidePage(id) -> "guide:<id>"; guideIDOf(page) -> the id, or "" when page isn't a guide's.
 '
-' Seams for later steps: step 18 adds My Teams to the Channels section (after Hidden Channels, as MMTVL), and step
-' 21 the Antenna row (first in Channels; with no playlist, Channels with the Antenna row alone, as MMTVL's
-' liveTVSections). Neither draws a placeholder now.
+' Seam for a later step: step 21 adds the Antenna row (first in Channels; with no playlist, Channels with the
+' Antenna row alone, as MMTVL's liveTVSections). It draws no placeholder now.
 namespace SettingsPages
 
     const rootPage = "root"
@@ -39,6 +43,8 @@ namespace SettingsPages
     const devicePage = "device"
     const importPage = "import"
     const aboutPage = "about"
+    const teamsPage = "teams"
+    const teamsPrefix = "teams:"
 
     const playlistEditHint = "Type the M3U address on the Roku's keyboard"
     const guideEditHint = "Type an XMLTV address on the Roku's keyboard"
@@ -55,6 +61,12 @@ namespace SettingsPages
         if page = SettingsPages.devicePage then return SettingsPages.deviceSections(model)
         if page = SettingsPages.importPage then return SettingsPages.importSections()
         if page = SettingsPages.aboutPage then return SettingsPages.aboutSections(model)
+        if page = SettingsPages.teamsPage then return SettingsPages.teamsSections(model)
+        teamsAt = SettingsPages.teamsPlace(page)
+        if teamsAt <> invalid
+            if teamsAt.conference <> "" then return SettingsPages.conferenceSections(model, teamsAt.league, teamsAt.conference)
+            return SettingsPages.leagueSections(model, teamsAt.league)
+        end if
         guideID = SettingsPages.guideIDOf(page)
         if guideID <> "" then return SettingsPages.guideSections(model, guideID)
         return []
@@ -70,6 +82,12 @@ namespace SettingsPages
         if page = SettingsPages.devicePage then return "Device"
         if page = SettingsPages.importPage then return "Import from MMTVL"
         if page = SettingsPages.aboutPage then return "About"
+        if page = SettingsPages.teamsPage then return "My Teams"
+        teamsAt = SettingsPages.teamsPlace(page)
+        if teamsAt <> invalid
+            if teamsAt.conference <> "" then return teamsAt.conference
+            return TeamCatalog.leagueTitle(teamsAt.league)
+        end if
         guideID = SettingsPages.guideIDOf(page)
         if guideID <> ""
             for each guide in model.guides
@@ -205,13 +223,13 @@ namespace SettingsPages
         if hiddenGroups > 0 then groupsValue = hiddenGroups.ToStr() + " Hidden"
         hiddenValue = "None"
         if model.hiddenChannels.Count() > 0 then hiddenValue = SettingsStatus.grouped(model.hiddenChannels.Count())
-        ' Step 21: the Antenna row first; step 18: My Teams after Hidden Channels (frame wjg72 draws both).
-        ' Step 20 (Match Guide) restores the frame's footer: "To favorite, hide or match one channel: in the guide,
-        ' press * on it."
+        ' Step 21: the Antenna row first (frame wjg72 draws it). The footer is the frame's (step 20 brought Match
+        ' Guide, so "match" is back).
         return SettingsPages.newSection("channels", "Channels", [
             SettingsPages.newRow({ id: "groups", title: "Groups", value: groupsValue, disclosure: true, action: SettingsPages.push(SettingsPages.groupsPage), description: "Which groups show in the guide." }),
-            SettingsPages.newRow({ id: "hiddenChannels", title: "Hidden Channels", value: hiddenValue, disclosure: true, action: SettingsPages.push(SettingsPages.hiddenChannelsPage), description: "Channels hidden from the guide." })
-        ], "To favorite or hide one channel: in the guide, press * on it.")
+            SettingsPages.newRow({ id: "hiddenChannels", title: "Hidden Channels", value: hiddenValue, disclosure: true, action: SettingsPages.push(SettingsPages.hiddenChannelsPage), description: "Channels hidden from the guide." }),
+            SettingsPages.newRow({ id: "teams", title: "My Teams", value: TeamPicker.teamCountLabel(SettingsPages.pickedTeams(model).Count()), disclosure: true, action: SettingsPages.push(SettingsPages.teamsPage), description: "Your teams' live and upcoming games, pro and college, in the guide's My Teams group." })
+        ], "To favorite, hide or match one channel: in the guide, press * on it.")
     end function
 
     function groupsSections(model as object) as object
@@ -257,6 +275,103 @@ namespace SettingsPages
             SettingsPages.newRow({ id: "confirm.cancel", title: "Cancel", action: { type: "pop" } }),
             SettingsPages.newRow({ id: "confirm.remove", title: "Remove", action: { type: "removeSource" } })
         ], "Forgets the playlist and guide addresses and deletes the downloaded guides.")]
+    end function
+
+    ' --- My Teams (step 18; MMTVL M7f L13, M7l L13, M7m L29) -----------------------------------------------------
+
+    ' Pro and College, one row per league with how many of its teams are picked; then Matching.
+    function teamsSections(model as object) as object
+        picked = SettingsPages.pickedTeams(model)
+        pro = []
+        college = []
+        leagueRows = TeamPicker.items(TeamPicker.level("leagues", "", ""), SettingsPages.teamCatalog(model), picked)
+        for each item in leagueRows
+            league = item.open.league
+            made = SettingsPages.newRow({ id: item.id, title: item.title, value: item.value, disclosure: true, action: SettingsPages.push(SettingsPages.teamsPrefix + league) })
+            if TeamCatalog.isCollege(league) then college.Push(made) else pro.Push(made)
+        end for
+        initials = "Off"
+        if SettingsStatus.isTrue(model.teamMatchInitials) then initials = "On"
+        nicknames = "Off"
+        if SettingsStatus.isTrue(model.teamMatchNicknames) then nicknames = "On"
+        return [
+            SettingsPages.newSection("leagues.pro", "Pro", pro, ""),
+            SettingsPages.newSection("leagues.college", "College", college, "The guide's My Teams group shows your teams' live games, the channels showing them now, and their games in the next 3 days."),
+            SettingsPages.newSection("matching", "Matching", [
+                SettingsPages.newRow({ id: "teams.matchInitials", title: "Match Initials", value: initials, action: SettingsPages.toggle("teamMatchInitials"), description: "Games named with initials, such as ULM or BYU, count for your teams. Some initials are also pro teams' (BUF, MIA), so other games may show." }),
+                SettingsPages.newRow({ id: "teams.matchNicknames", title: "Match Nicknames Alone", value: nicknames, action: SettingsPages.toggle("teamMatchNicknames"), description: "A game that names only a nickname, such as " + Chr(34) + "The Cougars meet the Bearcats" + Chr(34) + ", counts for your teams with that nickname, narrowed by the school or conference when the guide names one." })
+            ], "Spelled-out names, such as Louisiana-Monroe or Brigham Young, always count.")
+        ]
+    end function
+
+    ' A pro league's teams; a college league's conferences.
+    function leagueSections(model as object, league as string) as object
+        catalog = SettingsPages.teamCatalog(model)
+        if catalog = invalid then return [SettingsPages.loadingSection(model)]
+        picked = SettingsPages.pickedTeams(model)
+        rows = TeamPicker.items(TeamPicker.level("league", league, ""), catalog, picked)
+        if not TeamCatalog.isCollege(league) then return [SettingsPages.newSection("teams", "", SettingsPages.teamRows(rows), "Select a team to add or remove it.")]
+        made = []
+        for each item in rows
+            made.Push(SettingsPages.newRow({ id: item.id, title: item.title, value: item.value, disclosure: true, action: SettingsPages.push(SettingsPages.teamsPrefix + league + ":" + item.open.conference) }))
+        end for
+        return [SettingsPages.newSection("conferences", "", made, "")]
+    end function
+
+    ' A college conference's teams.
+    function conferenceSections(model as object, league as string, conference as string) as object
+        catalog = SettingsPages.teamCatalog(model)
+        if catalog = invalid then return [SettingsPages.loadingSection(model)]
+        rows = TeamPicker.items(TeamPicker.level("conference", league, conference), catalog, SettingsPages.pickedTeams(model))
+        return [SettingsPages.newSection("teams", "", SettingsPages.teamRows(rows), "Select a team to add or remove it.")]
+    end function
+
+    ' Settings' team rows: "On" when picked (MMTVL's Settings; the picker says "In My Teams").
+    function teamRows(rows as object) as object
+        made = []
+        for each item in rows
+            value = ""
+            if item.checked then value = "On"
+            made.Push(SettingsPages.newRow({ id: item.id, title: item.title, value: value, action: { type: "toggleTeam", teamID: item.teamID } }))
+        end for
+        return made
+    end function
+
+    ' Before TeamsTask's catalog arrives, or when it couldn't be made (model.teamCatalog { failed: true }; the next
+    ' open of Settings asks again). No MMTVL counterpart: its catalog is always there.
+    function loadingSection(model as object) as object
+        failed = TeamPicker.isFailedCatalog(model.teamCatalog)
+        return SettingsPages.newSection("teams", "", [SettingsPages.newRow({ id: "teams.loading", title: TeamPicker.catalogNote(failed) })], "")
+    end function
+
+    ' "teams:<league>" or "teams:<league>:<conference>" as { league, conference } ("" for none), else invalid. The
+    ' league must be one of TeamCatalog's.
+    function teamsPlace(page as string) as dynamic
+        prefix = SettingsPages.teamsPrefix
+        if Len(page) <= Len(prefix) or Left(page, Len(prefix)) <> prefix then return invalid
+        rest = Mid(page, Len(prefix) + 1)
+        colon = Instr(1, rest, ":")
+        league = rest
+        conference = ""
+        if colon > 0
+            league = Left(rest, colon - 1)
+            conference = Mid(rest, colon + 1)
+            if conference = "" then return invalid
+        end if
+        if not TeamCatalog.isLeague(league) then return invalid
+        return { league: league, conference: conference }
+    end function
+
+    function pickedTeams(model as object) as object
+        if type(model.teams) = "roArray" then return model.teams
+        return []
+    end function
+
+    function teamCatalog(model as object) as dynamic
+        catalog = model.teamCatalog
+        if type(catalog) <> "roAssociativeArray" then return invalid
+        if type(catalog.leagues) <> "roArray" then return invalid
+        return catalog
     end function
 
     ' L7 (frame B94oz): this Roku, then each feature On or Off: <reason>, the guide window in hours. Only Channel

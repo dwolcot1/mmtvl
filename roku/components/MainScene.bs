@@ -71,6 +71,9 @@ sub init()
     m.importWatchdog.duration = 2 * ImportBundle.fetchTimeoutSeconds
     m.importWatchdog.repeat = false
     m.importWatchdog.observeField("fire", "onImportWatchdog")
+    startTeams()
+    startSearch()
+    startMatchGuide()
     info = CreateObject("roAppInfo")
     m.versionShort = info.GetValue("major_version") + "." + info.GetValue("minor_version")
     m.buildNumber = info.GetValue("build_version")
@@ -144,6 +147,10 @@ sub loadPlaylist()
     m.playlistTask.playlistURL = url
     m.playlistTask.prefs = m.store.prefs
     m.playlistPrefsRevision = m.prefsRevision
+    ' Step 18: the lineup carries My Teams' last results; newer ones that arrive meanwhile rebuild it.
+    m.playlistTask.teamIDs = m.teamIDs
+    m.playlistTask.upcomingGames = m.upcomingGames
+    m.playlistTeamsRevision = m.teamsRevision
     m.playlistTask.observeField("result", "onPlaylistResult")
     m.playlistTask.control = "run"
     m.playlistWatchdog.control = "start"
@@ -180,14 +187,18 @@ sub onPlaylistResult()
         m.lastPlaylistLoad = UpTime(0)
         m.playlistLoadedAt = CreateObject("roDateTime").AsSeconds()
         m.top.playlistGuideURLs = result.guideURLs
-        if m.prefsRevision = m.playlistPrefsRevision
+        if m.prefsRevision = m.playlistPrefsRevision and m.teamsRevision = m.playlistTeamsRevision
             m.lineup = result.lineup
             m.top.lineup = result.lineup
             m.guide.lineup = result.lineup
         else
-            ' QA 4: Groups or Hidden Channels changed while the task ran on the prefs it was given.
+            ' QA 4: Groups or Hidden Channels changed while the task ran on the prefs it was given (step 18: or My
+            ' Teams' results did).
             rebuildLineup()
         end if
+        ' Step 18: My Teams with the new channels.
+        m.teamsTask.channels = result.teamFields
+        requestTeams()
         m.top.playlistStatus = ""
         loaded = m.channels.Count().ToStr() + " channels"
         if result.host <> "" then loaded += " from " + result.host
@@ -220,6 +231,8 @@ sub startGuides()
     m.guideRunChannelsKey = invalid
     ' Step 13: what Settings asked of the guide runs (GuideRuns: pending, force, deletePending).
     m.guideRuns = GuideRuns.newState()
+    ' Step 20: whether the running (or last) guide run was a rematch (cachedOnly), for GuideRuns.runFailed.
+    m.guideRunCachedOnly = false
     m.guideWatchdog = CreateObject("roSGNode", "Timer")
     m.guideWatchdog.duration = GuideSources.watchdogSeconds
     m.guideWatchdog.repeat = false
@@ -261,7 +274,8 @@ sub refreshGuideIfDue()
     hasChannels = m.channels.Count() > 0
     verdict = invalid
     if hasChannels and not m.guideRuns.force then verdict = GuideSources.isRunDue(sources, m.guideState, now)
-    chosen = GuideRuns.choose(m.guideRuns, hasChannels, verdict)
+    ' QA of step 20: a failed rematch is tried again once the failure wait is over.
+    chosen = GuideRuns.choose(m.guideRuns, hasChannels, verdict, GuideRuns.isWaitingAfterFailure(m.guideState.failedRunAt, now))
     m.guideRuns = chosen.runs
     if not chosen.run then return
     ' Refresh Now: every guide is downloaded again (MMTVL's "Downloads the playlist and the guides again now"):
@@ -275,6 +289,9 @@ sub refreshGuideIfDue()
     ' QA-M1: the url-tvg list goes in the task's own field, set just before it runs (no getScene() in the task).
     task.playlistGuideURLs = urls
     task.expectedGuides = sources.Count()
+    ' Step 20: Match Guide's rematch reads the files there are and downloads nothing.
+    task.cachedOnly = chosen.cachedOnly
+    m.guideRunCachedOnly = chosen.cachedOnly
     task.observeField("result", "onGuideResult")
     m.guideTask = task
     task.control = "run"
@@ -311,6 +328,7 @@ sub onGuideWatchdog()
     task.playlistGuideURLs = []
     m.guideTask = invalid
     m.guideState.failedRunAt = CreateObject("roDateTime").AsSeconds()
+    m.guideRuns = GuideRuns.runFailed(m.guideRuns, m.guideRunCachedOnly)
     Log.error("Guide", "No answer from the guide task; keeping the last guide")
     if not isFinishedTask(task)
         m.abandonedGuideTask = task
@@ -351,6 +369,7 @@ sub onGuideResult()
     if type(result) = "roAssociativeArray" then ok = result.ok = true
     if not ok
         m.guideState.failedRunAt = CreateObject("roDateTime").AsSeconds()
+        m.guideRuns = GuideRuns.runFailed(m.guideRuns, m.guideRunCachedOnly)
         Log.warn("Guide", "The guide run failed; keeping the last guide")
         afterGuideRun()
         return
@@ -364,9 +383,20 @@ sub onGuideResult()
     m.guideState.lastKey = result.sourcesKey
     m.guideState.lastChannelsKey = m.guideRunChannelsKey
     m.top.guideRevision = m.top.guideRevision + 1
-    ' Step 12: the guide screen is the one reader (GuideReader); the banner gets the playing channel's list from it.
+    ' Step 12: the guide screen is the reader that keeps the data (GuideReader); the banner gets the playing channel's
+    ' list from it. Step 18: TeamsTask reads it too, per match.
     m.guide.guideHolder = task
     m.guide.guideRevision = m.top.guideRevision
+    ' Step 18: My Teams with the new guide.
+    m.teamsTask.guideHolder = task
+    requestTeams()
+    ' Step 19: Search's title index is built again from this guide the next time Search needs it.
+    if m.searchTask <> invalid
+        m.searchTask.guideHolder = task
+        m.searchTask.guideRevision = m.top.guideRevision
+    end if
+    ' Step 20: Match Guide reads the new run's matches and channel lists.
+    if m.matchTask <> invalid then m.matchTask.guideHolder = task
     pushProgrammes()
     m.guideStatusByID = statusesByID(result.sourcesKey, result.statuses)
     afterGuideRun()
@@ -462,8 +492,8 @@ sub saveState(state as object)
     if not result.ok then m.store.state = SettingsStore.normalize("state", state)
 end sub
 
-' The playing channel's programmes for the banner: one list, copied from the guide screen (the only reader of the
-' guide data, step 12).
+' The playing channel's programmes for the banner: one list, copied from the guide screen (the reader that keeps the
+' guide data, step 12; TeamsTask's copy lasts one match).
 sub pushProgrammes()
     if m.currentChannel = invalid then return
     list = m.guide.callFunc("programmesFor", m.currentChannel.id)
@@ -555,11 +585,9 @@ sub onGuideAction()
     else if kind = "returnToChannel"
         returnToChannel(PlayerSession.isTrue(action.reload))
     else if kind = "openSearch"
-        ' Step 19 builds Search; until then the Search row does nothing visible.
-        Log.info("Live TV", "Search comes with step 19")
+        openSearch()
     else if kind = "openTeamPicker"
-        ' Step 18 builds Choose Teams.
-        Log.info("Live TV", "Choose Teams comes with step 18")
+        openTeamPicker()
     else if kind = "openSettings"
         openSettings("root")
     end if
@@ -582,7 +610,12 @@ sub openChannelMenu(id as dynamic, group as dynamic, focus = 0 as integer)
     channel = PlayerSession.channelByID(m.channels, id)
     if channel = invalid then return
     if not PlayerSession.isText(group) then group = ""
-    m.menuContext = { channelID: channel.id, group: group }
+    ' Step 18: the team rows already in, when the menu opens again on the same channel (after Move Up/Down).
+    sides = invalid
+    if m.menuContext <> invalid
+        if m.menuContext.channelID = channel.id then sides = m.menuContext.teamSides
+    end if
+    m.menuContext = { channelID: channel.id, group: group, teamSides: sides, teamSerial: -1 }
     rows = ChannelMenu.items(menuItemsContext())
     subtitle = ""
     list = m.guide.callFunc("programmesFor", channel.id)
@@ -590,6 +623,7 @@ sub openChannelMenu(id as dynamic, group as dynamic, focus = 0 as integer)
     if current <> invalid
         if PlayerSession.isText(current.title) then subtitle = current.title
     end if
+    if sides = invalid then requestMenuTeams(channel, current)
     name = ""
     if PlayerSession.isText(channel.name) then name = channel.name
     m.menu.menu = ChannelMenu.make(Lineup.displayNumber(channel) + "  " + name, subtitle, rows, focus, m.theme.layout.liveMenuVisibleRows)
@@ -601,7 +635,10 @@ end sub
 
 function menuItemsContext() as object
     id = m.menuContext.channelID
-    return { channelID: id, isFavorite: ChannelMenu.isFavorite(m.store.prefs, id), group: m.menuContext.group, movableIDs: movableIDs() }
+    teamItems = []
+    if m.menuContext.teamSides <> invalid then teamItems = MyTeams.menuItems(MyTeams.menuTeams(m.menuContext.teamSides, m.store.prefs.teams), m.store.prefs.teams, id)
+    matchValue = MatchGuide.rowValue(m.guide.callFunc("matchFor", id), guideLabels())
+    return { channelID: id, isFavorite: ChannelMenu.isFavorite(m.store.prefs, id), group: m.menuContext.group, movableIDs: movableIDs(), teamItems: teamItems, matchValue: matchValue }
 end function
 
 function movableIDs() as object
@@ -617,6 +654,9 @@ sub closeChannelMenu()
     m.menu.visible = false
     m.menuOpen = false
     m.menuContext = invalid
+    ' Step 20: a Match Guide still loading never opens after this, and its parent menu is let go.
+    m.matchPending = invalid
+    m.matchParent = invalid
     focusCurrent()
 end sub
 
@@ -625,13 +665,20 @@ end sub
 sub onMenuChoice()
     choice = m.menu.choice
     if type(choice) <> "roAssociativeArray" or m.menuContext = invalid then return
+    ' Step 20: Match Guide's own menu (in the same view): Back or * goes back to the channel menu (D49).
+    if isMatchGuideMenu()
+        if choice.outcome = "choose" then applyGuideMatch(choice.action) else backToChannelMenu()
+        return
+    end if
     if choice.outcome <> "choose"
         closeChannelMenu()
         return
     end if
     chosen = choice.action
     kind = chosen.type
-    if kind = "watch"
+    if kind = "openMatchGuide"
+        openMatchGuide(chosen.channelID)
+    else if kind = "watch"
         closeChannelMenu()
         watch(chosen.channelID)
     else if kind = "moveFavorite"
@@ -644,6 +691,8 @@ sub onMenuChoice()
     else
         applyPrefs(chosen)
         closeChannelMenu()
+        ' Step 18: a team added or removed (IPTVLibrary.setTeamPicked: the newest update decides).
+        if kind = "toggleTeam" then requestTeams()
     end if
 end sub
 
@@ -659,10 +708,12 @@ end sub
 
 ' The lineup from the channels and the saved prefs (Lineup.build); the guide keeps its group and row.
 sub rebuildLineup()
-    built = Lineup.build(m.channels, m.store.prefs, [])
+    built = Lineup.build(m.channels, m.store.prefs, m.teamIDs, m.upcomingGames)
     m.lineup = built
     m.top.lineup = built
     m.guide.lineup = built
+    ' Step 19: an open Search searches the channels shown now.
+    if m.searchOpen then pushSearchChannels()
 end sub
 
 ' D51: any key or focus move in the guide or the menu, and opening the guide.
@@ -684,8 +735,11 @@ sub onIdle()
         end if
         return
     end if
-    result = GuideIdle.outcome({ screen: m.screen, menuOpen: m.menuOpen, isPlaying: isPlaying() })
+    ' Step 20: a Match Guide still loading counts as an open menu (MMTVL cancels it), so it can't open after this.
+    result = GuideIdle.outcome({ screen: m.screen, menuOpen: m.menuOpen or m.matchPending <> invalid, pickerOpen: m.pickerOpen, searchOpen: m.searchOpen, isPlaying: isPlaying() })
     if result.closeMenu then closeChannelMenu()
+    if result.closePicker then closeTeamPicker()
+    if result.closeSearch then closeSearch()
     if result.returnToChannel then returnToPlayer()
     if result.changed then Log.info("Live TV", "No input for a while: back to the video")
 end sub
@@ -720,7 +774,11 @@ sub focusCurrent()
             return
         end if
     #end if
-    if m.menuOpen
+    if m.searchOpen
+        m.search.callFunc("takeFocus")
+    else if m.pickerOpen
+        m.picker.setFocus(true)
+    else if m.menuOpen
         m.menu.setFocus(true)
     else if m.screen = "player"
         m.player.setFocus(true)
@@ -774,6 +832,8 @@ end function
 ' Settings on its root or on Device, over the screen it came from (Back on the root returns there).
 sub openSettings(page as string)
     if m.menuOpen then closeChannelMenu()
+    ' Step 18: Live TV → My Teams' league pages need the catalog.
+    requestTeamCatalog()
     if m.screen <> "settings" then m.settingsReturn = m.screen
     m.settings.callFunc("open", { page: page })
     updateSettingsModel()
@@ -859,6 +919,8 @@ sub onSettingsAction()
         if PlayerSession.isText(action.name) then savePrefs(SettingsEdits.groupToggled(m.store.prefs, action.name))
     else if kind = "unhideChannel"
         if PlayerSession.isText(action.id) then savePrefs(SettingsEdits.channelShown(m.store.prefs, action.id))
+    else if kind = "toggleTeam"
+        if PlayerSession.isText(action.teamID) then toggleTeam(action.teamID)
     else if kind = "refresh"
         refreshNow()
     else if kind = "removeSource"
@@ -891,6 +953,8 @@ sub toggleSetting(name as dynamic)
         if m.currentChannel <> invalid then m.player.logo = playerLogo(m.currentChannel)
     end if
     if name = "usePlaylistGuide" then guidesChanged()
+    ' Step 18 (MMTVL's applyTeamMatchOptions): TeamsTask builds the index for the new options, then matches.
+    if name = "teamMatchInitials" or name = "teamMatchNicknames" then requestTeams()
 end sub
 
 sub saveGuides(guides as object)
@@ -997,6 +1061,7 @@ sub changePlaylist()
     m.top.playlistGuideURLs = []
     m.playlistLoadedAt = invalid
     m.lastPlaylistLoad = invalid
+    forgetTeamResults()
     rebuildLineup()
     updatePlayback()
     ' QA 2: a guide run going now is for the old playlist; another follows it (after the new channels arrive).
@@ -1052,6 +1117,7 @@ sub removeSource()
     m.logoTask.playlistURL = ""
     m.top.playlistStatus = "No Live TV source yet"
     showPlaylistStatus(m.top.playlistStatus)
+    forgetTeamResults()
     rebuildLineup()
     updatePlayback()
     forgetGuides()
@@ -1082,6 +1148,12 @@ sub deleteGuideFiles()
     m.top.guideRevision = m.top.guideRevision + 1
     m.guide.guideHolder = invalid
     m.guide.guideRevision = m.top.guideRevision
+    m.teamsTask.guideHolder = invalid
+    if m.searchTask <> invalid
+        m.searchTask.guideHolder = invalid
+        m.searchTask.guideRevision = m.top.guideRevision
+    end if
+    requestTeams()
 end sub
 
 ' --- step 14: Import from MMTVL ------------------------------------------------------------------------------
@@ -1216,6 +1288,7 @@ end sub
 sub applyImportedSettings()
     Log.info("Import", "Settings replaced; loading the new playlist")
     if m.menuOpen then closeChannelMenu()
+    if m.pickerOpen then closeTeamPicker()
     if m.currentChannel <> invalid
         m.player.control = "stop"
         m.currentChannel = invalid
@@ -1235,10 +1308,313 @@ sub applyImportedSettings()
     refreshSettings()
 end sub
 
+' --- step 18: My Teams --------------------------------------------------------------------------------------------
+
+' TeamsTask for the app's life, the 5-minute tick (IPTVLibrary.teamsRefreshInterval) and Choose Teams. m.teamIDs and
+' m.upcomingGames are the newest match's (the lineup's), m.teamsKey what they were last set from, m.teamsRevision
+' goes up with each change (a PlaylistTask that ran on older ones rebuilds the lineup).
+sub startTeams()
+    m.teamIDs = []
+    m.upcomingGames = []
+    m.teamsKey = teamsKeyOf([], [])
+    m.teamsRevision = 0
+    m.playlistTeamsRevision = 0
+    m.teamRequests = MyTeams.newRequests()
+    m.teamCatalog = invalid
+    m.catalogAsked = false
+    m.teamsTask = CreateObject("roSGNode", "TeamsTask")
+    m.teamsTask.observeField("matchAnswer", "onMatchAnswer")
+    m.teamsTask.observeField("menuAnswer", "onMenuAnswer")
+    m.teamsTask.observeField("searchAnswer", "onTeamSearchAnswer")
+    m.teamsTask.observeField("catalog", "onTeamCatalog")
+    ' Teams picked: the task makes the catalogs and the index at launch; none picked: when first needed.
+    prepare = {}
+    if m.store.prefs.teams.Count() > 0 then prepare = teamOptions()
+    m.teamsTask.prepareIndex = prepare
+    m.teamsTask.control = "run"
+    m.teamsTimer = CreateObject("roSGNode", "Timer")
+    m.teamsTimer.duration = Refresh.teamsIntervalSeconds
+    m.teamsTimer.repeat = true
+    m.teamsTimer.observeField("fire", "requestTeams")
+    m.teamsTimer.control = "start"
+    m.picker = m.top.findNode("teamPicker")
+    m.picker.observeField("toggle", "onPickerToggle")
+    m.picker.observeField("closed", "closeTeamPicker")
+    m.picker.observeField("input", "noteInput")
+    m.pickerOpen = false
+end sub
+
+function teamOptions() as object
+    return { initials: PlayerSession.isTrue(m.store.settings.teamMatchInitials), nicknames: PlayerSession.isTrue(m.store.settings.teamMatchNicknames) }
+end function
+
+' A match for the current picks and options; it supersedes any older one (TeamsTask: the newest wins).
+sub requestTeams()
+    serial = MyTeams.nextSerial(m.teamRequests, "match")
+    m.teamsTask.request = { kind: "match", serial: serial, picked: m.store.prefs.teams, options: teamOptions() }
+end sub
+
+' The channel menu's teams for one channel: its game entry's, else those of the programme on now (only what
+' TeamMatcher reads of it).
+sub requestMenuTeams(channel as object, current as dynamic)
+    programme = invalid
+    if type(current) = "roAssociativeArray"
+        programme = {}
+        for each field in ["start", "stop", "title", "subtitle", "category", "summary"]
+            if current[field] <> invalid then programme[field] = current[field]
+        end for
+    end if
+    serial = MyTeams.nextSerial(m.teamRequests, "menu")
+    m.menuContext.teamSerial = serial
+    m.teamsTask.request = { kind: "menu", serial: serial, channel: { id: channel.id, name: channel.name, group: channel.group }, programme: programme, options: teamOptions() }
+end sub
+
+' Each kind has its own field (fix 2 of step 18's QA), so two answers set close together are both seen.
+sub onMatchAnswer()
+    answer = m.teamsTask.matchAnswer
+    if not MyTeams.isNewest(m.teamRequests, answer) then return
+    if not PlayerSession.isTrue(answer.ok) or answer.kind <> "match" then return
+    key = teamsKeyOf(answer.liveIDs, answer.upcoming)
+    if key = m.teamsKey then return
+    m.teamsKey = key
+    m.teamIDs = answer.liveIDs
+    m.upcomingGames = answer.upcoming
+    m.teamsRevision = m.teamsRevision + 1
+    rebuildLineup()
+end sub
+
+sub onMenuAnswer()
+    answer = m.teamsTask.menuAnswer
+    if not MyTeams.isNewest(m.teamRequests, answer) then return
+    if not PlayerSession.isTrue(answer.ok) or answer.kind <> "menu" then return
+    if not m.menuOpen or m.menuContext = invalid then return
+    if m.menuContext.channelID <> answer.channelID or m.menuContext.teamSerial <> answer.serial then return
+    m.menuContext.teamSides = answer.sides
+    showMenuRows()
+end sub
+
+' The open menu's rows again (the team rows came), on the row focused now, by id: the view holds the live focus.
+sub showMenuRows()
+    m.menu.callFunc("replaceItems", { items: ChannelMenu.items(menuItemsContext()) })
+end sub
+
+' No channels (a new playlist, Remove Live TV Source): My Teams is empty until the next match. The match serial moves
+' on, so a match still running for the old playlist is never used.
+sub forgetTeamResults()
+    MyTeams.nextSerial(m.teamRequests, "match")
+    m.teamsTask.channels = []
+    m.teamIDs = []
+    m.upcomingGames = []
+    m.teamsKey = teamsKeyOf([], [])
+    m.teamsRevision = m.teamsRevision + 1
+end sub
+
+' What a match set, to tell whether a new answer changes anything (MMTVL sets the group only on a change).
+function teamsKeyOf(ids as object, upcoming as object) as string
+    return FormatJson({ ids: ids, upcoming: upcoming })
+end function
+
+' A team added or removed (Choose Teams, Settings): saved in prefs in the order added, the lineup built again, and a
+' match for the new picks.
+sub toggleTeam(teamID as string)
+    prefs = ChannelMenu.prefsAfter(m.store.prefs, { type: "toggleTeam", teamID: teamID }, [])
+    if m.screen = "settings"
+        if not saveSetting("prefs", prefs) then return
+    else
+        result = SettingsStore.save(m.store, "prefs", prefs)
+        if not result.ok then m.store.prefs = SettingsStore.normalize("prefs", prefs)
+    end if
+    m.prefsRevision = m.prefsRevision + 1
+    rebuildLineup()
+    requestTeams()
+    if m.pickerOpen then m.picker.picked = m.store.prefs.teams
+    if m.searchOpen then m.search.picked = m.store.prefs.teams
+end sub
+
+' The slim catalog, asked for once (Settings or Choose Teams opening); after a failure, again at the next open
+' (Settings and Choose Teams show "Loading teams…" meanwhile).
+sub requestTeamCatalog()
+    if m.teamCatalog <> invalid or m.catalogAsked then return
+    m.catalogAsked = true
+    m.settings.teamCatalog = {}
+    m.picker.catalog = {}
+    m.teamsTask.request = { kind: "catalog" }
+end sub
+
+' Read once (a field read copies it); Settings and Choose Teams each get it once. A failed one ({ ok: false }) shows
+' "Teams couldn't be loaded" there, and the next open asks again.
+sub onTeamCatalog()
+    if m.teamCatalog <> invalid then return
+    catalog = m.teamsTask.catalog
+    if type(catalog) <> "roAssociativeArray" then return
+    if not PlayerSession.isTrue(catalog.ok) or type(catalog.leagues) <> "roArray"
+        m.catalogAsked = false
+        m.settings.teamCatalog = { failed: true }
+        m.picker.catalog = { failed: true }
+        return
+    end if
+    m.teamCatalog = catalog
+    m.settings.teamCatalog = catalog
+    m.picker.catalog = catalog
+end sub
+
+' MMTVL's openTeamPicker: only from the guide; focus stays on My Teams' Choose Teams row under it.
+sub openTeamPicker()
+    if m.screen <> "guide" then return
+    requestTeamCatalog()
+    m.picker.callFunc("open")
+    m.picker.picked = m.store.prefs.teams
+    m.picker.visible = true
+    m.pickerOpen = true
+    focusCurrent()
+    noteInput()
+end sub
+
+sub closeTeamPicker()
+    if not m.pickerOpen then return
+    m.picker.visible = false
+    m.pickerOpen = false
+    focusCurrent()
+end sub
+
+sub onPickerToggle()
+    toggle = m.picker.toggle
+    if type(toggle) <> "roAssociativeArray" then return
+    if PlayerSession.isText(toggle.teamID) then toggleTeam(toggle.teamID)
+end sub
+
+' --- step 19: Search ------------------------------------------------------------------------------------------
+
+' Search over the guide (SearchView), opened from the guide's Search row. SearchTask (channels, programmes) is made when
+' Search first opens and kept for the app's life; TeamsTask answers the teams. m.searchSerial is the newest serial
+' used (a session's first, then each query sent; it never goes back), and answers for any other are dropped (the view
+' checks too).
+sub startSearch()
+    m.search = m.top.findNode("search")
+    m.search.observeField("query", "onSearchQuery")
+    m.search.observeField("choice", "onSearchChoice")
+    m.search.observeField("closed", "closeSearch")
+    m.search.observeField("input", "noteInput")
+    m.searchOpen = false
+    m.searchTask = invalid
+    m.searchSerial = 0
+end sub
+
+' MMTVL's openSearch, from the guide only (the Search row); the guide stays under it, on its Search row.
+sub openSearch()
+    if m.screen <> "guide" or m.searchOpen then return
+    if m.searchTask = invalid
+        m.searchTask = CreateObject("roSGNode", "SearchTask")
+        m.searchTask.guideHolder = m.top.guideHolder
+        m.searchTask.guideRevision = m.top.guideRevision
+        m.searchTask.observeField("answer", "onSearchAnswer")
+        m.searchTask.control = "run"
+    end if
+    pushSearchChannels()
+    ' The channel names and the title index (SearchTask), and the team entries (TeamsTask), while the user types.
+    m.searchTask.request = { kind: "prepare" }
+    m.teamsTask.request = { kind: "search", serial: -1, text: "" }
+    ' Serials keep increasing across sessions: an answer from an earlier Search is never taken for this one's.
+    m.searchSerial = m.searchSerial + 1
+    m.search.callFunc("open", { serial: m.searchSerial })
+    m.search.picked = m.store.prefs.teams
+    m.search.visible = true
+    m.searchOpen = true
+    focusCurrent()
+    noteInput()
+end sub
+
+' The lineup's visible channels, as Search shows them (no URL).
+sub pushSearchChannels()
+    shown = []
+    if m.lineup <> invalid
+        for each channel in m.lineup.visibleChannels
+            shown.Push({ id: channel.id, name: channel.name, number: Lineup.displayNumber(channel), group: channel.group })
+        end for
+    end if
+    m.searchTask.channels = shown
+end sub
+
+sub closeSearch()
+    if not m.searchOpen then return
+    m.search.visible = false
+    m.searchOpen = false
+    focusCurrent()
+end sub
+
+' Typing paused: both Tasks get the newest text.
+sub onSearchQuery()
+    query = m.search.query
+    if type(query) <> "roAssociativeArray" or not m.searchOpen then return
+    m.searchSerial = query.serial
+    m.searchTask.request = { kind: "query", serial: query.serial, text: query.text }
+    m.teamsTask.request = { kind: "search", serial: query.serial, text: query.text }
+end sub
+
+' SearchTask's channels and programmes; the programmes' titles come from the guide screen (one call per answer).
+sub onSearchAnswer()
+    answer = m.searchTask.answer
+    if type(answer) <> "roAssociativeArray" or not m.searchOpen then return
+    if answer.serial <> m.searchSerial then return
+    ' A failed part still answers (no results), so the screen stops saying "Searching…".
+    if not PlayerSession.isTrue(answer.ok)
+        m.search.answer = { serial: answer.serial, part: "guide", ok: false, channels: [], programmes: [] }
+        return
+    end if
+    hits = answer.programmes
+    if type(hits) <> "roArray" then hits = []
+    details = m.guide.callFunc("programmeDetails", hits)
+    programmes = []
+    if type(details) = "roArray"
+        for i = 0 to hits.Count() - 1
+            if i < details.Count()
+                if type(details[i]) = "roAssociativeArray"
+                    hit = hits[i]
+                    hit.title = details[i].title
+                    hit.subtitle = details[i].subtitle
+                    programmes.Push(hit)
+                end if
+            end if
+        end for
+    end if
+    m.search.answer = { serial: answer.serial, part: "guide", ok: true, channels: answer.channels, programmes: programmes }
+end sub
+
+sub onTeamSearchAnswer()
+    answer = m.teamsTask.searchAnswer
+    if type(answer) <> "roAssociativeArray" or not m.searchOpen then return
+    if answer.serial <> m.searchSerial then return
+    if not PlayerSession.isTrue(answer.ok)
+        m.search.answer = { serial: answer.serial, part: "teams", ok: false, teams: [] }
+        return
+    end if
+    m.search.answer = { serial: answer.serial, part: "teams", ok: true, teams: answer.teams }
+end sub
+
+' MMTVL's choose: a channel or a programme on now plays; a later programme shows in the guide at its start. A team is
+' added or removed and Search stays open.
+sub onSearchChoice()
+    choice = m.search.choice
+    if type(choice) <> "roAssociativeArray" or not m.searchOpen then return
+    kind = choice.type
+    if kind = "toggleTeam"
+        if PlayerSession.isText(choice.teamID) then toggleTeam(choice.teamID)
+    else if kind = "watch"
+        closeSearch()
+        watch(choice.channelID)
+    else if kind = "showInGuide"
+        closeSearch()
+        m.guide.callFunc("focusChannel", { channelID: choice.channelID, start: choice.start })
+        focusCurrent()
+    end if
+end sub
+
 #if DEBUG
     ' The probes play their own video: the player stops first.
     sub openProbes()
         if m.menuOpen then closeChannelMenu()
+        if m.pickerOpen then closeTeamPicker()
+        if m.searchOpen then closeSearch()
         m.player.control = "stop"
         m.currentChannel = invalid
         m.player.visible = false
@@ -1257,3 +1633,132 @@ end sub
         focusCurrent()
     end sub
 #end if
+
+' --- step 20: Match Guide --------------------------------------------------------------------------------------
+
+sub startMatchGuide()
+    m.matchTask = invalid
+    m.matchSerial = 0
+    ' { serial, channelID, screen } while Match Guide's options load; the channel menu it came from, while the
+    ' options load and Match Guide is open ({ channelID, group, teamSides }).
+    m.matchPending = invalid
+    m.matchParent = invalid
+    m.unicodeFinder = Unicode.newNonASCIIFinder()
+end sub
+
+' Whether the open menu is Match Guide's (the channel menu's context has no kind).
+function isMatchGuideMenu() as boolean
+    if m.menuContext = invalid then return false
+    kind = m.menuContext.kind
+    if not PlayerSession.isText(kind) then return false
+    return kind = "matchGuide"
+end function
+
+' Each guide's short label, by the index the last guide run gave it (MatchGuide.labels; no URL leaves here).
+function guideLabels() as object
+    urls = m.top.playlistGuideURLs
+    if type(urls) <> "roArray" then urls = []
+    sources = GuideSources.chooseSources(m.store.guides, urls, m.store.settings.usePlaylistGuide, m.store.source)
+    return MatchGuide.labels(m.guideState.lastKey, sources)
+end function
+
+' MMTVL's openMatchGuide: the channel menu closes and Match Guide opens once its options load (nothing shows
+' meanwhile); the channel menu is kept to go back to.
+sub openMatchGuide(id as dynamic)
+    channel = PlayerSession.channelByID(m.channels, id)
+    context = m.menuContext
+    if channel = invalid or context = invalid
+        closeChannelMenu()
+        return
+    end if
+    parent = { channelID: channel.id, group: context.group, teamSides: context.teamSides }
+    closeChannelMenu()
+    m.matchParent = parent
+    if m.matchTask = invalid
+        m.matchTask = CreateObject("roSGNode", "MatchGuideTask")
+        m.matchTask.guideHolder = m.top.guideHolder
+        m.matchTask.observeField("answer", "onMatchGuideAnswer")
+        m.matchTask.control = "run"
+    end if
+    m.matchSerial = m.matchSerial + 1
+    m.matchPending = { serial: m.matchSerial, channelID: channel.id, screen: m.screen }
+    m.matchTask.request = { serial: m.matchSerial, channel: { id: channel.id, name: channel.name, tvgID: channel.tvgID, tvgName: channel.tvgName }, overrides: m.store.overrides }
+end sub
+
+' The options came: Match Guide opens, unless something else opened or the screen changed meanwhile (MMTVL's
+' guard: not over Choose Teams, Search or another menu, and in the same mode).
+sub onMatchGuideAnswer()
+    answer = m.matchTask.answer
+    pending = m.matchPending
+    if type(answer) <> "roAssociativeArray" or pending = invalid then return
+    if answer.serial <> pending.serial then return
+    m.matchPending = invalid
+    parent = m.matchParent
+    blocked = m.menuOpen or m.pickerOpen or m.searchOpen or m.keyboard <> invalid or m.importView <> invalid or m.notice <> invalid
+    if blocked or m.screen <> pending.screen or (m.screen <> "guide" and m.screen <> "player") or parent = invalid
+        m.matchParent = invalid
+        return
+    end if
+    channel = PlayerSession.channelByID(m.channels, pending.channelID)
+    if channel = invalid
+        m.matchParent = invalid
+        return
+    end if
+    name = ""
+    if PlayerSession.isText(channel.name) then name = channel.name
+    built = MatchGuide.menu(name, channel.id, answer.options, guideLabels())
+    shown = ChannelMenu.make(built.title, "", built.items, built.focusedIndex, m.theme.layout.liveMenuVisibleRows)
+    shown.wide = true
+    shown.note = ""
+    m.menuContext = { channelID: channel.id, group: parent.group, kind: "matchGuide", teamSides: invalid, teamSerial: -1 }
+    m.menu.menu = shown
+    m.menu.visible = true
+    m.menuOpen = true
+    focusCurrent()
+    noteInput()
+end sub
+
+' M7m L3: Back from Match Guide goes back to the channel menu, focused on its Match Guide row.
+sub backToChannelMenu()
+    parent = m.matchParent
+    m.matchParent = invalid
+    if parent = invalid
+        closeChannelMenu()
+        return
+    end if
+    m.menuContext = { channelID: parent.channelID, group: parent.group, teamSides: parent.teamSides, teamSerial: -1 }
+    focus = ChannelMenu.focusAfterMove(ChannelMenu.items(menuItemsContext()), "matchGuide", 0)
+    openChannelMenu(parent.channelID, parent.group, focus)
+end sub
+
+' MMTVL's setGuideMatch: the overrides saved (the channel's keys out, then its choice under its overrideKey), then
+' matched again from the guide files there are, downloading nothing (GuideRuns' rematch). A refused save (L5: under
+' 4 KB left, or too large; or more matches than the store keeps) keeps Match Guide open with the message.
+sub applyGuideMatch(chosen as dynamic)
+    if type(chosen) <> "roAssociativeArray" then return
+    channel = PlayerSession.channelByID(m.channels, chosen.channelID)
+    if channel = invalid or type(chosen.choice) <> "roAssociativeArray"
+        closeChannelMenu()
+        return
+    end if
+    overrides = MatchGuide.overridesAfter(m.store.overrides, channel, chosen.choice, m.unicodeFinder)
+    if MatchGuide.tooMany(overrides)
+        Log.warn("Guide", "Match Guide not saved: more guide matches than the store keeps")
+        m.menu.callFunc("showNote", { text: MatchGuide.tooManyMessage })
+        return
+    end if
+    saved = SettingsStore.save(m.store, "overrides", overrides)
+    if not saved.ok
+        m.menu.callFunc("showNote", { text: saved.message })
+        return
+    end if
+    if not MatchGuide.isApplied(m.store.overrides, channel, chosen.choice, m.unicodeFinder)
+        Log.warn("Guide", "Match Guide's choice wasn't kept by the store")
+        m.menu.callFunc("showNote", { text: SettingsStore.saveFailedMessage })
+        return
+    end if
+    Log.info("Guide", "Match Guide: " + chosen.choice.kind + " saved; matching again from the guides there are")
+    closeChannelMenu()
+    m.guideRuns = GuideRuns.overridesChanged(m.guideRuns)
+    refreshGuideIfDue()
+end sub

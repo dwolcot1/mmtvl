@@ -8,12 +8,17 @@
 '   memoryCheck(availableRaw, limitMB, retainedBytes) -> { known, stop, availableMB }: the memory guard (below).
 '   newObserver(options) -> the observer GuidePipeline.process calls (tick(bytes)): stops when cancelled, at the
 '     size cap, the time limit, or the memory guard. Its clock, memory reader and cancel check are replaceable.
+'   fetchStep(fetchedAt, failure, cachedOnly, now) -> "fresh", "waiting", "noDownload" or "download": the task's
+'     decision per guide (below).
+'   withoutDownload(hasFile, fetchedAt) -> { state, fetchedAt } for a due guide in a run that downloads nothing
+'     (step 20, below).
 '   downloadLimit(usedBytes) -> the most the next download may take: maximumBytes, or what's left of the run's
 '     cachefs: budget (security L-4 of step 9), whichever is less; 0 when nothing is left.
 '   markUnreadable(outcomes, result) -> the guides whose new or fresh file the pipeline couldn't read (QA minor of
 '     step 9): their outcome state becomes "unreadable"; the task then records a failure and drops the file.
 '   statusRows(sources, outcomes, result) -> Settings → Guides' rows, no URLs (below).
 '   guideData(result, windowStart, windowEnd) -> what the guide screen reads (below).
+'   matchData(result) -> what Match Guide reads (step 20, below).
 '   prunable(names, sources) -> the files in cachefs:/guides to delete when a run starts (no other run alive).
 '   logLine(row) -> "Guide <i> from <host>: <status>".
 namespace GuideFetch
@@ -152,6 +157,29 @@ namespace GuideFetch
         return invalid
     end function
 
+    ' GuideTask's decision per guide, once its URL is allowed (QA of step 20: pure, so it's tested). fetchedAt: its
+    ' file's download time (invalid: no file or no time); failure: its last failure ({ at, kind }, or invalid);
+    ' cachedOnly: the run downloads nothing (Match Guide's rematch). In order:
+    '   "fresh"       the file is fresh (12 h): read it;
+    '   "waiting"     a failure is still waiting (GuideSources.isRetryWaiting): no download, as before;
+    '   "noDownload"  cachedOnly: read the file there is, whatever its age (withoutDownload);
+    '   "download"    download it.
+    function fetchStep(fetchedAt as dynamic, failure as dynamic, cachedOnly as dynamic, now as dynamic) as string
+        if fetchedAt <> invalid and not GuideSources.isGuideDue(fetchedAt, now) then return "fresh"
+        if GuideSources.isRetryWaiting(failure, now) then return "waiting"
+        if GuideSources.isTrue(cachedOnly) then return "noDownload"
+        return "download"
+    end function
+
+    ' Step 20 (Match Guide's rematch, GuideTask's cachedOnly): a guide that is due but mustn't be downloaded. With
+    ' a file: "cached", read as it is, with its real download time (invalid when its time file is gone), so the
+    ' scene still sees it due and the next run downloads it. Without one: "failed" with no file, as a failed
+    ' download is, but with no failure recorded (no hour's wait), so the next run downloads it. { state, fetchedAt }.
+    function withoutDownload(hasFile as boolean, fetchedAt as dynamic) as object
+        if hasFile then return { state: "cached", fetchedAt: fetchedAt }
+        return { state: "failed", fetchedAt: invalid }
+    end function
+
     function downloadLimit(usedBytes as dynamic) as dynamic
         room = GuideFetch.runBudgetBytes - usedBytes
         if room <= 0 then return 0
@@ -231,11 +259,12 @@ namespace GuideFetch
     ' The guide screen's data (step 12), the value of the scene's guideData field:
     '   { windowStart, windowEnd, programmeCount,
     '     matches: { channel id: { guide, sourceID, epgID } },
-    '     guides: [{ programmes: { epgID: [programme] }, channels: [{ id, names }] }] }   in priority order
+    '     guides: [{ programmes: { epgID: [programme] } }] }   in priority order
     ' GuidePipeline.programmesFor(data, channelID) reads it as it reads the pipeline's result. Programmes are as
     ' GuidePipeline returns them ({ start, stop, title, subtitle?, summary?, category?, episode? }, seconds since
-    ' 1970, file order), kept once per EPG id, so channels that share a guide channel don't repeat them. channels
-    ' is each guide's channel list, for Match Guide (step 19).
+    ' 1970, file order), kept once per EPG id, so channels that share a guide channel don't repeat them. Step 20:
+    ' the guides' channel lists, which only Match Guide reads, are in matchData instead, so the guide screen's copy
+    ' and every reader's don't carry them.
     function guideData(result as object, windowStart as dynamic, windowEnd as dynamic) as object
         guides = []
         count = 0
@@ -243,9 +272,21 @@ namespace GuideFetch
             for each epgID in entry.programmes
                 count += entry.programmes[epgID].Count()
             end for
-            guides.Push({ programmes: entry.programmes, channels: entry.channels })
+            guides.Push({ programmes: entry.programmes })
         end for
         return { windowStart: windowStart, windowEnd: windowEnd, programmeCount: count, matches: result.matches, guides: guides }
+    end function
+
+    ' Step 20: what Match Guide reads (GuideTask's matchData field; MatchGuideTask reads it per open):
+    '   { matches: { channel id: { guide, sourceID, epgID } }, guides: [[{ id, names }]] }
+    ' the run's matches and each guide's channel list from the channel pass (XMLTVScan.channelList; [] for a guide
+    ' that failed), in priority order. No programmes, so a read copies only names.
+    function matchData(result as object) as object
+        guides = []
+        for each entry in result.guides
+            guides.Push(entry.channels)
+        end for
+        return { matches: result.matches, guides: guides }
     end function
 
     ' The names in cachefs:/guides to delete after a run: anything that isn't a current guide's file, time or fail, so

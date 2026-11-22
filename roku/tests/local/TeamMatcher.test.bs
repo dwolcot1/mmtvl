@@ -1,0 +1,452 @@
+' The parity contract for My Teams (M12 step 17): tests/fixtures/teams.golden.json, written by MMTVL's own code
+' (MMTVLTests/RokuParityTests and RokuTeamsGolden.swift), holds TeamMatcherTests' and MyTeamsTests' cases as data
+' with MMTVL's results; TeamMatcher.bs must give the same for every one. The indexes are built from the shipped
+' catalogs (pkg:/data/pro-teams.json, pkg:/data/college-teams.json) and the golden's own team sets.
+namespace TeamMatcherTests
+
+    sub test_casesReproduceTheGolden(t as object)
+        golden = GuideGoldenTests.readJSON("teams.golden.json")
+        context = TeamMatcherTests.newContext(golden)
+        t.assertTrue(golden.cases.Count() > 250, "cases")
+        failures = 0
+        for i = 0 to golden.cases.Count() - 1
+            item = golden.cases[i]
+            path = "case " + i.ToStr() + " (" + item.test + " " + item.op + ")"
+            if item.op = "normalizedCodePoints"
+                difference = TeamMatcherTests.codePointDifference(TeamMatcherTests.evaluate(item, context), item.expected, path)
+            else
+                difference = GuideGoldenTests.firstDifference(TeamMatcherTests.evaluate(item, context), item.expected, path)
+            end if
+            if difference <> ""
+                failures++
+                if failures <= 25 then t.fail(difference)
+            end if
+        end for
+        t.assertEqual(failures, 0, "cases that differ")
+    end sub
+
+    ' The golden accounts for all 42 + 14 tests, and each one it carries has a case.
+    sub test_theGoldenCoversBothSuites(t as object)
+        golden = GuideGoldenTests.readJSON("teams.golden.json")
+        tested = {}
+        for each item in golden.cases
+            tested[item.test] = true
+        end for
+        matcherTests = 0
+        myTeamsCount = 0
+        for each entry in golden.coverage
+            if Left(entry.test, 17) = "TeamMatcherTests." then matcherTests++
+            if Left(entry.test, 13) = "MyTeamsTests." then myTeamsCount++
+            t.assertEqual(tested.DoesExist(entry.test), entry.carried <> "no", entry.test)
+        end for
+        t.assertEqual(matcherTests, 42, "TeamMatcherTests")
+        t.assertEqual(myTeamsCount, 14, "MyTeamsTests")
+    end sub
+
+    ' The golden's playlists give its channels through M3U.bs too (feed names, ids without tvg-id).
+    sub test_channelSetsParseAsInMMTVL(t as object)
+        golden = GuideGoldenTests.readJSON("teams.golden.json")
+        for each name in golden.channelSets
+            set = golden.channelSets[name]
+            if set.m3u <> invalid
+                expected = []
+                for each channel in set.channels
+                    expected.Push({ id: channel.id, name: TeamMatcherTests.text(channel.name), group: channel.group })
+                end for
+                t.assertEqual(GuideGoldenTests.firstDifference(TeamMatcherTests.parsedChannels(set.m3u), expected, name), "")
+            end if
+        end for
+    end sub
+
+    ' prefix counts UTF-16 units as Swift does (a character above U+FFFF is 2) and cuts at the start of the
+    ' character there, combining marks and all.
+    sub test_prefixCutsAtTheStartOfTheCharacter(t as object)
+        n = TeamMatcher.newNormalizer()
+        t.assertEqual(TeamMatcher.prefix("abcdef", 4, n), "abcd", "ASCII")
+        t.assertEqual(TeamMatcher.prefix("abc", 4, n), "abc", "short")
+        t.assertEqual(TeamMatcher.prefix("abc" + Chr(233) + "f", 4, n), "abc" + Chr(233), "a precomposed letter")
+        ' "abce" + U+0301 U+0301: unit 4 is a mark of the "e", so the cut is before the "e".
+        marks = "abce" + Chr(769) + Chr(769) + "x"
+        t.assertEqual(TeamMatcher.prefix(marks, 4, n), "abc", "combining marks")
+        t.assertEqual(TeamMatcher.prefix(marks, 6, n), "abce" + Chr(769) + Chr(769), "after the marks")
+        ' U+1F600 is 2 units: within 4 units, "ab" and the emoji; within 3, only "ab".
+        emoji = "ab" + TeamMatcherTests.astral(128512) + "c"
+        t.assertEqual(TeamMatcher.prefix(emoji, 4, n), "ab" + TeamMatcherTests.astral(128512), "4 units")
+        t.assertEqual(TeamMatcher.prefix(emoji, 3, n), "ab", "never half a character")
+        t.assertEqual(TeamMatcher.normalized("x" + TeamMatcherTests.astral(128512) + "y", n), " x y ", "an emoji separates")
+    end sub
+
+    ' The off-device timing (brs-node on the dev Mac; not representative of a Roku): read both catalogs, build the
+    ' index, and match 100 channels' programmes on now (step 17's device criterion is under 500 ms on a stick).
+    sub test_timingOffDevice(t as object)
+        timer = CreateObject("roTimespan")
+        teams = TeamCatalog.loadPro()
+        teams.Append(TeamCatalog.loadCollege())
+        readMs = timer.TotalMilliseconds()
+        timer.Mark()
+        plain = TeamMatcher.newIndex(teams, { initials: false, nicknames: false })
+        indexMs = timer.TotalMilliseconds()
+        timer.Mark()
+        both = TeamMatcher.newIndex(teams, { initials: true, nicknames: true })
+        bothMs = timer.TotalMilliseconds()
+        sample = TeamMatcherTests.hundredChannels()
+        picked = ["nba.lal", "ncaaf.michigan-wolverines", "ncaam.duke-blue-devils", "ncaam.houston-cougars"]
+        timer.Mark()
+        matched = TeamMatcher.timedChannelIDs(sample.channels, sample.nowPlaying, picked, plain)
+        matchMs = timer.TotalMilliseconds()
+        timer.Mark()
+        bothIDs = TeamMatcher.timedChannelIDs(sample.channels, sample.nowPlaying, picked, both)
+        bothMatchMs = timer.TotalMilliseconds()
+        print "[TIMING] brs-node, off-device: read " + teams.Count().ToStr() + " teams " + readMs.ToStr() + " ms; index " + indexMs.ToStr() + " ms (both options " + bothMs.ToStr() + " ms); 100 channels matched " + matchMs.ToStr() + " ms (both options " + bothMatchMs.ToStr() + " ms)"
+        t.assertEqual(teams.Count(), 1431, "teams")
+        t.assertEqual(matched.Count(), 75, "matched channels")
+        t.assertEqual(bothIDs.Count(), 75, "matched channels with both options")
+    end sub
+
+    ' 100 network channels, each with a programme on now: a quarter each a pro game, a college game by subtitle, a
+    ' college game named only in the summary (with a nickname-only side), and a movie.
+    function hundredChannels() as object
+        list = []
+        nowPlaying = {}
+        nowPlaying.SetModeCaseSensitive()
+        for i = 0 to 99
+            id = "id:channel" + i.ToStr() + ".us"
+            list.Push({ id: id, name: "Channel " + i.ToStr(), group: "Live" })
+            kind = i mod 4
+            if kind = 0
+                item = { title: "NBA Basketball", subtitle: "Miami Heat at Los Angeles Lakers", category: "Sports" }
+            else if kind = 1
+                item = { title: "College Football", subtitle: "No. 5 Michigan at Ohio State", category: "Sports" }
+            else if kind = 2
+                item = { title: "Live: College Basketball", category: "Sports", summary: "The No. 2 Duke Blue Devils host the Cougars for an NCAA Division I game in Big 12 country. The Blue Devils lead the series." }
+            else
+                item = { title: "The Secret Life of Pets", category: "Movie", summary: "Max's life is turned upside down when his owner adopts Duke, a big, unruly dog." }
+            end if
+            item.start = 1791198200
+            item.stop = 1791208800
+            nowPlaying[id] = item
+        end for
+        return { channels: list, nowPlaying: nowPlaying }
+    end function
+
+    ' --- Running a case ---
+
+    function newContext(golden as object) as object
+        indexes = {}
+        indexes.SetModeCaseSensitive()
+        channelSets = {}
+        channelSets.SetModeCaseSensitive()
+        return { golden: golden, indexes: indexes, channelSets: channelSets, pro: invalid, college: invalid }
+    end function
+
+    function index(context as object, name as dynamic) as object
+        if name = invalid then name = "bundled.off"
+        if context.indexes.DoesExist(name) then return context.indexes[name]
+        spec = context.golden.indexes[name]
+        teams = []
+        for each set in spec.sets
+            if set = "pro"
+                if context.pro = invalid then context.pro = TeamCatalog.loadPro()
+                teams.Append(context.pro)
+            else if set = "college"
+                if context.college = invalid then context.college = TeamCatalog.loadCollege()
+                teams.Append(context.college)
+            else
+                for each entry in context.golden.teamSets[set]
+                    teams.Push(TeamCatalog.teamFromEntry(entry, TeamCatalog.isCollege(entry.league)))
+                end for
+            end if
+        end for
+        built = TeamMatcher.newIndex(teams, { initials: spec.initials, nicknames: spec.nicknames })
+        context.indexes[name] = built
+        return built
+    end function
+
+    function channels(context as object, name as dynamic, only as dynamic) as object
+        if name = invalid then return []
+        all = context.channelSets[name]
+        if all = invalid
+            all = []
+            for each channel in context.golden.channelSets[name].channels
+                all.Push({ id: channel.id, name: TeamMatcherTests.text(channel.name), group: channel.group })
+            end for
+            context.channelSets[name] = all
+        end if
+        if only = invalid then return all
+        result = []
+        for each id in only
+            for each channel in all
+                if channel.id = id
+                    result.Push(channel)
+                    exit for
+                end if
+            end for
+        end for
+        return result
+    end function
+
+    function parsedChannels(playlist as string) as object
+        result = []
+        for each channel in M3U.makeChannels(M3U.parse(playlist).entries)
+            result.Push({ id: channel.id, name: channel.name, group: channel.group })
+        end for
+        return result
+    end function
+
+    ' A golden text: a string, or [[piece, count], …].
+    function text(spec as dynamic) as dynamic
+        if spec = invalid then return invalid
+        if LocalTest.kind(spec) = "string" then return spec
+        parts = []
+        for each part in spec
+            parts.Push(TeamMatcherTests.repeatText(part[0], part[1]))
+        end for
+        return parts.Join("")
+    end function
+
+    function repeatText(piece as string, count as integer) as string
+        result = ""
+        chunk = piece
+        remaining = count
+        while remaining > 0
+            if remaining mod 2 = 1 then result += chunk
+            remaining = remaining \ 2
+            if remaining > 0 then chunk += chunk
+        end while
+        return result
+    end function
+
+    function programme(spec as dynamic) as dynamic
+        if spec = invalid then return invalid
+        return {
+            title: TeamMatcherTests.text(spec.title),
+            subtitle: TeamMatcherTests.text(spec.subtitle),
+            category: TeamMatcherTests.text(spec.category),
+            summary: TeamMatcherTests.text(spec.summary),
+            start: spec.start,
+            stop: spec.stop
+        }
+    end function
+
+    function programmeMap(specs as dynamic) as object
+        result = {}
+        result.SetModeCaseSensitive()
+        if specs = invalid then return result
+        for each id in specs
+            result[id] = TeamMatcherTests.programme(specs[id])
+        end for
+        return result
+    end function
+
+    function programmeLists(specs as dynamic) as object
+        result = {}
+        result.SetModeCaseSensitive()
+        if specs = invalid then return result
+        for each id in specs
+            list = []
+            for each spec in specs[id]
+                list.Push(TeamMatcherTests.programme(spec))
+            end for
+            result[id] = list
+        end for
+        return result
+    end function
+
+    function ids(teams as object) as object
+        result = []
+        for each team in teams
+            result.Push(team.id)
+        end for
+        return result
+    end function
+
+    function sortedKeys(set as dynamic) as dynamic
+        if set = invalid then return invalid
+        result = []
+        for each key in set
+            result.Push(key)
+        end for
+        result.Sort()
+        return result
+    end function
+
+    function gameValue(found as dynamic) as dynamic
+        if found = invalid then return invalid
+        return { away: found.away, home: found.home, feed: found.feed }
+    end function
+
+    ' Counts each check; true from the (limit + 1)th, never without a limit.
+    function countedCancel() as boolean
+        m.calls++
+        if m.limit = invalid then return false
+        return m.calls > m.limit
+    end function
+
+    ' What TeamMatcher.bs gives for a case, in the golden's shape (RokuTeamsGolden.evaluate).
+    function evaluate(item as object, context as object) as dynamic
+        op = item.op
+        matcherIndex = TeamMatcherTests.index(context, item.index)
+        n = matcherIndex.n
+        subject = TeamMatcherTests.programme(item.programme)
+        channelList = TeamMatcherTests.channels(context, item.channelSet, item.channels)
+        channel = invalid
+        for each candidate in channelList
+            if candidate.id = item.channel then channel = candidate
+        end for
+        candidates = invalid
+        if item.among <> invalid
+            candidates = []
+            for each id in item.among
+                team = matcherIndex.byID[id]
+                if team <> invalid then candidates.Push(team)
+            end for
+        end if
+        picked = item.picked
+        if picked = invalid then picked = []
+        if op = "leagueTeamCounts"
+            counts = {}
+            for each league in TeamCatalog.leagues()
+                count = 0
+                for each team in matcherIndex.teams
+                    if team.league = league then count++
+                end for
+                counts[league] = count
+            end for
+            return counts
+        else if op = "teamNamedMany"
+            result = []
+            for each name in item.texts
+                team = TeamMatcher.teamNamed(name, matcherIndex)
+                if team = invalid then result.Push(invalid) else result.Push(team.id)
+            end for
+            return result
+        else if op = "channels"
+            return TeamMatcherTests.parsedChannels(context.golden.channelSets[item.channelSet].m3u)
+        else if op = "feedName"
+            return M3U.feedName(TeamMatcherTests.text(item.text))
+        else if op = "game"
+            return TeamMatcherTests.gameValue(TeamMatcher.game(TeamMatcherTests.text(item.text), n))
+        else if op = "gameEntry"
+            return TeamMatcherTests.gameValue(TeamMatcher.gameEntry(channel, matcherIndex))
+        else if op = "isGameEntry"
+            return TeamMatcher.isGameEntry(channel, matcherIndex)
+        else if op = "gameEntries"
+            result = []
+            for each candidate in channelList
+                if TeamMatcher.isGameEntry(candidate, matcherIndex) then result.Push(candidate.id)
+            end for
+            return result
+        else if op = "teamsInGame"
+            return TeamMatcherTests.ids(TeamMatcher.teamsInGame(channel, matcherIndex))
+        else if op = "gameChannelIDs"
+            return TeamMatcher.gameChannelIDs(channelList, picked, matcherIndex)
+        else if op = "networkChannelIDs"
+            return TeamMatcher.networkChannelIDs(channelList, TeamMatcherTests.programmeMap(item.nowPlaying), picked, matcherIndex)
+        else if op = "channelIDs"
+            return TeamMatcher.channelIDs(channelList, TeamMatcherTests.programmeMap(item.nowPlaying), picked, matcherIndex)
+        else if op = "teamsIn"
+            return TeamMatcherTests.ids(TeamMatcher.teamsIn(subject, candidates, matcherIndex))
+        else if op = "teamsBySide"
+            result = []
+            for each side in TeamMatcher.teamsBySide(subject, candidates, matcherIndex)
+                result.Push(TeamMatcherTests.ids(side))
+            end for
+            return result
+        else if op = "isLiveGame"
+            return TeamMatcher.isLiveGame(subject, n)
+        else if op = "collegeLeague"
+            return TeamMatcher.collegeLeague(subject, n)
+        else if op = "collegeSides"
+            return TeamMatcher.collegeSides(subject, n)
+        else if op = "summarySides"
+            return TeamMatcher.summarySides(TeamMatcherTests.text(item.text), n)
+        else if op = "summarySidesMany"
+            result = []
+            for each summary in item.texts
+                result.Push(TeamMatcher.summarySides(summary, n))
+            end for
+            return result
+        else if op = "conferenceSearchText"
+            return TeamMatcher.conferenceSearchText(subject, n)
+        else if op = "phrases"
+            return TeamMatcher.phrases(item.conference, n)
+        else if op = "bounded"
+            b = TeamMatcher.bounded(subject, n)
+            return { title: b.title, subtitle: b.subtitle, category: b.category }
+        else if op = "upcomingGames"
+            cancel = { calls: 0, limit: item.cancelAfter, isCancelled: TeamMatcherTests.countedCancel }
+            games = TeamMatcher.finishedUpcomingGames(channelList, TeamMatcherTests.programmeLists(item.programmes), picked, item.now, matcherIndex, cancel)
+            list = []
+            if games <> invalid
+                for each game in games
+                    list.Push({ channel: game.channel.id, start: game.programme.start, label: game.label })
+                end for
+            end if
+            return { finished: games <> invalid, checks: cancel.calls, games: list }
+        else if op = "label"
+            return TeamMatcher.label(subject)
+        else if op = "pickTitle"
+            team = matcherIndex.byID[item.team]
+            if team = invalid then return invalid
+            return TeamCatalog.pickTitle(team)
+        else if op = "normalizedMany"
+            result = []
+            for each value in item.texts
+                result.Push(TeamMatcher.normalized(value, n))
+            end for
+            return result
+        else if op = "normalizedCodePoints"
+            hex = TeamMatcherTests.text(item.text)
+            entries = []
+            for cursor = 1 to Len(hex) - 3 step 4
+                code = Mid(hex, cursor, 4)
+                c = Chr(Val(code, 16))
+                result = TeamMatcher.normalized("x" + c + "y", n)
+                if result <> " x" + c + "y " then entries.Push(code + ":" + result)
+            end for
+            return entries.Join(Chr(31))
+        else if op = "collegeNamesKey"
+            names = matcherIndex.collegeNames[item.league]
+            if names = invalid then return invalid
+            teams = names[item.key]
+            if teams = invalid then return invalid
+            return TeamMatcherTests.ids(teams)
+        else if op = "collegeSchoolsKey"
+            return TeamMatcherTests.sortedKeys(matcherIndex.collegeSchools[item.key])
+        else if op = "schoolWords"
+            return TeamMatcherTests.sortedKeys(matcherIndex.collegeSchoolWords[item.team])
+        else if op = "conferences"
+            return matcherIndex.collegeConferences[item.team]
+        else if op = "fallbackTablesEmpty"
+            return matcherIndex.collegeNicknames.Count() = 0 and matcherIndex.collegeSchoolWords.Count() = 0 and matcherIndex.collegeConferences.Count() = 0
+        else if op = "indexFacts"
+            return { teamCount: matcherIndex.teams.Count(), initials: matcherIndex.options.initials, nicknames: matcherIndex.options.nicknames, maxNicknameWords: matcherIndex.maxNicknameWords }
+        else if op = "team"
+            team = matcherIndex.byID[item.team]
+            if team = invalid then return invalid
+            return { abbreviations: team.abbreviations, aliases: team.aliases }
+        end if
+        return "unknown op " + op
+    end function
+
+    ' The first entries that differ between two packed code point results ("<code>:<result>" joined by U+001F).
+    function codePointDifference(actual as string, expected as string, path as string) as string
+        if actual = expected then return ""
+        a = actual.Split(Chr(31))
+        e = expected.Split(Chr(31))
+        for i = 0 to a.Count() - 1
+            if i >= e.Count() then return path + ": extra " + a[i]
+            if a[i] <> e[i] then return path + ": expected " + e[i] + ", got " + a[i]
+        end for
+        return path + ": missing " + e[a.Count()]
+    end function
+
+    ' A code point above U+FFFF as the interpreter writes it (a surrogate pair where strings are UTF-16).
+    function astral(code as integer) as string
+        single = Chr(code)
+        if Len(single) = 1 then return single
+        offset = code - 65536
+        return Chr(55296 + offset \ 1024) + Chr(56320 + offset mod 1024)
+    end function
+
+end namespace

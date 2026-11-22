@@ -145,8 +145,8 @@ function testLocal() {
 
 // The release build (M12 step 3): bsconfig.release.json leaves out components/probes and the probe assets and
 // compiles with bs_const DEBUG=false (bsc removes every #if DEBUG block). The staged manifest's bs_const line is
-// set to DEBUG=false too, then the staging folder is checked (no probes folder, no file or text naming a probe)
-// before it is zipped to out/mmtvl-live-tv-release.zip. Signed packaging is a later step.
+// set to DEBUG=false too, then the staging folder is checked (both team catalogs under data/; no probes folder, no
+// file or text naming a probe) before it is zipped to out/mmtvl-live-tv-release.zip. Signed packaging is a later step.
 async function buildRelease() {
     const staging = join(root, 'out', 'release-staging');
     rmSync(staging, { recursive: true, force: true });
@@ -172,6 +172,11 @@ async function buildRelease() {
         }
     };
     collect(staging, '');
+    // The team catalogs (step 16): pro-teams.json from roku/data, college-teams.json copied from MMTVL at build.
+    const missing = ['data/pro-teams.json', 'data/college-teams.json'].filter((file) => !files.includes(file));
+    if (missing.length > 0) {
+        fail(`build:release: missing from the release build: ${missing.join(', ')}`);
+    }
     // Probe code is the probes folder and assets, and everything that names their components or fields. The one
     // allowed mention is main's deletion of the probe registry section (security L-6), taken out before the check.
     const probeCode = /ProbesScreen|ProbeTask|ProbeKit|ProbeSynthetic|probeLaunch|mmtvl-probe|\[PROBE\]|pkg:\/probes/;

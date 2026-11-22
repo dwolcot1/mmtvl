@@ -95,7 +95,7 @@ namespace GuideRunsTests
         alive = GuideRunsTests.check(runs, true, true, invalid)
         t.assertFalse(alive.deleted)
         t.assertFalse(alive.run)
-        t.assertEqual(alive.runs, { pending: true, force: true, deletePending: true })
+        t.assertEqual(alive.runs, { pending: true, force: true, deletePending: true, rematch: false })
         stopped = GuideRunsTests.check(alive.runs, false, true, invalid)
         t.assertTrue(stopped.deleted)
         t.assertEqual([stopped.run, stopped.reason], [true, "refresh"])

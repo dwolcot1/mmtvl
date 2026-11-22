@@ -197,7 +197,7 @@ namespace GuideFetchTests
         t.assertEqual(data.matches, result.matches)
         count = 0
         for i = 0 to 1
-            t.assertEqual(data.guides[i].channels, result.guides[i].channels, "channels " + i.ToStr())
+            t.assertInvalid(data.guides[i].channels, "no channel lists in the guide data (step 20: matchData) " + i.ToStr())
             for each epgID in result.guides[i].programmes
                 count += result.guides[i].programmes[epgID].Count()
             end for
@@ -207,6 +207,21 @@ namespace GuideFetchTests
         for each channelID in result.matches
             t.assertEqual(GuidePipeline.programmesFor(data, channelID), GuidePipeline.programmesFor(result, channelID), channelID)
         end for
+        t.assertEqual(FormatJson(data).Instr("://"), -1, "no URL")
+    end sub
+
+    ' Step 20: Match Guide's data is the run's matches and each guide's channel list, with no programmes.
+    sub test_matchDataHoldsTheMatchesAndChannelListsOnly(t as object)
+        request = GuideFetchTests.fixtureRequest()
+        request.guides[1].path = ""
+        result = GuidePipeline.process(request)
+        data = GuideFetch.matchData(result)
+        t.assertEqual(data.matches, result.matches)
+        t.assertEqual(data.guides.Count(), 2)
+        t.assertEqual(data.guides[0], result.guides[0].channels)
+        t.assertTrue(data.guides[0].Count() > 0, "guide A's channels")
+        t.assertEqual(data.guides[1], [], "a failed guide: no channels")
+        t.assertEqual(FormatJson(data).Instr("programmes"), -1, "no programmes")
         t.assertEqual(FormatJson(data).Instr("://"), -1, "no URL")
     end sub
 

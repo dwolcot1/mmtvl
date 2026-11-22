@@ -1,14 +1,22 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<!-- A list of one-line rows drawn from Labels (M12 step 12): the guide's group column (frame lB8XX) and the channel
-     menu (frame Z3UnCj). It draws; it takes no keys: the screen that owns it moves focusedIndex and firstVisible
-     with GuideKeys (the column loops, Search above the groups) or ChannelMenu (the menu clamps), so the list
-     behaves exactly as those tested models say. The focused row is the white focus_row 9-patch with focusedRowText;
-     the others primaryText. Rows are rowHeight high, text inset textInset from the row's left. -->
+<!-- A list of one-line rows drawn from Labels (M12 step 12): the guide's group column (frame lB8XX), the channel
+     menu (frame Z3UnCj) and (step 18) Choose Teams' columns (frame P9pORE). It draws; it takes no keys: the screen
+     that owns it moves focusedIndex and firstVisible with GuideKeys (the column loops, Search above the groups),
+     ChannelMenu (the menu clamps) or TeamPicker, so the list behaves exactly as those tested models say. The focused
+     row is the white focus_row 9-patch with focusedRowText; the others primaryText. Rows are rowHeight high, text
+     inset textInset from the row's left. Step 18: an optional value per row (right-aligned, secondaryText), an
+     optional check mark per row (icon_check, in place of the value), and an opened row (selectedIndex: focus_row at
+     settingsSelectedRowFill's 0.4, for a dimmed parent column). -->
 <component name="MenuListView" extends="Group">
     <interface>
         <!-- The rows' titles, in order. -->
         <field id="items" type="array" onChange="render" />
+        <!-- Step 18, optional: a value per row ("" for none) and whether each row shows the check mark. -->
+        <field id="values" type="array" onChange="render" />
+        <field id="checks" type="array" onChange="render" />
         <field id="focusedIndex" type="integer" value="0" onChange="render" />
+        <!-- Step 18: the row drawn as opened (a dimmed parent column's), -1 for none. -->
+        <field id="selectedIndex" type="integer" value="-1" onChange="render" />
         <!-- The first row shown (GuideKeys.visibleStart keeps the focused one in view). -->
         <field id="firstVisible" type="integer" value="0" onChange="render" />
         <!-- Set once, before items: rows shown, row size, text inset and the Theme font spec. -->
@@ -22,6 +30,7 @@
     </interface>
     <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
     <children>
+        <Poster id="selected" visible="false" opacity="0.4" />
         <Poster id="focus" visible="false" />
         <Group id="rows" />
     </children>

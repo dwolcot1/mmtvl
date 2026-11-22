@@ -1,0 +1,70 @@
+' MatchGuideTask (fields in MatchGuideTask.xml). m.waiting holds the newest request not yet served.
+
+' MMTVL's suggest(for:in:limit:) default.
+const suggestionLimit = 30
+
+sub init()
+    m.top.functionName = "runMatchGuide"
+end sub
+
+sub runMatchGuide()
+    port = CreateObject("roMessagePort")
+    m.top.observeField("request", port)
+    m.normalizer = EPGMatcher.newNormalizer()
+    m.waiting = invalid
+    while true
+        if m.waiting = invalid then takeRequest(Wait(0, port))
+        msg = port.GetMessage()
+        while msg <> invalid
+            takeRequest(msg)
+            msg = port.GetMessage()
+        end while
+        request = m.waiting
+        m.waiting = invalid
+        if request <> invalid then serve(request)
+    end while
+end sub
+
+sub takeRequest(msg as dynamic)
+    if type(msg) <> "roSGNodeEvent" then return
+    data = msg.getData()
+    if type(data) = "roAssociativeArray"
+        if type(data.channel) = "roAssociativeArray" then m.waiting = data
+    end if
+end sub
+
+sub serve(request as object)
+    channel = request.channel
+    try
+        #if DEBUG
+            timer = CreateObject("roTimespan")
+        #end if
+        data = invalid
+        holder = m.top.guideHolder
+        if holder <> invalid then data = holder.matchData
+        sources = []
+        if type(data) = "roAssociativeArray"
+            if type(data.guides) = "roArray"
+                for i = 0 to data.guides.Count() - 1
+                    list = data.guides[i]
+                    if type(list) <> "roArray" then list = []
+                    sources.Push({ sourceID: i.ToStr(), channels: list })
+                end for
+            end if
+        end if
+        suggestions = EPGSuggester.rank(channel, sources, suggestionLimit, m.normalizer)
+        options = MatchGuide.options(channel, data, request.overrides, suggestions, m.normalizer.nonASCII)
+        #if DEBUG
+            Log.info("Guide", "Match Guide: " + options.candidates.Count().ToStr() + " candidates from " + sources.Count().ToStr() + " guide(s) in " + timer.TotalMilliseconds().ToStr() + " ms")
+        #end if
+        m.top.answer = { serial: request.serial, channelID: channel.id, ok: true, options: options }
+    catch e
+        ' Never the exception's text: its number only.
+        number = "?"
+        if type(e) = "roAssociativeArray"
+            if e.number <> invalid then number = e.number.ToStr()
+        end if
+        Log.error("Guide", "Match Guide's options failed (error " + number + ")")
+        m.top.answer = { serial: request.serial, channelID: channel.id, ok: false, options: { choice: { kind: "automatic" }, current: invalid, candidates: [] } }
+    end try
+end sub

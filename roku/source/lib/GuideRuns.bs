@@ -3,27 +3,37 @@
 ' is never lost until the 15-minute tick, and the downloaded guides of a removed source are deleted only when no
 ' task can be reading or writing them, before any newer run starts.
 '
-'   runs { pending, force, deletePending }
+'   runs { pending, force, deletePending, rematch }
 '     pending        a run was asked for while a task was busy: check again (GuideSources.isRunDue decides) as soon
 '                    as it answers or is let go
 '     force          Refresh Now: the next run downloads every guide again (the scene forgets their times)
 '     deletePending  Remove Live TV Source: the downloaded guides and the last results go before anything else
+'     rematch        step 20, Match Guide saved the overrides: the next run matches again from the guide files
+'                    already in cachefs:, downloading nothing (GuideTask's cachedOnly)
 '   newState() -> all false.
 '   sourcesChanged(runs) -> pending (a playlist, guide or guide source change; the scene then calls its check).
-'   refreshNow(runs) -> force.  removeSource(runs) -> deletePending.
+'   refreshNow(runs) -> force.  removeSource(runs) -> deletePending.  overridesChanged(runs) -> rematch.
 '   gate(runs, busy) -> { runs, go, deleteFirst }: the start of the scene's check. busy (a task running, or one
 '     given up on and not yet stopped): no go, and pending, so the check runs again when it answers. Else go, and
 '     deleteFirst when a delete waits (the flag clears; pending and force stay, for the run after it).
-'   choose(runs, hasChannels, verdict) -> { runs, run, reason, forgetTimes }: past the gate. No channels: no run,
-'     the flags kept (the playlist's answer checks again). force: a run, reason "refresh", forgetTimes. Else
-'     verdict.due (GuideSources.isRunDue): a run for verdict.reason. Either way pending clears: this check is the
-'     one it asked for.
-'   checkAgain(runs) -> whether the scene checks again after a task answered or was let go.
+'   runFailed(runs, wasCachedOnly) -> after a run that failed or was given up (QA of step 20): a rematch run's
+'     rematch is set again, so the overrides it was for are matched once the failure wait is over.
+'   isWaitingAfterFailure(failedRunAt, now) -> the last run failed less than an hour ago
+'     (GuideSources.retryAfterSeconds): choose's rematchWaiting.
+'   choose(runs, hasChannels, verdict, rematchWaiting) -> { runs, run, reason, forgetTimes, cachedOnly }: past the
+'     gate. rematchWaiting (optional, false): a rematch waits (kept) while the last run's failure wait lasts. No
+'     channels: no run, the flags kept (the playlist's answer checks again). force: a run, reason "refresh",
+'     forgetTimes (it rematches too, so rematch clears). Else rematch, unless the verdict is "first" or "sources" (no
+'     run has read these guides yet, so a normal run must; it rematches too): a run, reason "match", cachedOnly; when
+'     the verdict was due as well ("guides", "channels"), pending stays, so that run follows this one. Else
+'     verdict.due (GuideSources.isRunDue): a run for verdict.reason (rematch clears). Either way pending clears
+'     unless kept as said: this check is the one it asked for.
+'   checkAgain(runs) -> whether the scene checks again after a task answered or was let go (any flag set).
 ' The functions return new objects; the runs passed in aren't changed.
 namespace GuideRuns
 
     function newState() as object
-        return { pending: false, force: false, deletePending: false }
+        return { pending: false, force: false, deletePending: false, rematch: false }
     end function
 
     function sourcesChanged(runs as object) as object
@@ -44,6 +54,12 @@ namespace GuideRuns
         return result
     end function
 
+    function overridesChanged(runs as object) as object
+        result = GuideRuns.copied(runs)
+        result.rematch = true
+        return result
+    end function
+
     function gate(runs as object, busy as boolean) as object
         result = { runs: GuideRuns.copied(runs), go: false, deleteFirst: false }
         if busy
@@ -56,32 +72,59 @@ namespace GuideRuns
         return result
     end function
 
-    function choose(runs as object, hasChannels as boolean, verdict as dynamic) as object
-        result = { runs: GuideRuns.copied(runs), run: false, reason: "", forgetTimes: false }
+    function choose(runs as object, hasChannels as boolean, verdict as dynamic, rematchWaiting = false as boolean) as object
+        result = { runs: GuideRuns.copied(runs), run: false, reason: "", forgetTimes: false, cachedOnly: false }
         if not hasChannels then return result
         result.runs.pending = false
         if result.runs.force
             result.runs.force = false
+            result.runs.rematch = false
             result.run = true
             result.reason = "refresh"
             result.forgetTimes = true
             return result
         end if
+        due = false
+        reason = ""
         if type(verdict) = "roAssociativeArray"
             if verdict.due = true
-                result.run = true
-                result.reason = verdict.reason
+                due = true
+                reason = verdict.reason
             end if
+        end if
+        if result.runs.rematch and not rematchWaiting and not (due and (reason = "first" or reason = "sources"))
+            result.runs.rematch = false
+            result.runs.pending = due
+            result.run = true
+            result.reason = "match"
+            result.cachedOnly = true
+            return result
+        end if
+        if due
+            result.runs.rematch = false
+            result.run = true
+            result.reason = reason
         end if
         return result
     end function
 
+    function runFailed(runs as object, wasCachedOnly as boolean) as object
+        result = GuideRuns.copied(runs)
+        if wasCachedOnly then result.rematch = true
+        return result
+    end function
+
+    function isWaitingAfterFailure(failedRunAt as dynamic, now as dynamic) as boolean
+        if not Refresh.isNumber(failedRunAt) then return false
+        return not Refresh.isDue(failedRunAt, now, GuideSources.retryAfterSeconds)
+    end function
+
     function checkAgain(runs as object) as boolean
-        return runs.pending or runs.force or runs.deletePending
+        return runs.pending or runs.force or runs.deletePending or runs.rematch
     end function
 
     function copied(runs as object) as object
-        return { pending: runs.pending = true, force: runs.force = true, deletePending: runs.deletePending = true }
+        return { pending: runs.pending = true, force: runs.force = true, deletePending: runs.deletePending = true, rematch: runs.rematch = true }
     end function
 
 end namespace

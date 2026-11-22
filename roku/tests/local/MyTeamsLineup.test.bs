@@ -1,0 +1,756 @@
+' My Teams (M12 step 18): the lineup, the guide's rows and keys, the channel menu's team rows, Choose Teams, Settings'
+' pages and the newest-wins ordering, carried from MMTVL's MyTeamsTests, TeamMatcherTests and TeamPickerTests where
+' step 17's golden marked them "not carried, step 18" (or carried only the matcher part), on the same playlists. The
+' parts that are Swift UI or Swift concurrency are carried as the pure functions that do that work here (TeamsWork,
+' MyTeams, TeamPicker, GuideKeys, ChannelMenu). Off-device: npm run test:local.
+namespace MyTeamsLineupTests
+
+    ' MARK: names (MyTeamsTests.theListIsCalledMyTeams)
+
+    sub test_theListIsCalledMyTeams(t as object)
+        t.assertEqual(Lineup.teamsGroup, "My Teams")
+        t.assertEqual(TeamPicker.pickedValue, "In My Teams")
+        t.assertEqual(TeamPicker.title, "Choose Teams")
+        t.assertEqual(Lineup.maxUpcomingTeamGames, 30)
+        t.assertEqual(MyTeams.menuTeamsPerSide, 3)
+        t.assertEqual(Refresh.teamsIntervalSeconds, 300)
+    end sub
+
+    ' MARK: the lineup (MyTeamsTests.myTeamsIsAlwaysAfterFavoritesAndUpcomingRowsStayOutOfFavorites,
+    ' TeamMatcherTests.teamsGroupComesRightAfterFavoritesWithAVisibleMatch)
+
+    sub test_myTeamsIsAlwaysAfterFavoritesAndUpcomingRowsStayOutOfFavorites(t as object)
+        channels = LineupTests.channels()
+        none = Lineup.build(channels, {})
+        t.assertEqual(none.groups, ["My Teams", "All Channels", "Live Channels", "NBA Games"])
+        t.assertEqual(Lineup.channelsIn(none, "My Teams"), [])
+        t.assertEqual(none.upcomingTeamGames, [])
+        upcoming = [MyTeamsLineupTests.makeUpcoming(LineupTests.nfl(), 3, "A at B")]
+        built = Lineup.build(channels, { favorites: [LineupTests.redZone()] }, [LineupTests.nba()], upcoming)
+        t.assertEqual([built.groups[0], built.groups[1], built.groups[2]], ["Favorites", "My Teams", "All Channels"])
+        ' Favorites and zapping (channelsIn) take only the live games.
+        t.assertEqual(LineupTests.ids(Lineup.channelsIn(built, "Favorites")), [LineupTests.nba(), LineupTests.redZone()])
+        t.assertEqual(LineupTests.ids(Lineup.channelsIn(built, "My Teams")), [LineupTests.nba()])
+        t.assertEqual(built.upcomingTeamGames.Count(), 1)
+        t.assertEqual(built.upcomingTeamGames[0].channel.id, LineupTests.nfl())
+        t.assertEqual(built.upcomingTeamGames[0].label, "A at B")
+        ' A hidden channel's upcoming game doesn't show.
+        hidden = Lineup.build(channels, { hiddenChannels: [LineupTests.nfl()] }, [], upcoming)
+        t.assertEqual(hidden.upcomingTeamGames, [])
+        ' No visible channel: no groups at all.
+        t.assertEqual(Lineup.build([], {}).groups, [])
+        ' My Teams is never the default group (GuideModel.defaultGroupIndex).
+        state = GuideKeys.open(built, invalid, "")
+        t.assertEqual(state.groups[state.groupIndex], "Favorites")
+        onlyTeams = GuideKeys.open(none, invalid, "")
+        t.assertEqual(onlyTeams.groups[onlyTeams.groupIndex], "All Channels")
+    end sub
+
+    ' The cap of 30 holds, and it counts only visible games: hidden channels go first, as ChannelLineup.
+    sub test_theCapOfThirtyComesAfterHiddenChannels(t as object)
+        channels = LineupTests.channels()
+        many = []
+        for i = 0 to 39
+            many.Push(MyTeamsLineupTests.makeUpcoming(LineupTests.nfl(), 3 + i, "NFL " + i.ToStr()))
+        end for
+        t.assertEqual(Lineup.build(channels, {}, [], many).upcomingTeamGames.Count(), Lineup.maxUpcomingTeamGames)
+        ' The first 15 are on a hidden channel: 25 visible games remain, all shown, in order.
+        mixed = []
+        for i = 0 to 14
+            mixed.Push(MyTeamsLineupTests.makeUpcoming(LineupTests.redZone(), 1 + i, "Hidden " + i.ToStr()))
+        end for
+        for i = 0 to 24
+            mixed.Push(MyTeamsLineupTests.makeUpcoming(LineupTests.nba(), 20 + i, "NBA " + i.ToStr()))
+        end for
+        built = Lineup.build(channels, { hiddenChannels: [LineupTests.redZone()] }, [], mixed)
+        t.assertEqual(built.upcomingTeamGames.Count(), 25)
+        t.assertEqual(built.upcomingTeamGames[0].label, "NBA 0")
+        ' 35 visible after 15 hidden: the first 30 visible ones, never a hidden one counted.
+        for i = 25 to 34
+            mixed.Push(MyTeamsLineupTests.makeUpcoming(LineupTests.nba(), 20 + i, "NBA " + i.ToStr()))
+        end for
+        capped = Lineup.build(channels, { hiddenChannels: [LineupTests.redZone()] }, [], mixed)
+        t.assertEqual(capped.upcomingTeamGames.Count(), 30)
+        t.assertEqual(capped.upcomingTeamGames[29].label, "NBA 29")
+        ' Unknown channels and malformed entries are left out.
+        odd = [{ channelID: "id:gone", programme: { start: 1 }, label: "x" }, "nope", { channelID: LineupTests.nba() }]
+        t.assertEqual(Lineup.build(channels, {}, [], odd).upcomingTeamGames, [])
+    end sub
+
+    ' MARK: Favorites (TeamMatcherTests.aLiveTeamGameTopsFavorites, favoritesMoveOnlyBelowTheTeamChannels)
+
+    sub test_aLiveTeamGameTopsFavorites(t as object)
+        channels = MyTeamsLineupTests.teamPlaylist()
+        espn = MyTeamsLineupTests.espnID()
+        games = [MyTeamsLineupTests.heatHomeID(), MyTeamsLineupTests.heatAwayID()]
+        before = Lineup.build(channels, { favorites: [espn] })
+        t.assertEqual(LineupTests.ids(Lineup.channelsIn(before, "Favorites")), [espn])
+        built = Lineup.build(channels, { favorites: [espn] }, games)
+        t.assertEqual(LineupTests.ids(Lineup.channelsIn(built, "Favorites")), [games[0], games[1], espn])
+        t.assertEqual(LineupTests.ids(Lineup.channelsIn(built, "My Teams")), games)
+        ' The saved favorites are unchanged.
+        t.assertEqual(LineupTests.ids(built.favorites), [espn])
+        ' Saved as a favorite too: once, at the top; the channel menu offers Remove from Favorites, no Move items.
+        saved = Lineup.build(channels, { favorites: [espn, games[0]] }, games)
+        t.assertEqual(LineupTests.ids(Lineup.channelsIn(saved, "Favorites")), [games[0], games[1], espn])
+        rows = ChannelMenu.items({ channelID: games[0], isFavorite: true, group: "Favorites", movableIDs: LineupTests.ids(saved.movableFavorites) })
+        t.assertEqual(MyTeamsLineupTests.rowIDs(rows), ["watch", "favorite", "matchGuide", "hide"])
+        ' A team channel doesn't move, saved or not: the saved list stays as it was.
+        prefs = { favorites: [espn, games[0]] }
+        t.assertEqual(ChannelMenu.prefsAfter(prefs, { type: "moveFavorite", channelID: games[0], step: -1 }, LineupTests.ids(saved.movableFavorites)).favorites, [espn, games[0]])
+        t.assertEqual(ChannelMenu.prefsAfter(prefs, { type: "moveFavorite", channelID: games[1], step: 1 }, LineupTests.ids(saved.movableFavorites)).favorites, [espn, games[0]])
+        ' The game ends: Favorites is the saved list again.
+        ended = Lineup.build(channels, { favorites: [espn] }, [])
+        t.assertEqual(LineupTests.ids(Lineup.channelsIn(ended, "Favorites")), [espn])
+    end sub
+
+    sub test_favoritesMoveOnlyBelowTheTeamChannels(t as object)
+        channels = MyTeamsLineupTests.teamPlaylist()
+        espn = MyTeamsLineupTests.espnID()
+        home = MyTeamsLineupTests.heatHomeID()
+        away = MyTeamsLineupTests.heatAwayID()
+        replay = MyTeamsLineupTests.heatReplayID()
+        prefs = { favorites: [espn, home, replay] }
+        built = Lineup.build(channels, prefs, [home, away])
+        movable = LineupTests.ids(built.movableFavorites)
+        t.assertEqual(movable, [espn, replay])
+        t.assertEqual(GuideKeys.open(built, "Favorites", espn).rows.Count(), 4)
+        t.assertEqual(LineupTests.ids(Lineup.channelsIn(built, "Favorites")), [home, away, espn, replay])
+        ' Team rows, saved or not: no Move items.
+        for each id in [home, away]
+            rows = ChannelMenu.items({ channelID: id, isFavorite: ChannelMenu.isFavorite(prefs, id), group: "Favorites", movableIDs: movable })
+            t.assertFalse(MyTeamsLineupTests.containsText(MyTeamsLineupTests.rowIDs(rows), "moveUp"), id)
+            t.assertFalse(MyTeamsLineupTests.containsText(MyTeamsLineupTests.rowIDs(rows), "moveDown"), id)
+        end for
+        ' The first saved row below the games moves only down, the last only up.
+        espnRows = MyTeamsLineupTests.rowIDs(ChannelMenu.items({ channelID: espn, isFavorite: true, group: "Favorites", movableIDs: movable }))
+        t.assertEqual(espnRows, ["watch", "favorite", "moveDown", "matchGuide", "hide"])
+        replayRows = MyTeamsLineupTests.rowIDs(ChannelMenu.items({ channelID: replay, isFavorite: true, group: "Favorites", movableIDs: movable }))
+        t.assertEqual(replayRows, ["watch", "favorite", "moveUp", "matchGuide", "hide"])
+        ' Moving ESPN down swaps it with the replay in the saved list (past the saved home feed).
+        moved = ChannelMenu.prefsAfter(prefs, { type: "moveFavorite", channelID: espn, step: 1 }, movable)
+        t.assertEqual(moved.favorites, [replay, home, espn])
+    end sub
+
+    ' MARK: the remembered group (MyTeamsTests.aRememberedTeamsGroupOpensMyTeams)
+
+    sub test_aRememberedTeamsGroupOpensMyTeams(t as object)
+        built = Lineup.build(LineupTests.channels(), { teams: ["nba.lal"] }, [LineupTests.nba()])
+        state = GuideKeys.open(built, "Teams", LineupTests.nba())
+        t.assertEqual(state.groups[state.groupIndex], "My Teams")
+        t.assertEqual(state.rows[state.row], { kind: "channel", channelID: LineupTests.nba() })
+        ' Zapping there steps through the live games (PlayerKeys.zapList reads "Teams" as My Teams).
+        t.assertEqual(LineupTests.ids(PlayerKeys.zapList(built, "Teams", LineupTests.channels()[1])), [LineupTests.nba()])
+        ' A playlist with its own "Teams" group keeps it.
+        withTeams = Lineup.build(LineupTests.grouped([["a", "Teams"], ["b", "Live"]]), {})
+        own = GuideKeys.open(withTeams, "Teams", "")
+        t.assertEqual(own.groups[own.groupIndex], "Teams")
+    end sub
+
+    ' MARK: the guide's rows and keys (MyTeamsTests.selectOnAnUpcomingGameTunesItsChannel)
+
+    sub test_selectOnAnUpcomingGameTunesItsChannel(t as object)
+        channels = LineupTests.channels()
+        upcoming = [MyTeamsLineupTests.makeUpcoming(LineupTests.nba(), 2, "Los Angeles Lakers at Boston Celtics"), MyTeamsLineupTests.makeUpcoming(LineupTests.nfl(), 5, "Golden State Warriors at Los Angeles Lakers")]
+        built = Lineup.build(channels, { favorites: [LineupTests.redZone()] }, [LineupTests.nba()], upcoming)
+        state = GuideKeys.open(built, "My Teams", "")
+        kinds = []
+        for each row in state.rows
+            kinds.Push(row.kind)
+        end for
+        t.assertEqual(kinds, ["chooseTeams", "channel", "upcoming", "upcoming"])
+        t.assertEqual(GuideKeys.rowID(state.rows[2]), "upcoming." + LineupTests.nba() + "." + upcoming[0].programme.start.ToStr())
+        ' * on Choose Teams does nothing; OK opens the picker.
+        state.row = 0
+        t.assertEqual(GuideKeys.handle("options", true, state).action, { type: "none" })
+        t.assertEqual(GuideKeys.handle("OK", true, state).action, { type: "openTeamPicker" })
+        ' The last row is NFL Network's game: * does nothing, OK plays its channel.
+        state.row = 3
+        t.assertEqual(GuideKeys.handle("options", true, state).action, { type: "none" })
+        t.assertEqual(GuideKeys.handle("OK", true, state).action, { type: "play", channelID: LineupTests.nfl() })
+        ' Zapping from NFL Network (not a live game) steps through its own group: Down plays NBA TV.
+        list = PlayerKeys.zapList(built, "My Teams", channels[0])
+        t.assertEqual(PlayerKeys.zapTarget(list, LineupTests.nfl(), 1).id, LineupTests.nba())
+        ' A new match keeps the focused upcoming row by its id.
+        moved = GuideKeys.setLineup(state, Lineup.build(channels, {}, [], upcoming))
+        t.assertEqual(moved.rows[moved.row].channelID, LineupTests.nfl())
+        t.assertEqual(moved.rows[moved.row].kind, "upcoming")
+    end sub
+
+    ' UpcomingTeamGame.dayTime and the guide's texts.
+    sub test_upcomingRowTexts(t as object)
+        t.assertEqual(MyTeams.dayTime({ weekday: 0, hours: 13, minutes: 0 }), "Sun 1:00 PM")
+        t.assertEqual(MyTeams.dayTime({ weekday: 3, hours: 22, minutes: 5 }), "Wed 10:05 PM")
+        game = { label: "Tampa Bay Buccaneers at Chicago Bears" }
+        t.assertEqual(MyTeams.upcomingCellTitle("Sun 1:00 PM", game), "Sun 1:00 PM " + Chr(183) + " Tampa Bay Buccaneers at Chicago Bears")
+        detail = MyTeams.upcomingDetail("FOX", "Sun 1:00 PM " + Chr(8211) + " 4:00 PM", { subtitle: "Tampa Bay Buccaneers at Chicago Bears", category: "Sports" })
+        t.assertEqual(detail, "FOX " + Chr(183) + " Sun 1:00 PM " + Chr(8211) + " 4:00 PM " + Chr(183) + " Tampa Bay Buccaneers at Chicago Bears " + Chr(183) + " Sports")
+        t.assertEqual(MyTeams.upcomingDetail("FOX", "Sun", {}), "FOX " + Chr(183) + " Sun")
+    end sub
+
+    ' MARK: matching in the task (MyTeamsTests.pickingATeamListsItsUpcomingGames, the library part)
+
+    sub test_pickingATeamListsItsUpcomingGames(t as object)
+        channels = MyTeamsLineupTests.leanChannels(LineupTests.channels())
+        now = MyTeamsLineupTests.clockNow()
+        data = MyTeamsLineupTests.guideFixture()
+        index = MyTeamsLineupTests.indexFor({ initials: false, nicknames: false })
+        none = TeamsWork.match(channels, data, [], now, invalid)
+        t.assertEqual(none, { liveIDs: [], games: 0, networks: 0, upcoming: [] }, "no picks: no index needed")
+        result = TeamsWork.match(channels, data, ["nba.lal"], now, index)
+        t.assertEqual(result.liveIDs, [LineupTests.nba()])
+        t.assertEqual(result.networks, 1)
+        t.assertEqual(result.games, 0)
+        labels = []
+        ids = []
+        for each game in result.upcoming
+            labels.Push(game.label)
+            ids.Push(game.channelID)
+        end for
+        t.assertEqual(ids, [LineupTests.nba(), LineupTests.nfl()])
+        t.assertEqual(labels, ["Los Angeles Lakers at Boston Celtics", "Golden State Warriors at Los Angeles Lakers"])
+        ' Only the fields the guide shows travel to the scene.
+        t.assertEqual(result.upcoming[0].programme, { start: now + 7200, stop: now + 10800, title: "NBA Basketball", subtitle: "Los Angeles Lakers at Boston Celtics" })
+        t.assertEqual(TeamsWork.summary(result), "Teams: 1 channels (0 game entries, 1 network), 2 upcoming")
+        ' Into the lineup: Favorites gets the live game, never the upcoming ones; the saved list is unchanged.
+        prefs = { favorites: [LineupTests.redZone()], teams: ["nba.lal"] }
+        built = Lineup.build(LineupTests.channels(), prefs, result.liveIDs, result.upcoming)
+        t.assertEqual(LineupTests.ids(Lineup.channelsIn(built, "Favorites")), [LineupTests.nba(), LineupTests.redZone()])
+        t.assertEqual(built.upcomingTeamGames.Count(), 2)
+        t.assertEqual(prefs.favorites, [LineupTests.redZone()])
+        ' No guide yet: the game entries only, no upcoming games.
+        noGuide = TeamsWork.match(channels, invalid, ["nba.lal"], now, index)
+        t.assertEqual(noGuide.liveIDs, [])
+        t.assertEqual(noGuide.upcoming, [])
+        ' Unpicked: nothing; My Teams stays in the lineup.
+        unpicked = TeamsWork.match(channels, data, [], now, index)
+        t.assertEqual(Lineup.build(LineupTests.channels(), {}, unpicked.liveIDs, unpicked.upcoming).groups[0], "My Teams")
+    end sub
+
+    ' Game entries need no guide (TeamMatcherTests.pickingATeamBuildsTheTeamsGroup's lineup part).
+    sub test_gameEntriesComeFirstWithoutAGuide(t as object)
+        channels = MyTeamsLineupTests.leanChannels(MyTeamsLineupTests.teamPlaylist())
+        index = MyTeamsLineupTests.indexFor({ initials: false, nicknames: false })
+        result = TeamsWork.match(channels, invalid, ["nba.lal"], MyTeamsLineupTests.clockNow(), index)
+        t.assertEqual(result.liveIDs, [MyTeamsLineupTests.heatHomeID(), MyTeamsLineupTests.heatAwayID()])
+        t.assertEqual(result.games, 2)
+        t.assertEqual(result.networks, 0)
+    end sub
+
+    ' MARK: newest wins (TeamMatcherTests.aLateTeamUpdateDoesntUndoANewerPick,
+    ' aCancelledUpdateWithTheSamePicksStillSetsTheGroup; MyTeamsTests.aCancelledMatchingOfUpcomingGamesStopsEarly)
+
+    sub test_theTaskQueueKeepsTheNewestMatch(t as object)
+        queue = TeamsWork.newQueue()
+        t.assertTrue(TeamsWork.take(queue, { kind: "match", serial: 1, picked: ["nba.lal"] }), "a match supersedes")
+        t.assertTrue(TeamsWork.take(queue, { kind: "match", serial: 2, picked: ["nba.lal", "nba.tor"] }))
+        t.assertFalse(TeamsWork.take(queue, { kind: "menu", serial: 1 }), "a menu doesn't")
+        t.assertFalse(TeamsWork.take(queue, { kind: "menu", serial: 2 }))
+        t.assertFalse(TeamsWork.take(queue, { kind: "catalog" }))
+        t.assertFalse(TeamsWork.take(queue, invalid))
+        t.assertFalse(TeamsWork.take(queue, { kind: 3 }))
+        ' A menu first, then the catalog, then only the newest match.
+        t.assertEqual(TeamsWork.nextRequest(queue), { kind: "menu", serial: 2 })
+        t.assertEqual(TeamsWork.nextRequest(queue), { kind: "catalog" })
+        t.assertEqual(TeamsWork.nextRequest(queue).serial, 2)
+        t.assertInvalid(TeamsWork.nextRequest(queue))
+    end sub
+
+    ' The scene uses only the newest answer of each kind: an older match finishing late never sets the group.
+    sub test_onlyTheNewestAnswerIsUsed(t as object)
+        requests = MyTeams.newRequests()
+        first = MyTeams.nextSerial(requests, "match")
+        second = MyTeams.nextSerial(requests, "match")
+        menu = MyTeams.nextSerial(requests, "menu")
+        t.assertFalse(MyTeams.isNewest(requests, { kind: "match", serial: first }), "the older pick")
+        t.assertTrue(MyTeams.isNewest(requests, { kind: "match", serial: second }))
+        t.assertTrue(MyTeams.isNewest(requests, { kind: "menu", serial: menu }), "kinds count apart")
+        t.assertFalse(MyTeams.isNewest(requests, { kind: "menu", serial: second }))
+        t.assertFalse(MyTeams.isNewest(requests, { kind: "catalog", serial: 1 }))
+        t.assertFalse(MyTeams.isNewest(requests, invalid))
+        ' The 5-minute tick with the same picks is a request like any other: its answer is the newest and is used.
+        tick = MyTeams.nextSerial(requests, "match")
+        t.assertTrue(MyTeams.isNewest(requests, { kind: "match", serial: tick }))
+        t.assertFalse(MyTeams.isNewest(requests, { kind: "match", serial: second }))
+    end sub
+
+    ' A match the newer request cancels gives nothing at all (never a part); one that isn't cancelled gives it all.
+    sub test_aSupersededMatchGivesNothing(t as object)
+        channels = MyTeamsLineupTests.leanChannels(LineupTests.channels())
+        index = MyTeamsLineupTests.indexFor({ initials: false, nicknames: false })
+        cancel = { checks: 0, isCancelled: function() as boolean
+            m.checks = m.checks + 1
+            return m.checks > 1
+        end function }
+        t.assertInvalid(TeamsWork.match(channels, MyTeamsLineupTests.guideFixture(), ["nba.lal"], MyTeamsLineupTests.clockNow(), index, cancel))
+        t.assertEqual(cancel.checks, 2)
+        never = { isCancelled: function() as boolean
+            return false
+        end function }
+        t.assertEqual(TeamsWork.match(channels, MyTeamsLineupTests.guideFixture(), ["nba.lal"], MyTeamsLineupTests.clockNow(), index, never).upcoming.Count(), 2)
+    end sub
+
+    sub test_optionsAreBooleans(t as object)
+        t.assertEqual(TeamsWork.options(invalid), { initials: false, nicknames: false })
+        t.assertEqual(TeamsWork.options({ initials: true, nicknames: "yes" }), { initials: true, nicknames: false })
+        t.assertTrue(TeamsWork.sameOptions({ initials: false }, invalid))
+        t.assertFalse(TeamsWork.sameOptions({ initials: true }, { nicknames: true }))
+    end sub
+
+    ' MARK: the channel menu (MyTeamsTests.theChannelMenuOffersEachSidesTeamsPickedFirst, …AtMostThreeTeamsASide,
+    ' …NoNicknameTeamsWithTheOptionOff, changingMatchInitialsRecomputesMyTeamsAndTheMenu;
+    ' TeamMatcherTests.theChannelMenuOffersTheGamesTeams)
+
+    sub test_theChannelMenuOffersEachSidesTeamsPickedFirst(t as object)
+        programme = { title: "College Basketball", summary: "The Cougars meet the Bearcats in Big 12 play." }
+        index = MyTeamsLineupTests.indexFor({ initials: false, nicknames: true })
+        picked = ["ncaam.houston-cougars"]
+        titles = MyTeamsLineupTests.menuTitles(MyTeamsLineupTests.nbaTVChannel(), programme, index, picked)
+        ' BYU comes before Houston in the catalog; the picked Houston leads its side.
+        t.assertEqual(titles, [MyTeamsLineupTests.removeTitle("Houston Cougars (Basketball)"), MyTeamsLineupTests.addTitle("BYU Cougars (Basketball)"), MyTeamsLineupTests.addTitle("Cincinnati Bearcats (Basketball)")])
+        ' The rows go before Hide Channel, after Watch and the favorite row.
+        teams = MyTeams.menuTeams(TeamsWork.menuSides(MyTeamsLineupTests.nbaTVChannel(), programme, index), picked)
+        rows = ChannelMenu.items({ channelID: LineupTests.nba(), isFavorite: false, group: "", movableIDs: [], teamItems: MyTeams.menuItems(teams, picked, LineupTests.nba()) })
+        t.assertEqual(MyTeamsLineupTests.rowIDs(rows), ["watch", "favorite", "team.ncaam.houston-cougars", "team.ncaam.byu-cougars", "team.ncaam.cincinnati-bearcats", "matchGuide", "hide"])
+        t.assertEqual(rows[2].action, { type: "toggleTeam", teamID: "ncaam.houston-cougars", channelID: LineupTests.nba() })
+    end sub
+
+    sub test_theChannelMenuOffersAtMostThreeTeamsASide(t as object)
+        programme = { title: "College Basketball", summary: "The Cougars meet the Bearcats." }
+        index = MyTeamsLineupTests.indexFor({ initials: false, nicknames: true })
+        titles = MyTeamsLineupTests.menuTitles(MyTeamsLineupTests.nbaTVChannel(), programme, index, ["ncaam.washington-state-cougars"])
+        t.assertEqual(titles, [MyTeamsLineupTests.removeTitle("Washington State Cougars (Basketball)"), MyTeamsLineupTests.addTitle("BYU Cougars (Basketball)"), MyTeamsLineupTests.addTitle("Houston Cougars (Basketball)"), MyTeamsLineupTests.addTitle("Binghamton Bearcats (Basketball)"), MyTeamsLineupTests.addTitle("Cincinnati Bearcats (Basketball)")])
+    end sub
+
+    ' The split and the cap alone: picked first (stable), 3 a side, the first two sides only.
+    sub test_menuTeamsPickedFirstThreeASideTwoSides(t as object)
+        sides = [MyTeamsLineupTests.teamsNamed(["a", "b", "c", "d", "e"]), MyTeamsLineupTests.teamsNamed(["f"]), MyTeamsLineupTests.teamsNamed(["g"])]
+        picked = ["d", "b"]
+        ids = []
+        for each team in MyTeams.menuTeams(sides, picked)
+            ids.Push(team.id)
+        end for
+        t.assertEqual(ids, ["b", "d", "a", "f"])
+        t.assertEqual(MyTeams.menuTeams(invalid, picked), [])
+        t.assertEqual(MyTeams.menuTeams([], picked), [])
+    end sub
+
+    sub test_theChannelMenuOffersNoNicknameTeamsWithTheOptionOff(t as object)
+        programme = { title: "College Basketball", summary: "The Cougars meet the Bearcats in Big 12 play." }
+        index = MyTeamsLineupTests.indexFor({ initials: false, nicknames: false })
+        t.assertEqual(MyTeamsLineupTests.menuTitles(MyTeamsLineupTests.nbaTVChannel(), programme, index, ["ncaam.houston-cougars"]), [])
+    end sub
+
+    sub test_changingMatchInitialsChangesTheMenu(t as object)
+        programme = { title: "College Football", subtitle: "ULM Warhawks at Troy Trojans" }
+        picked = ["ncaaf.ul-monroe-warhawks"]
+        off = MyTeamsLineupTests.indexFor({ initials: false, nicknames: false })
+        t.assertEqual(MyTeamsLineupTests.menuTitles(MyTeamsLineupTests.nbaTVChannel(), programme, off, picked), [MyTeamsLineupTests.addTitle("Troy Trojans (Football)")])
+        initials = MyTeamsLineupTests.indexFor({ initials: true, nicknames: false })
+        t.assertEqual(MyTeamsLineupTests.menuTitles(MyTeamsLineupTests.nbaTVChannel(), programme, initials, picked), [MyTeamsLineupTests.removeTitle("UL Monroe Warhawks (Football)"), MyTeamsLineupTests.addTitle("Troy Trojans (Football)")])
+    end sub
+
+    ' A pro game entry offers its two teams, one a side; a college game entry offers none (it doesn't say its sport)
+    ' unless the guide's programme on now names teams.
+    sub test_theChannelMenuOffersTheGamesTeams(t as object)
+        index = MyTeamsLineupTests.indexFor({ initials: false, nicknames: false })
+        game = { id: "id:g", name: "Miami Heat @ Los Angeles Lakers (Home Feed)", group: "Live-Games" }
+        t.assertEqual(MyTeamsLineupTests.menuTitles(game, invalid, index, ["nba.lal"]), [MyTeamsLineupTests.addTitle("Miami Heat"), MyTeamsLineupTests.removeTitle("Los Angeles Lakers")])
+        college = { id: "id:c", name: "Michigan @ Ohio State", group: "Live-Games" }
+        t.assertTrue(TeamMatcher.isGameEntry(college, index), "a college game entry")
+        t.assertEqual(MyTeamsLineupTests.menuTitles(college, invalid, index, []), [])
+        withProgramme = MyTeamsLineupTests.menuTitles(college, { title: "College Football", subtitle: "Michigan at Ohio State" }, index, [])
+        t.assertEqual(withProgramme, [MyTeamsLineupTests.addTitle("Michigan Wolverines (Football)"), MyTeamsLineupTests.addTitle("Ohio State Buckeyes (Football)")])
+    end sub
+
+    ' QA fix 1: the team rows arriving late keep the focus on the row focused now, by id, in view.
+    sub test_teamRowsArrivingKeepTheFocusedRow(t as object)
+        base = ChannelMenu.items({ channelID: LineupTests.nba(), isFavorite: false, group: "", movableIDs: [] })
+        opened = ChannelMenu.make("NBA TV", "", base, 0, 3)
+        moved = ChannelMenu.handle(opened, "down", true).menu
+        moved = ChannelMenu.handle(moved, "down", true).menu
+        moved = ChannelMenu.handle(moved, "down", true).menu
+        t.assertEqual(moved.items[moved.focusedIndex].id, "hide")
+        teams = [{ id: "a", title: "A" }, { id: "b", title: "B" }, { id: "c", title: "C" }]
+        withTeams = ChannelMenu.items({ channelID: LineupTests.nba(), isFavorite: false, group: "", movableIDs: [], teamItems: MyTeams.menuItems(teams, [], LineupTests.nba()) })
+        updated = ChannelMenu.withItems(moved, withTeams)
+        t.assertEqual(updated.items[updated.focusedIndex].id, "hide")
+        t.assertEqual(updated.focusedIndex, 6)
+        t.assertTrue(updated.focusedIndex >= updated.firstVisible and updated.focusedIndex < updated.firstVisible + updated.visibleRows, "in view")
+        t.assertEqual(updated.items.Count(), 7)
+        t.assertEqual(moved.items.Count(), 4, "the old menu is unchanged")
+        ' A row that's gone: the same index, clamped.
+        gone = ChannelMenu.withItems(updated, base)
+        t.assertEqual(gone.focusedIndex, 3)
+        t.assertTrue(gone.firstVisible <= 3)
+    end sub
+
+    ' QA fix 5: a catalog that couldn't be made says so, in Choose Teams and Settings.
+    sub test_aFailedCatalogSaysSo(t as object)
+        t.assertEqual(TeamPicker.catalogNote(false), "Loading teams" + Chr(8230))
+        t.assertEqual(TeamPicker.catalogNote(true), "Teams couldn't be loaded")
+        t.assertTrue(TeamPicker.isFailedCatalog({ failed: true }))
+        t.assertFalse(TeamPicker.isFailedCatalog({}))
+        t.assertFalse(TeamPicker.isFailedCatalog({ failed: "yes" }))
+        t.assertFalse(TeamPicker.isFailedCatalog(invalid))
+        input = SettingsPageTests.fixture({})
+        model = SettingsStatus.make(input)
+        model.teamCatalog = { failed: true }
+        t.assertEqual(SettingsPages.sections("teams:nba", model)[0].rows[0].title, "Teams couldn't be loaded")
+        model.teamCatalog = {}
+        t.assertEqual(SettingsPages.sections("teams:ncaaf:Big Ten", model)[0].rows[0].title, "Loading teams" + Chr(8230))
+    end sub
+
+    ' Choosing a team row adds it in the order added, choosing it again removes it (IPTVLibrary.setTeamPicked).
+    sub test_toggleTeamKeepsTheOrderAdded(t as object)
+        prefs = { favorites: ["id:a"], hiddenChannels: [], hiddenGroups: [], teams: ["nba.lal"] }
+        added = ChannelMenu.prefsAfter(prefs, { type: "toggleTeam", teamID: "ncaaf.michigan-wolverines", channelID: "id:a" }, [])
+        t.assertEqual(added.teams, ["nba.lal", "ncaaf.michigan-wolverines"])
+        t.assertEqual(added.favorites, ["id:a"])
+        removed = ChannelMenu.prefsAfter(added, { type: "toggleTeam", teamID: "nba.lal" }, [])
+        t.assertEqual(removed.teams, ["ncaaf.michigan-wolverines"])
+        t.assertEqual(prefs.teams, ["nba.lal"], "the caller's prefs never change")
+        t.assertEqual(ChannelMenu.prefsAfter(prefs, { type: "toggleTeam", teamID: "" }, []).teams, ["nba.lal"])
+        t.assertEqual(ChannelMenu.prefsAfter(prefs, { type: invalid }, []).teams, ["nba.lal"])
+    end sub
+
+    ' MARK: Choose Teams (TeamPickerTests)
+
+    sub test_levelOneListsTheEightLeaguesWithOnCounts(t as object)
+        catalog = MyTeamsLineupTests.pickerCatalog()
+        picked = ["nba.lal", "nba.bos", "ncaaf.michigan-wolverines"]
+        rows = TeamPicker.items(TeamPicker.open().path[0], catalog, picked)
+        titles = []
+        values = {}
+        for each item in rows
+            titles.Push(item.title)
+            values[item.id] = item.value
+        end for
+        t.assertEqual(titles, ["NFL", "NBA", "NHL", "MLB", "College Football", "College Basketball", "Women's College Basketball", "College Baseball"])
+        t.assertEqual(values["league.nba"], "2 On")
+        t.assertEqual(values["league.ncaaf"], "1 On")
+        t.assertEqual(values["league.nfl"], "")
+        t.assertEqual(values["league.ncaaw"], "")
+        ' Before the catalog arrives the counts come from the ids.
+        early = TeamPicker.items(TeamPicker.open().path[0], invalid, picked)
+        t.assertEqual(early[1].value, "2 On")
+        t.assertEqual(catalog.count, 1431)
+    end sub
+
+    sub test_aCollegeLeagueListsConferencesThenTeams(t as object)
+        catalog = MyTeamsLineupTests.pickerCatalog()
+        picked = ["ncaaf.michigan-wolverines"]
+        state = TeamPicker.open()
+        state = MyTeamsLineupTests.pressKeys(state, ["down", "down", "down", "down", "OK"], catalog, picked)
+        t.assertEqual(TeamPicker.pathText(state), "College Football")
+        conferences = TeamPicker.items(state.path[1], catalog, picked)
+        names = []
+        for each item in conferences
+            names.Push(item.title)
+        end for
+        ' FBS before FCS, each alphabetical.
+        firstFCS = -1
+        for i = 0 to names.Count() - 1
+            if firstFCS < 0 and TeamPicker.isFCS(names[i]) then firstFCS = i
+        end for
+        t.assertTrue(firstFCS > 0, "FBS first")
+        for i = firstFCS to names.Count() - 1
+            t.assertTrue(TeamPicker.isFCS(names[i]), names[i])
+        end for
+        t.assertTrue(MyTeamsLineupTests.containsText(names, "Big Ten"))
+        bigTen = -1
+        for i = 0 to conferences.Count() - 1
+            if conferences[i].title = "Big Ten" then bigTen = i
+        end for
+        t.assertEqual(conferences[bigTen].value, "1 On")
+        for each item in conferences
+            if item.title <> "Big Ten" then t.assertEqual(item.value, "", item.title)
+        end for
+        ' Into the Big Ten: its teams by name, Michigan picked.
+        state.path[1].focus = bigTen
+        state = MyTeamsLineupTests.pressKeys(state, ["OK"], catalog, picked)
+        t.assertEqual(TeamPicker.pathText(state), "College Football " + Chr(8250) + " Big Ten")
+        t.assertEqual(TeamPicker.hint(state), "OK: add or remove " + Chr(183) + " Back: conferences")
+        teams = TeamPicker.items(state.path[2], catalog, picked)
+        michigan = invalid
+        for each item in teams
+            if item.teamID = "ncaaf.michigan-wolverines" then michigan = item
+        end for
+        t.assertEqual(michigan.title, "Michigan Wolverines")
+        t.assertEqual(michigan.value, "In My Teams")
+        t.assertTrue(michigan.checked)
+        for each item in teams
+            if item.teamID <> "ncaaf.michigan-wolverines" then t.assertFalse(item.checked, item.title)
+        end for
+        ' OK on a team toggles it; the level and focus stay.
+        state.path[2].focus = 3
+        result = TeamPicker.handle(state, "OK", true, catalog, picked, 10)
+        t.assertEqual(result.outcome, "toggle")
+        t.assertEqual(result.teamID, teams[3].teamID)
+        t.assertEqual(result.state.path.Count(), 3)
+        t.assertEqual(result.state.path[2].focus, 3)
+    end sub
+
+    sub test_popReturnsToTheParentAndClosesFromLevelOne(t as object)
+        catalog = MyTeamsLineupTests.pickerCatalog()
+        state = MyTeamsLineupTests.pressKeys(TeamPicker.open(), ["down", "down", "down", "down", "down", "OK", "down", "OK"], catalog, [])
+        t.assertEqual(state.path.Count(), 3)
+        t.assertEqual(state.path[2].league, "ncaam")
+        conference = state.path[2].conference
+        ' Back: the conferences, on the one just left; then the leagues, on College Basketball; then close.
+        state = MyTeamsLineupTests.pressKeys(state, ["back"], catalog, [])
+        t.assertEqual(state.path.Count(), 2)
+        t.assertEqual(TeamPicker.items(state.path[1], catalog, [])[state.path[1].focus].title, conference)
+        state = MyTeamsLineupTests.pressKeys(state, ["options"], catalog, [])
+        t.assertEqual(state.path.Count(), 1)
+        t.assertEqual(state.path[0].focus, 5)
+        t.assertEqual(TeamPicker.hint(state), "OK: open " + Chr(183) + " Back: close")
+        t.assertEqual(TeamPicker.handle(state, "back", true, catalog, [], 10).outcome, "close")
+        ' Left and Right do nothing (LiveMenu), and releases do nothing.
+        t.assertEqual(TeamPicker.handle(state, "left", true, catalog, [], 10).state, state)
+        t.assertEqual(TeamPicker.handle(state, "back", false, catalog, [], 10).outcome, "none")
+    end sub
+
+    sub test_aProLeagueGoesStraightToTeams(t as object)
+        catalog = MyTeamsLineupTests.pickerCatalog()
+        state = MyTeamsLineupTests.pressKeys(TeamPicker.open(), ["down", "OK"], catalog, ["nba.lal"])
+        t.assertEqual(TeamPicker.pathText(state), "NBA")
+        t.assertEqual(TeamPicker.hint(state), "OK: add or remove " + Chr(183) + " Back: leagues")
+        teams = TeamPicker.items(state.path[1], catalog, ["nba.lal"])
+        t.assertEqual(teams.Count(), 30)
+        expected = []
+        for each team in TeamCatalog.loadPro()
+            if team.league = "nba" then expected.Push(team.name)
+        end for
+        names = []
+        for each item in teams
+            names.Push(item.title)
+            t.assertTrue(item.teamID <> "", item.title)
+        end for
+        t.assertEqual(names, expected, "catalog order")
+        ' Paging and clamping (LiveMenu): a page down from the top, then past the end.
+        state = MyTeamsLineupTests.pressKeys(state, ["fastforward"], catalog, [])
+        t.assertEqual(state.path[1].focus, 10)
+        state = MyTeamsLineupTests.pressKeys(state, ["fastforward", "fastforward", "fastforward", "down"], catalog, [])
+        t.assertEqual(state.path[1].focus, 29)
+        t.assertEqual(state.path[1].first, 20)
+        state = MyTeamsLineupTests.pressKeys(state, ["rewind", "rewind", "rewind", "rewind", "up"], catalog, [])
+        t.assertEqual(state.path[1].focus, 0)
+    end sub
+
+    ' Before the catalog: the leagues work; a league opens empty (the view says "Loading teams…").
+    sub test_withoutTheCatalogALeagueIsEmpty(t as object)
+        state = MyTeamsLineupTests.pressKeys(TeamPicker.open(), ["down", "OK"], invalid, [])
+        t.assertEqual(state.path.Count(), 2)
+        t.assertEqual(TeamPicker.items(state.path[1], invalid, []), [])
+        t.assertEqual(TeamPicker.handle(state, "OK", true, invalid, [], 10).outcome, "none")
+    end sub
+
+    ' localizedStandardCompare for catalog names: case and accents aside, digit runs by value.
+    sub test_standardOrder(t as object)
+        t.assertTrue(TeamPicker.standardLess("Big 12", "Big Sky (FCS)"))
+        t.assertTrue(TeamPicker.standardLess("Atlantic 10", "Atlantic Sun"))
+        t.assertTrue(TeamPicker.standardLess("Pac-2", "Pac-12"))
+        t.assertTrue(TeamPicker.standardLess("San José State", "San Jose Statf"))
+        t.assertTrue(TeamPicker.standardLess("byu", "Cal"))
+        t.assertFalse(TeamPicker.standardLess("Cal", "Cal"))
+        t.assertEqual(TeamPicker.sortedBy(["FCS Independents", "SEC", "Big Sky (FCS)", "ACC"], "conference"), ["ACC", "SEC", "Big Sky (FCS)", "FCS Independents"])
+    end sub
+
+    ' MARK: Settings → Live TV → My Teams (MMTVL's iptvTeamsSections)
+
+    sub test_settingsMyTeamsPages(t as object)
+        input = SettingsPageTests.fixture({})
+        input.store.prefs.teams = ["nba.lal", "nba.bos", "ncaaf.michigan-wolverines"]
+        model = SettingsStatus.make(input)
+        channels = invalid
+        for each section in SettingsPages.liveTVSections(model, invalid)
+            if section.id = "channels" then channels = section
+        end for
+        row = SettingsPages.rowWithID([channels], "teams")
+        t.assertEqual(row.title, "My Teams")
+        t.assertEqual(row.value, "3 Teams")
+        t.assertEqual(row.action, { type: "push", page: "teams" })
+        t.assertEqual(channels.footer, "To favorite, hide or match one channel: in the guide, press * on it.")
+        t.assertEqual(SettingsPages.pageTitle("teams", model), "My Teams")
+        list = SettingsPages.sections("teams", model)
+        t.assertEqual([list[0].title, list[1].title, list[2].title], ["Pro", "College", "Matching"])
+        t.assertEqual(SettingsPages.rowWithID(list, "league.nba").value, "2 On")
+        t.assertEqual(SettingsPages.rowWithID(list, "league.nba").action, { type: "push", page: "teams:nba" })
+        t.assertEqual(list[1].footer, "The guide's My Teams group shows your teams' live games, the channels showing them now, and their games in the next 3 days.")
+        t.assertEqual(SettingsPages.rowWithID(list, "teams.matchInitials").value, "Off")
+        t.assertEqual(SettingsPages.rowWithID(list, "teams.matchInitials").action, { type: "toggle", setting: "teamMatchInitials" })
+        t.assertEqual(SettingsPages.rowWithID(list, "teams.matchNicknames").title, "Match Nicknames Alone")
+        t.assertEqual(list[2].footer, "Spelled-out names, such as Louisiana-Monroe or Brigham Young, always count.")
+        ' Without the catalog a league page says it's loading; with it, a pro league lists its teams.
+        t.assertEqual(SettingsPages.sections("teams:nba", model)[0].rows[0].title, "Loading teams" + Chr(8230))
+        model.teamCatalog = MyTeamsLineupTests.pickerCatalog()
+        nba = SettingsPages.sections("teams:nba", model)
+        t.assertEqual(SettingsPages.pageTitle("teams:nba", model), "NBA")
+        t.assertEqual(SettingsPages.rowWithID(nba, "team.nba.lal").value, "On")
+        t.assertEqual(SettingsPages.rowWithID(nba, "team.nba.lal").action, { type: "toggleTeam", teamID: "nba.lal" })
+        t.assertEqual(nba[0].footer, "Select a team to add or remove it.")
+        college = SettingsPages.sections("teams:ncaaf", model)
+        bigTen = SettingsPages.rowWithID(college, "conference.ncaaf.Big Ten")
+        t.assertEqual(bigTen.value, "1 On")
+        t.assertEqual(bigTen.action, { type: "push", page: "teams:ncaaf:Big Ten" })
+        t.assertEqual(SettingsPages.pageTitle("teams:ncaaf:Big Ten", model), "Big Ten")
+        t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("teams:ncaaf:Big Ten", model), "team.ncaaf.michigan-wolverines").value, "On")
+        t.assertEqual(SettingsPages.sections("teams:nope", model), [])
+        ' The switches flip only these two settings.
+        flipped = SettingsEdits.settingToggled({ teamMatchInitials: false, teamMatchNicknames: false }, "teamMatchNicknames")
+        t.assertEqual(flipped, { teamMatchInitials: false, teamMatchNicknames: true })
+    end sub
+
+    ' --- helpers ---
+
+    function makeUpcoming(channelID as string, hours as integer, label as string) as object
+        start = MyTeamsLineupTests.clockNow() + hours * 3600
+        return { channelID: channelID, programme: { start: start, stop: start + 10800, title: "NFL Football", subtitle: label }, label: label }
+    end function
+
+    ' MyTeamsTests' clock.
+    function clockNow() as integer
+        return 1791200000
+    end function
+
+    ' MyTeamsTests' guide on LineupTests' playlist: NBA TV (tvg-id nbatv.us) has the Lakers on now, then at +2 h, then
+    ' past 72 h; NFL Network a Lakers replay at +1 h, a Knicks game at +1.5 h and a Lakers game at +5 h.
+    function guideFixture() as object
+        now = MyTeamsLineupTests.clockNow()
+        nba = [
+            MyTeamsLineupTests.makeProgramme(now - 1800, "NBA Basketball", "Miami Heat at Los Angeles Lakers"),
+            MyTeamsLineupTests.makeProgramme(now + 7200, "NBA Basketball", "Los Angeles Lakers at Boston Celtics"),
+            MyTeamsLineupTests.makeProgramme(now + 288000, "NBA Basketball", "Los Angeles Lakers at Denver Nuggets")
+        ]
+        nfl = [
+            MyTeamsLineupTests.makeProgramme(now + 3600, "NBA Replay", "Los Angeles Lakers at Utah Jazz"),
+            MyTeamsLineupTests.makeProgramme(now + 5400, "NBA Basketball", "Boston Celtics at New York Knicks"),
+            MyTeamsLineupTests.makeProgramme(now + 18000, "NBA Basketball", "Golden State Warriors at Los Angeles Lakers")
+        ]
+        matches = {}
+        matches.SetModeCaseSensitive()
+        matches[LineupTests.nba()] = { guide: 0, sourceID: "s", epgID: "nbatv.us" }
+        matches[LineupTests.nfl()] = { guide: 0, sourceID: "s", epgID: "NFL.Network.HD.us2" }
+        programmes = {}
+        programmes.SetModeCaseSensitive()
+        programmes["nbatv.us"] = nba
+        programmes["NFL.Network.HD.us2"] = nfl
+        return { windowStart: now - 7200, windowEnd: now + 129600, programmeCount: 6, matches: matches, guides: [{ programmes: programmes, channels: [] }] }
+    end function
+
+    function makeProgramme(start as integer, programmeTitle as string, subtitle as string) as object
+        return { start: start, stop: start + 3600, title: programmeTitle, subtitle: subtitle }
+    end function
+
+    ' TeamMatcherTests.playlist.
+    function teamPlaylist() as object
+        lines = ["#EXTM3U"]
+        entries = [["ESPN.us", "Live-Channels", "ESPN"], ["Miami Heat @ Los Angeles Lakers-A", "Live-Games", "Miami Heat @ Los Angeles Lakers-A"], ["Miami Heat @ Los Angeles Lakers-H", "Live-Games", "Miami Heat @ Los Angeles Lakers-H"], ["Toronto Raptors @ Los Angeles Clippers-H", "Live-Games", "Toronto Raptors @ Los Angeles Clippers-H"], ["Miami Heat @ Los Angeles Lakers", "NBA-Replays", "Miami Heat @ Los Angeles Lakers"], ["Kansas City Chiefs @ Denver Broncos", "NFL-Replays", "Kansas City Chiefs @ Denver Broncos"]]
+        for i = 0 to entries.Count() - 1
+            entry = entries[i]
+            lines.Push("#EXTINF:0 tvg-id=" + Chr(34) + entry[0] + Chr(34) + " group-title=" + Chr(34) + entry[1] + Chr(34) + "," + entry[2])
+            lines.Push("https://cdn.example/" + (i + 1).ToStr() + ".m3u8")
+        end for
+        return M3U.makeChannels(M3U.parse(lines.Join(Chr(10))).entries)
+    end function
+
+    function espnID() as string
+        return "id:espn.us"
+    end function
+
+    function heatAwayID() as string
+        return "id:miami heat @ los angeles lakers-a"
+    end function
+
+    function heatHomeID() as string
+        return "id:miami heat @ los angeles lakers-h"
+    end function
+
+    function heatReplayID() as string
+        return "id:miami heat @ los angeles lakers"
+    end function
+
+    function nbaTVChannel() as object
+        return { id: LineupTests.nba(), name: "NBA TV", group: "Live Channels" }
+    end function
+
+    ' TeamsTask's channel fields.
+    function leanChannels(channels as object) as object
+        result = []
+        for each channel in channels
+            result.Push({ id: channel.id, name: channel.name, group: channel.group })
+        end for
+        return result
+    end function
+
+    ' The bundled catalogs and an index per options, made once per run (the index takes most of a second off-device).
+    function catalogTeams() as object
+        if m.myTeamsCatalogTeams = invalid
+            all = TeamCatalog.loadPro()
+            all.Append(TeamCatalog.loadCollege())
+            m.myTeamsCatalogTeams = all
+        end if
+        return m.myTeamsCatalogTeams
+    end function
+
+    function indexFor(options as object) as object
+        if m.myTeamsIndexes = invalid then m.myTeamsIndexes = {}
+        key = "i" + options.initials.ToStr() + "n" + options.nicknames.ToStr()
+        if not m.myTeamsIndexes.DoesExist(key) then m.myTeamsIndexes[key] = TeamMatcher.newIndex(MyTeamsLineupTests.catalogTeams(), options)
+        return m.myTeamsIndexes[key]
+    end function
+
+    function pickerCatalog() as object
+        if m.myTeamsSlim = invalid then m.myTeamsSlim = TeamPicker.slimCatalog(MyTeamsLineupTests.catalogTeams())
+        return m.myTeamsSlim
+    end function
+
+    function menuTitles(channel as object, programme as dynamic, index as object, picked as object) as object
+        titles = []
+        teams = MyTeams.menuTeams(TeamsWork.menuSides(channel, programme, index), picked)
+        for each item in MyTeams.menuItems(teams, picked, channel.id)
+            titles.Push(item.title)
+        end for
+        return titles
+    end function
+
+    function addTitle(pickTitle as string) as string
+        return "Add " + pickTitle + " to My Teams"
+    end function
+
+    function removeTitle(pickTitle as string) as string
+        return "Remove " + pickTitle + " from My Teams"
+    end function
+
+    function teamsNamed(ids as object) as object
+        result = []
+        for each id in ids
+            result.Push({ id: id, title: UCase(id) })
+        end for
+        return result
+    end function
+
+    function pressKeys(state as object, keys as object, catalog as dynamic, picked as object) as object
+        for each key in keys
+            state = TeamPicker.handle(state, key, true, catalog, picked, 10).state
+        end for
+        return state
+    end function
+
+    function rowIDs(rows as object) as object
+        ids = []
+        for each row in rows
+            ids.Push(row.id)
+        end for
+        return ids
+    end function
+
+    function containsText(list as object, value as string) as boolean
+        for each item in list
+            if item = value then return true
+        end for
+        return false
+    end function
+
+end namespace

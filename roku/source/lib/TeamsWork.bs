@@ -1,0 +1,187 @@
+' My Teams in TeamsTask (M12 step 18): MMTVL's IPTVLibrary.updateTeams (IPTV/IPTVLibrary.swift:705-780) and the
+' channel menu's teamSides (IPTV/LiveTVModel.swift:1036-1058), as pure functions the task calls; and the task's
+' request queue (newest wins). Uses TeamMatcher, TeamCatalog and GuideReader. No nodes: the task reads its fields
+' and the guide holder, and passes plain data in.
+'
+'   Requests (the scene's, through TeamsTask.request), each { kind, serial, … }:
+'     match   { picked, options }: My Teams' live channels and upcoming games
+'     menu    { channel: { id, name, group }, programme (the one on now, or invalid), options }: the menu's sides
+'     catalog {}: publish the slim catalog (TeamPicker.slimCatalog)
+'     search  { text } (step 19): Search's teams (LiveSearch.teamsMatching); text "" only makes the search entries
+'   newQueue() -> { match, menu, search, catalog }: at most one waiting request of each kind.
+'   take(queue, request) -> true when request is a match: a newer match supersedes the one waiting and the one
+'     running (a pick, a Matching switch, a playlist or guide load, the 5-minute tick: the newest decides). A newer
+'     menu or search request replaces a waiting one. Anything else is ignored (false).
+'   nextRequest(queue) -> the request to do now, taken out of the queue: a menu first (someone is looking at it), then a
+'     search (someone is typing), then the catalog, then the match; invalid when none waits.
+'   options(value) -> { initials, nicknames }, booleans (false when missing); sameOptions(a, b).
+'   match(channels, data, picked, now, index, cancel) -> MMTVL's updateTeams for one set of picks and options:
+'     channels  TeamsTask's channels ([{ id, name, group }], playlist order)
+'     data      the guide data (GuideFetch.guideData's shape) or invalid (no guide yet: no networks, no upcoming)
+'     cancel    invalid, or an object with isCancelled() (asked before each upcoming programme)
+'     -> invalid when cancel said so (the partial result is never used); else
+'        { liveIDs, games, networks, upcoming: [{ channelID, programme, label }] }: liveIDs are the game entries
+'        then the network channels whose programme on now is a picked team's live game (TeamMatcher.channelIDs,
+'        timed in DEBUG builds); games and networks their counts; upcoming the games in the next 72 h on channels
+'        with a guide match that aren't game entries, soonest first, every one (the lineup caps them at 30 after
+'        removing hidden channels). No picks: all empty, and the index isn't needed (index may be invalid).
+'   slimProgramme(programme) -> the fields the guide shows of an upcoming game: start, stop, title, subtitle,
+'     category, summary.
+'   menuSides(channel, programme, index) -> MMTVL's teamSides before the picked-first split: a game entry's teams one
+'     a side (pro only: a college entry doesn't say its sport), else the programme's teamsBySide; [] for neither.
+'     Each team { id, title } (TeamCatalog.pickTitle), each side in catalog order.
+'   summary(result) -> "Teams: 3 channels (2 game entries, 1 network), 4 upcoming" (counts only, M7l L14).
+namespace TeamsWork
+
+    function newQueue() as object
+        return { match: invalid, menu: invalid, search: invalid, catalog: false }
+    end function
+
+    function take(queue as object, request as dynamic) as boolean
+        if type(request) <> "roAssociativeArray" then return false
+        kind = request.kind
+        if not TeamsWork.isText(kind) then return false
+        if kind = "match"
+            queue.match = request
+            return true
+        else if kind = "menu"
+            queue.menu = request
+        else if kind = "search"
+            queue.search = request
+        else if kind = "catalog"
+            queue.catalog = true
+        end if
+        return false
+    end function
+
+    function nextRequest(queue as object) as dynamic
+        if queue.menu <> invalid
+            request = queue.menu
+            queue.menu = invalid
+            return request
+        end if
+        if queue.search <> invalid
+            request = queue.search
+            queue.search = invalid
+            return request
+        end if
+        if queue.catalog
+            queue.catalog = false
+            return { kind: "catalog" }
+        end if
+        if queue.match <> invalid
+            request = queue.match
+            queue.match = invalid
+            return request
+        end if
+        return invalid
+    end function
+
+    function options(value as dynamic) as object
+        result = { initials: false, nicknames: false }
+        if type(value) <> "roAssociativeArray" then return result
+        result.initials = TeamsWork.isTrue(value.initials)
+        result.nicknames = TeamsWork.isTrue(value.nicknames)
+        return result
+    end function
+
+    function sameOptions(a as dynamic, b as dynamic) as boolean
+        x = TeamsWork.options(a)
+        y = TeamsWork.options(b)
+        return x.initials = y.initials and x.nicknames = y.nicknames
+    end function
+
+    function match(channels as object, data as dynamic, picked as dynamic, now as dynamic, index as dynamic, cancel = invalid as dynamic) as dynamic
+        result = { liveIDs: [], games: 0, networks: 0, upcoming: [] }
+        set = TeamMatcher.pickedSet(picked)
+        if set.Count() = 0 or index = invalid then return result
+        ' The channels with a guide match that aren't game entries (MMTVL's networks), their programmes and the one
+        ' on now.
+        networks = []
+        programmes = TeamMatcher.newSet()
+        nowPlaying = TeamMatcher.newSet()
+        if data <> invalid
+            for each channel in channels
+                if not TeamMatcher.isGameEntry(channel, index)
+                    list = GuideReader.programmesFor(data, channel.id)
+                    if list <> invalid
+                        networks.Push(channel)
+                        programmes[channel.id] = list
+                        for each programme in list
+                            if GuideReader.isProgramme(programme)
+                                if programme.start <= now and now < programme.stop
+                                    nowPlaying[channel.id] = programme
+                                    exit for
+                                end if
+                            end if
+                        end for
+                    end if
+                end if
+            end for
+        end if
+        games = TeamMatcher.finishedUpcomingGames(networks, programmes, set, now, index, cancel)
+        if games = invalid then return invalid
+        ids = TeamMatcher.timedChannelIDs(channels, nowPlaying, set, index)
+        gameCount = 0
+        for each id in ids
+            if not nowPlaying.DoesExist(id) then gameCount++
+        end for
+        result.liveIDs = ids
+        result.games = gameCount
+        result.networks = ids.Count() - gameCount
+        for each game in games
+            result.upcoming.Push({ channelID: game.channel.id, programme: TeamsWork.slimProgramme(game.programme), label: game.label })
+        end for
+        return result
+    end function
+
+    function slimProgramme(programme as object) as object
+        slim = {}
+        for each field in ["start", "stop", "title", "subtitle", "category", "summary"]
+            if programme[field] <> invalid then slim[field] = programme[field]
+        end for
+        return slim
+    end function
+
+    function menuSides(channel as dynamic, programme as dynamic, index as dynamic) as object
+        sides = []
+        if index = invalid or type(channel) <> "roAssociativeArray" then return sides
+        inGame = TeamMatcher.teamsInGame(channel, index)
+        if inGame.Count() > 0
+            for each team in inGame
+                sides.Push([TeamsWork.menuTeam(team)])
+            end for
+            return sides
+        end if
+        if type(programme) <> "roAssociativeArray" then return sides
+        for each side in TeamMatcher.teamsBySide(programme, invalid, index)
+            teams = []
+            for each team in side
+                teams.Push(TeamsWork.menuTeam(team))
+            end for
+            sides.Push(teams)
+        end for
+        return sides
+    end function
+
+    function menuTeam(team as object) as object
+        return { id: team.id, title: TeamCatalog.pickTitle(team) }
+    end function
+
+    function summary(result as object) as string
+        networkWord = " network"
+        return "Teams: " + result.liveIDs.Count().ToStr() + " channels (" + result.games.ToStr() + " game entries, " + result.networks.ToStr() + networkWord + "), " + result.upcoming.Count().ToStr() + " upcoming"
+    end function
+
+    function isTrue(value as dynamic) as boolean
+        kind = LCase(type(value))
+        if kind <> "boolean" and kind <> "roboolean" then return false
+        return value
+    end function
+
+    function isText(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "string" or kind = "rostring"
+    end function
+
+end namespace

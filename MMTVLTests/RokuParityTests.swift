@@ -18,6 +18,12 @@ import Testing
 /// - `programmes.golden.json`: per guide, the channels `XMLTVParser` keeps (lowercased id, display-names as written),
 ///   `wantedIDs` (what the importer keeps programmes for: that guide alone matched, as `GuideImporter` does, sorted)
 ///   and the programmes kept in `window`, in file order.
+/// - Step 16: `roku/data/pro-teams.json` (not a fixture: the Roku app ships it as `pkg:/data/pro-teams.json`) holds
+///   `TeamCatalog.proTeams` in catalog order, an array of `{abbreviations, aliases, id, league, name, nickname}`, the
+///   same shape and key order as the college catalog (`college-teams.json`, which the Roku build copies from
+///   `MMTVL/IPTV/Teams/`), so one `ParseJson` reads either.
+/// - Step 17: `teams.golden.json`, TeamMatcherTests' and MyTeamsTests' cases as data with MMTVL's results (its shape
+///   is described in `RokuTeamsGolden.swift`).
 ///
 /// When MMTVL's behaviour changes on purpose, regenerate the goldens, review the diff, and update the Roku ports:
 ///
@@ -27,9 +33,13 @@ import Testing
 /// (xcodebuild passes `TEST_RUNNER_<name>` to the test process as `<name>`.) With it set, the test writes the
 /// goldens instead of comparing; by default it compares.
 struct RokuParityTests {
-    nonisolated static let fixtures = URL(fileURLWithPath: #filePath)
+    nonisolated static let roku = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent()
-        .appending(path: "roku/tests/fixtures", directoryHint: .isDirectory)
+        .appending(path: "roku", directoryHint: .isDirectory)
+    nonisolated static let fixtures = roku.appending(path: "tests/fixtures", directoryHint: .isDirectory)
+    nonisolated static let proTeamsFile = roku.appending(path: "data/pro-teams.json")
+    nonisolated static let regenerate = "TEST_RUNNER_MMTVL_WRITE_ROKU_GOLDENS=1 xcodebuild -project MMTVL.xcodeproj "
+        + "-scheme MMTVL -derivedDataPath build test -only-testing:MMTVLTests/RokuParityTests"
     /// Priority order (guide A first).
     nonisolated static let guideFiles = ["guide-a.xml", "guide-b.xml"]
     /// 2026-10-05T00:00Z to 2026-10-07T00:00Z, as Unix seconds.
@@ -118,7 +128,149 @@ struct RokuParityTests {
         }
     }
 
+    /// Step 16: the Roku's pro team catalog can't drift from MMTVL's.
+    @Test func proTeamsMatchTheGolden() throws {
+        let actual = TeamCatalog.proTeams.map(TeamGolden.init)
+        #expect(actual.count == 124)
+        if Self.writesGoldens {
+            try Self.write(actual, to: Self.proTeamsFile)
+            return
+        }
+        let hint = "roku/data/pro-teams.json differs from TeamCatalog.proTeams; never edit it by hand, regenerate it "
+            + "with: \(Self.regenerate)"
+        guard let data = try? Data(contentsOf: Self.proTeamsFile) else {
+            Issue.record("roku/data/pro-teams.json is missing; \(hint)")
+            return
+        }
+        guard let golden = try? JSONDecoder().decode([TeamGolden].self, from: data) else {
+            Issue.record("roku/data/pro-teams.json isn't an array of teams; \(hint)")
+            return
+        }
+        #expect(actual.count == golden.count, "team count: \(hint)")
+        for (index, (a, g)) in zip(actual, golden).enumerated() {
+            #expect(a == g, "team \(index) (\(a.id)): \(hint)")
+        }
+    }
+
+    /// Step 17: TeamMatcherTests' and MyTeamsTests' cases as data (`RokuTeamsGolden`), with MMTVL's results. The
+    /// golden's inputs must be the ones defined in code, and MMTVL's matcher, run over the golden's inputs, must give
+    /// its expected results; the Roku's `TeamMatcher.bs` must give them too (`roku/tests/local/TeamMatcher.test.bs`).
+    @Test func teamsMatchTheGolden() throws {
+        let actual = RokuTeamsGolden.make()
+        let url = Self.fixtures.appending(path: "teams.golden.json")
+        if Self.writesGoldens {
+            try Self.write(actual, to: url)
+            return
+        }
+        let hint = "regenerate it with: \(Self.regenerate)"
+        let golden = try JSONDecoder().decode(TeamsGolden.self, from: Data(contentsOf: url))
+        #expect(golden.indexes == actual.indexes, "indexes; \(hint)")
+        #expect(golden.teamSets == actual.teamSets, "team sets; \(hint)")
+        #expect(golden.channelSets == actual.channelSets, "channel sets; \(hint)")
+        #expect(golden.coverage == actual.coverage, "coverage; \(hint)")
+        #expect(golden.cases.count == actual.cases.count, "case count; \(hint)")
+        for (n, (a, g)) in zip(actual.cases, golden.cases).enumerated() {
+            #expect(a.inputs == g.inputs, "case \(n) (\(a.test) \(a.op)) inputs; \(hint)")
+        }
+        var context = RokuTeamsGolden.Context(golden)
+        for (n, item) in golden.cases.enumerated() {
+            #expect(RokuTeamsGolden.evaluate(item, in: &context) == item.expected, "case \(n) (\(item.test) \(item.op))")
+        }
+    }
+
+    /// Step 17: the golden accounts for every test of both suites; each carried test has a case.
+    @Test func teamsGoldenCoversBothSuites() {
+        let coverage = RokuTeamsGolden.coverage
+        #expect(coverage.count { $0.test.hasPrefix("TeamMatcherTests.") } == 42)
+        #expect(coverage.count { $0.test.hasPrefix("MyTeamsTests.") } == 14)
+        #expect(Set(coverage.map(\.test)).count == coverage.count)
+        #expect(coverage.allSatisfy { ["full", "matcher", "no"].contains($0.carried) })
+        let tested = Set(RokuTeamsGolden.cases.map(\.test))
+        for entry in coverage {
+            #expect(tested.contains(entry.test) == (entry.carried != "no"), "\(entry.test)")
+        }
+        #expect(tested.isSubset(of: Set(coverage.map(\.test))))
+    }
+
+    /// Step 20: Match Guide's ranking. EPGSuggesterTests' five cases (their inputs, copied here as data) and every
+    /// fixture channel against both fixture guides, each with `EPGSuggester.rank`'s result. The Roku port
+    /// (`roku/source/lib/EPGSuggester.bs`) must give the same refs in the same order, with scores within 1e-9.
+    @Test func suggestionsMatchTheGolden() throws {
+        let actual = try Self.suggestionsGolden()
+        try Self.check(actual, file: "suggestions.golden.json") { actual, golden in
+            #expect(actual.fixtureSources == golden.fixtureSources)
+            #expect(actual.cases.map(\.name) == golden.cases.map(\.name))
+            for (a, g) in zip(actual.cases, golden.cases) {
+                #expect(a.channel == g.channel, "channel of \(a.name)")
+                #expect(a.sources == g.sources, "sources of \(a.name)")
+                #expect(a.limit == g.limit, "limit of \(a.name)")
+                #expect(a.expected.map(\.ref) == g.expected.map(\.ref), "ranking of \(a.name)")
+                for (x, y) in zip(a.expected, g.expected) {
+                    #expect(x.name == y.name, "name in \(a.name)")
+                    #expect(abs(x.scoreNanos - y.scoreNanos) <= 1, "score in \(a.name)")
+                }
+            }
+        }
+    }
+
+    /// Step 20: the golden carries every EPGSuggesterTests test (by name) as a case.
+    @Test func suggestionsGoldenCoversTheSuite() throws {
+        let names = try Self.suggestionsGolden().cases.map(\.name).filter { $0.hasPrefix("EPGSuggesterTests.") }
+        #expect(names == ["EPGSuggesterTests.rareTokensWin", "EPGSuggesterTests.limit", "EPGSuggesterTests.ties",
+                          "EPGSuggesterTests.tvgIDDropsItsLastToken", "EPGSuggesterTests.suggestRunsOffTheMainActor"])
+    }
+
     // MARK: - MMTVL's code paths
+
+    /// EPGSuggesterTests' inputs (`channel`, `source` and `fanDuel` there), then the fixture channels in playlist
+    /// order against guide A then guide B (sourceIDs are the file names), each ranked by MMTVL's own code.
+    nonisolated static func suggestionsGolden() throws -> SuggestionsGolden {
+        func source(_ id: String, _ channels: [(String, String)]) -> EPGSourceChannels {
+            EPGSourceChannels(sourceID: id, channels: channels.map { EPGChannel(id: $0.0.lowercased(), names: [$0.1]) })
+        }
+        let fanDuel = source("fd", [
+            ("FanDuel.Sports.Network.Detroit.HD.us", "FanDuel Sports Network Detroit HD"),
+            ("FanDuel.Sports.Network.Florida.us", "FanDuel Sports Network Florida"),
+            ("FanDuel.Sports.Indiana.us", "FanDuel Sports Indiana"),
+            ("FanDuel.TV.us", "FanDuel TV"),
+            ("Fanduel.Racing.us", "Fanduel Racing"),
+            ("ESPN.us", "ESPN"),
+        ])
+        let one = source("one", [("NBA.TV.Canada.us", "NBA TV Canada"), ("NBA.TV.us", "NBA TV"), ("NBA.TV.HD.us", "NBA TV HD")])
+        let two = source("two", [("NBA.TV.us", "NBA TV")])
+        let tvgGuide = source("g", [("nflnetwork.us2", "Something"), ("X.y", "US")])
+        // QA of step 20: equal score and extra tokens, where guide order and id order disagree (guide first).
+        let lateGuide = source("first", [("zzz.us", "NBA TV")])
+        let earlyID = source("second", [("aaa.us", "NBA TV")])
+        let inline: [(String, SuggestionChannelGolden, [EPGSourceChannels], Int)] = [
+            ("EPGSuggesterTests.rareTokensWin", .init(name: "FanDuel Sports Network Indiana"), [fanDuel], 30),
+            ("EPGSuggesterTests.limit", .init(name: "FanDuel Sports Network Indiana"), [fanDuel], 2),
+            ("EPGSuggesterTests.ties", .init(name: "NBA TV"), [one, two], 30),
+            ("EPGSuggesterTests.tvgIDDropsItsLastToken", .init(name: "NFL Net", tvgID: "nflnetwork.us"), [tvgGuide], 30),
+            ("EPGSuggesterTests.suggestRunsOffTheMainActor", .init(name: "FanDuel TV"), [fanDuel], 30),
+            ("tie: guide order before id", .init(name: "NBA TV"), [lateGuide, earlyID], 30),
+        ]
+        var cases = inline.map { name, channel, sources, limit in
+            SuggestionCaseGolden(name: name, channel: channel, sources: sources.map(SuggestionSourceGolden.init),
+                                 limit: limit, expected: rank(channel.channel, sources, limit))
+        }
+        let fixtureSources = try guideFiles.map { file in
+            EPGSourceChannels(sourceID: file, channels: try parse(file, wantedIDs: { _ in [] }).channels)
+        }
+        for channel in ChannelList.make(from: try playlist()) {
+            let golden = SuggestionChannelGolden(name: channel.name, tvgID: channel.tvgID, tvgName: channel.tvgName)
+            cases.append(SuggestionCaseGolden(name: "fixture \(channel.id)", channel: golden, sources: nil, limit: 30,
+                                              expected: rank(golden.channel, fixtureSources, 30)))
+        }
+        return SuggestionsGolden(fixtureSources: fixtureSources.map(SuggestionSourceGolden.init), cases: cases)
+    }
+
+    nonisolated static func rank(_ channel: Channel, _ sources: [EPGSourceChannels], _ limit: Int) -> [SuggestionGolden] {
+        EPGSuggester.rank(channel, in: sources, limit: limit).map { candidate in
+            SuggestionGolden(ref: SuggestionRefGolden(sourceID: candidate.ref.sourceID, epgID: candidate.ref.epgID),
+                             name: candidate.name, scoreNanos: Int((candidate.score * 1e9).rounded()))
+        }
+    }
 
     nonisolated static func playlist() throws -> M3UPlaylist {
         // As IPTVNetwork.fetchText decodes it (the BOM stays for M3UParser to strip).
@@ -158,15 +310,20 @@ struct RokuParityTests {
                                               compare: (T, T) -> Void) throws {
         let url = fixtures.appending(path: file)
         if writesGoldens {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-            var data = try encoder.encode(actual)
-            data.append(0x0A)
-            try data.write(to: url, options: .atomic)
+            try write(actual, to: url)
             return
         }
         let golden = try JSONDecoder().decode(T.self, from: Data(contentsOf: url))
         compare(actual, golden)
+    }
+
+    /// Pretty-printed with sorted keys and a final newline, so a regenerated golden diffs cleanly.
+    nonisolated static func write<T: Encodable>(_ value: T, to url: URL) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        var data = try encoder.encode(value)
+        data.append(0x0A)
+        try data.write(to: url, options: .atomic)
     }
 
     /// Element by element, so a failure names the item that differs.
@@ -306,4 +463,92 @@ nonisolated struct ProgrammeGolden: Codable, Equatable {
         try container.encode(category, forKey: .category)
         try container.encode(episode, forKey: .episode)
     }
+}
+
+/// Step 16: one pro team as `roku/data/pro-teams.json` holds it (`abbreviations` is always empty for pro teams, kept
+/// so pro and college entries have the same keys).
+nonisolated struct TeamGolden: Codable, Equatable {
+    var id: String
+    var league: String
+    var name: String
+    var nickname: String
+    var aliases: [String]
+    var abbreviations: [String]
+
+    init(_ team: Team) {
+        id = team.id
+        league = team.league.rawValue
+        name = team.name
+        nickname = team.nickname
+        aliases = team.aliases
+        abbreviations = team.abbreviations
+    }
+}
+
+// MARK: - Step 20: Match Guide's suggestions
+
+/// `suggestions.golden.json`: `fixtureSources` (guide A then guide B as `XMLTVParser` reads them; a case whose
+/// `sources` is null ranks against these) and `cases`, each `EPGSuggester.rank`'s result in order. Scores are
+/// whole nanos (`score × 1e9`, rounded), so `ParseJson` reads them as integers.
+nonisolated struct SuggestionsGolden: Codable, Equatable {
+    var fixtureSources: [SuggestionSourceGolden]
+    var cases: [SuggestionCaseGolden]
+}
+
+nonisolated struct SuggestionCaseGolden: Codable, Equatable {
+    var name: String
+    var channel: SuggestionChannelGolden
+    /// null: `fixtureSources`.
+    var sources: [SuggestionSourceGolden]?
+    var limit: Int
+    var expected: [SuggestionGolden]
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encode(channel, forKey: .channel)
+        try container.encode(sources, forKey: .sources)
+        try container.encode(limit, forKey: .limit)
+        try container.encode(expected, forKey: .expected)
+    }
+}
+
+/// What the ranking reads of a channel: its name as shown, tvg-id and tvg-name (null when missing).
+nonisolated struct SuggestionChannelGolden: Codable, Equatable {
+    var name: String
+    var tvgID: String? = nil
+    var tvgName: String? = nil
+
+    var channel: Channel {
+        Channel(id: "name:" + name.lowercased(), number: 1, name: name, group: "G", tvgID: tvgID, tvgName: tvgName,
+                logoURL: nil, streamURL: URL(string: "https://cdn/x.m3u8")!)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encode(tvgID, forKey: .tvgID)
+        try container.encode(tvgName, forKey: .tvgName)
+    }
+}
+
+nonisolated struct SuggestionSourceGolden: Codable, Equatable {
+    var sourceID: String
+    var channels: [ChannelNamesGolden]
+
+    init(_ source: EPGSourceChannels) {
+        sourceID = source.sourceID
+        channels = source.channels.map { ChannelNamesGolden(id: $0.id, names: $0.names) }
+    }
+}
+
+nonisolated struct SuggestionRefGolden: Codable, Equatable {
+    var sourceID: String
+    var epgID: String
+}
+
+nonisolated struct SuggestionGolden: Codable, Equatable {
+    var ref: SuggestionRefGolden
+    var name: String
+    var scoreNanos: Int
 }

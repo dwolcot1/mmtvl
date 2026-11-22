@@ -14,11 +14,16 @@
     <interface>
         <!-- In: SettingsStatus.make's model. A change redraws the pages; the stack and focus stay (by row id). -->
         <field id="model" type="assocarray" onChange="onModel" />
+        <!-- Step 18, in: TeamsTask's slim catalog (TeamPicker.slimCatalog) for Live TV → My Teams' league and conference
+             pages, set once when it arrives (kept apart from model, which the scene sends after every change); {}
+             while it loads, { failed: true } when it couldn't be made. -->
+        <field id="teamCatalog" type="assocarray" onChange="onTeamCatalog" />
         <!-- In: { kind, text }: kind "playlist" or "guide" (a refused address: its row's detail) or "band" (a refused
              save: the band, in warningText) until the next page change; text "" clears it. -->
         <field id="message" type="assocarray" alwaysNotify="true" onChange="onMessage" />
         <!-- Out: what the scene does: { type: "close" } (Back on the root), the row actions SettingsPages lists
-             (toggle, editURL, moveGuide, removeGuide, toggleGroupHidden, unhideChannel, refresh, removeSource), and in
+             (toggle, editURL, moveGuide, removeGuide, toggleGroupHidden, unhideChannel, refresh, removeSource, and step
+             18's toggleTeam), and in
              DEBUG builds { type: "openProbes" } (L8: three Replays on the About page). No URL is ever in it. -->
         <field id="action" type="assocarray" alwaysNotify="true" />
         <!-- open({ page }): "root", or "device" (the low-memory notice's Open Settings). takeFocus(): the scene's
@@ -34,6 +39,8 @@
     <script type="text/brighterscript" uri="pkg:/source/lib/GuideSources.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/Lineup.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/SettingsStatus.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/TeamCatalog.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/TeamPicker.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/SettingsPages.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/SettingsNav.bs" />
     <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />

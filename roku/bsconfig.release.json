@@ -5,7 +5,12 @@
     "source/**/*",
     "components/**/*",
     "!components/probes/**/*",
-    "images/**/*"
+    "images/**/*",
+    "data/**/*",
+    {
+      "src": "../MMTVL/IPTV/Teams/college-teams.json",
+      "dest": "data/college-teams.json"
+    }
   ],
   "stagingDir": "out/release-staging",
   "createPackage": false,
