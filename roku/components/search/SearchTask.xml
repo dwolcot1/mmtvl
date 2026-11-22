@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Search's channels and programmes off the render thread (M12 step 19; MMTVL's LiveSearchModel.textChanged and
+     IPTVLibrary.searchProgrammes). One task for the app's life, made when Search first opens. The teams come from
+     TeamsTask, which holds the catalog.
+     The title index (LiveSearch.newTitleIndex: each programme's guide channel, start and stop under its folded title,
+     each title once) is built once per guide load, when Search first needs it after that load: the guide data is read
+     from guideHolder's guideData once for the build and let go; queries run against the index only. A new guide
+     (guideRevision) drops the index at once; the next Search builds it again.
+     Requests: the newest query wins (one waiting at a time; a running query gives up for a newer one, checked every
+     LiveSearch.cancelEvery titles). The debounce (Theme timing.searchDebounce) is SearchView's: a query is sent only
+     once typing pauses. Logs: DEBUG builds only, counts and times (never a title or a typed text). -->
+<component name="SearchTask" extends="Task">
+    <interface>
+        <!-- The scene's guideHolder (the finished GuideTask), or invalid with no guide; and its guideRevision. -->
+        <field id="guideHolder" type="node" />
+        <field id="guideRevision" type="integer" value="0" />
+        <!-- The lineup's visible channels, as Search shows them: [{ id, name, number (as shown), group }], lineup
+             order. Set when Search opens and when the lineup changes while it's open. -->
+        <field id="channels" type="array" />
+        <!-- In: { kind: "prepare" } (Search opened: the channel names and the title index, so the first query is quick)
+             or { kind: "query", serial, text }. alwaysNotify: every set is a request. -->
+        <field id="request" type="assocarray" alwaysNotify="true" />
+        <!-- Out: { serial, part: "guide", ok, channels: [LiveSearch.channelIndex entries], programmes: [{ channelID,
+             channelName, channelNumber, start, stop, folded }] } (the scene adds each programme's title and subtitle
+             from the guide screen); ok false with no results when the query failed. -->
+        <field id="answer" type="assocarray" alwaysNotify="true" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Unicode.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/EPGMatcher.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/TeamCatalog.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/TeamPicker.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/BannerText.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/MyTeams.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/LiveSearch.bs" />
+</component>

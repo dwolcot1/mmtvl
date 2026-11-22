@@ -72,6 +72,7 @@ sub init()
     m.importWatchdog.repeat = false
     m.importWatchdog.observeField("fire", "onImportWatchdog")
     startTeams()
+    startSearch()
     info = CreateObject("roAppInfo")
     m.versionShort = info.GetValue("major_version") + "." + info.GetValue("minor_version")
     m.buildNumber = info.GetValue("build_version")
@@ -380,6 +381,11 @@ sub onGuideResult()
     ' Step 18: My Teams with the new guide.
     m.teamsTask.guideHolder = task
     requestTeams()
+    ' Step 19: Search's title index is built again from this guide the next time Search needs it.
+    if m.searchTask <> invalid
+        m.searchTask.guideHolder = task
+        m.searchTask.guideRevision = m.top.guideRevision
+    end if
     pushProgrammes()
     m.guideStatusByID = statusesByID(result.sourcesKey, result.statuses)
     afterGuideRun()
@@ -568,8 +574,7 @@ sub onGuideAction()
     else if kind = "returnToChannel"
         returnToChannel(PlayerSession.isTrue(action.reload))
     else if kind = "openSearch"
-        ' Step 19 builds Search; until then the Search row does nothing visible.
-        Log.info("Live TV", "Search comes with step 19")
+        openSearch()
     else if kind = "openTeamPicker"
         openTeamPicker()
     else if kind = "openSettings"
@@ -685,6 +690,8 @@ sub rebuildLineup()
     m.lineup = built
     m.top.lineup = built
     m.guide.lineup = built
+    ' Step 19: an open Search searches the channels shown now.
+    if m.searchOpen then pushSearchChannels()
 end sub
 
 ' D51: any key or focus move in the guide or the menu, and opening the guide.
@@ -706,9 +713,10 @@ sub onIdle()
         end if
         return
     end if
-    result = GuideIdle.outcome({ screen: m.screen, menuOpen: m.menuOpen, pickerOpen: m.pickerOpen, isPlaying: isPlaying() })
+    result = GuideIdle.outcome({ screen: m.screen, menuOpen: m.menuOpen, pickerOpen: m.pickerOpen, searchOpen: m.searchOpen, isPlaying: isPlaying() })
     if result.closeMenu then closeChannelMenu()
     if result.closePicker then closeTeamPicker()
+    if result.closeSearch then closeSearch()
     if result.returnToChannel then returnToPlayer()
     if result.changed then Log.info("Live TV", "No input for a while: back to the video")
 end sub
@@ -743,7 +751,9 @@ sub focusCurrent()
             return
         end if
     #end if
-    if m.pickerOpen
+    if m.searchOpen
+        m.search.callFunc("takeFocus")
+    else if m.pickerOpen
         m.picker.setFocus(true)
     else if m.menuOpen
         m.menu.setFocus(true)
@@ -1116,6 +1126,10 @@ sub deleteGuideFiles()
     m.guide.guideHolder = invalid
     m.guide.guideRevision = m.top.guideRevision
     m.teamsTask.guideHolder = invalid
+    if m.searchTask <> invalid
+        m.searchTask.guideHolder = invalid
+        m.searchTask.guideRevision = m.top.guideRevision
+    end if
     requestTeams()
 end sub
 
@@ -1288,6 +1302,7 @@ sub startTeams()
     m.teamsTask = CreateObject("roSGNode", "TeamsTask")
     m.teamsTask.observeField("matchAnswer", "onMatchAnswer")
     m.teamsTask.observeField("menuAnswer", "onMenuAnswer")
+    m.teamsTask.observeField("searchAnswer", "onTeamSearchAnswer")
     m.teamsTask.observeField("catalog", "onTeamCatalog")
     ' Teams picked: the task makes the catalogs and the index at launch; none picked: when first needed.
     prepare = {}
@@ -1390,6 +1405,7 @@ sub toggleTeam(teamID as string)
     rebuildLineup()
     requestTeams()
     if m.pickerOpen then m.picker.picked = m.store.prefs.teams
+    if m.searchOpen then m.search.picked = m.store.prefs.teams
 end sub
 
 ' The slim catalog, asked for once (Settings or Choose Teams opening); after a failure, again at the next open
@@ -1444,11 +1460,138 @@ sub onPickerToggle()
     if PlayerSession.isText(toggle.teamID) then toggleTeam(toggle.teamID)
 end sub
 
+' --- step 19: Search ------------------------------------------------------------------------------------------
+
+' Search over the guide (SearchView), opened from the guide's Search row. SearchTask (channels, programmes) is made when
+' Search first opens and kept for the app's life; TeamsTask answers the teams. m.searchSerial is the newest serial
+' used (a session's first, then each query sent; it never goes back), and answers for any other are dropped (the view
+' checks too).
+sub startSearch()
+    m.search = m.top.findNode("search")
+    m.search.observeField("query", "onSearchQuery")
+    m.search.observeField("choice", "onSearchChoice")
+    m.search.observeField("closed", "closeSearch")
+    m.search.observeField("input", "noteInput")
+    m.searchOpen = false
+    m.searchTask = invalid
+    m.searchSerial = 0
+end sub
+
+' MMTVL's openSearch, from the guide only (the Search row); the guide stays under it, on its Search row.
+sub openSearch()
+    if m.screen <> "guide" or m.searchOpen then return
+    if m.searchTask = invalid
+        m.searchTask = CreateObject("roSGNode", "SearchTask")
+        m.searchTask.guideHolder = m.top.guideHolder
+        m.searchTask.guideRevision = m.top.guideRevision
+        m.searchTask.observeField("answer", "onSearchAnswer")
+        m.searchTask.control = "run"
+    end if
+    pushSearchChannels()
+    ' The channel names and the title index (SearchTask), and the team entries (TeamsTask), while the user types.
+    m.searchTask.request = { kind: "prepare" }
+    m.teamsTask.request = { kind: "search", serial: -1, text: "" }
+    ' Serials keep increasing across sessions: an answer from an earlier Search is never taken for this one's.
+    m.searchSerial = m.searchSerial + 1
+    m.search.callFunc("open", { serial: m.searchSerial })
+    m.search.picked = m.store.prefs.teams
+    m.search.visible = true
+    m.searchOpen = true
+    focusCurrent()
+    noteInput()
+end sub
+
+' The lineup's visible channels, as Search shows them (no URL).
+sub pushSearchChannels()
+    shown = []
+    if m.lineup <> invalid
+        for each channel in m.lineup.visibleChannels
+            shown.Push({ id: channel.id, name: channel.name, number: Lineup.displayNumber(channel), group: channel.group })
+        end for
+    end if
+    m.searchTask.channels = shown
+end sub
+
+sub closeSearch()
+    if not m.searchOpen then return
+    m.search.visible = false
+    m.searchOpen = false
+    focusCurrent()
+end sub
+
+' Typing paused: both Tasks get the newest text.
+sub onSearchQuery()
+    query = m.search.query
+    if type(query) <> "roAssociativeArray" or not m.searchOpen then return
+    m.searchSerial = query.serial
+    m.searchTask.request = { kind: "query", serial: query.serial, text: query.text }
+    m.teamsTask.request = { kind: "search", serial: query.serial, text: query.text }
+end sub
+
+' SearchTask's channels and programmes; the programmes' titles come from the guide screen (one call per answer).
+sub onSearchAnswer()
+    answer = m.searchTask.answer
+    if type(answer) <> "roAssociativeArray" or not m.searchOpen then return
+    if answer.serial <> m.searchSerial then return
+    ' A failed part still answers (no results), so the screen stops saying "Searching…".
+    if not PlayerSession.isTrue(answer.ok)
+        m.search.answer = { serial: answer.serial, part: "guide", ok: false, channels: [], programmes: [] }
+        return
+    end if
+    hits = answer.programmes
+    if type(hits) <> "roArray" then hits = []
+    details = m.guide.callFunc("programmeDetails", hits)
+    programmes = []
+    if type(details) = "roArray"
+        for i = 0 to hits.Count() - 1
+            if i < details.Count()
+                if type(details[i]) = "roAssociativeArray"
+                    hit = hits[i]
+                    hit.title = details[i].title
+                    hit.subtitle = details[i].subtitle
+                    programmes.Push(hit)
+                end if
+            end if
+        end for
+    end if
+    m.search.answer = { serial: answer.serial, part: "guide", ok: true, channels: answer.channels, programmes: programmes }
+end sub
+
+sub onTeamSearchAnswer()
+    answer = m.teamsTask.searchAnswer
+    if type(answer) <> "roAssociativeArray" or not m.searchOpen then return
+    if answer.serial <> m.searchSerial then return
+    if not PlayerSession.isTrue(answer.ok)
+        m.search.answer = { serial: answer.serial, part: "teams", ok: false, teams: [] }
+        return
+    end if
+    m.search.answer = { serial: answer.serial, part: "teams", ok: true, teams: answer.teams }
+end sub
+
+' MMTVL's choose: a channel or a programme on now plays; a later programme shows in the guide at its start. A team is
+' added or removed and Search stays open.
+sub onSearchChoice()
+    choice = m.search.choice
+    if type(choice) <> "roAssociativeArray" or not m.searchOpen then return
+    kind = choice.type
+    if kind = "toggleTeam"
+        if PlayerSession.isText(choice.teamID) then toggleTeam(choice.teamID)
+    else if kind = "watch"
+        closeSearch()
+        watch(choice.channelID)
+    else if kind = "showInGuide"
+        closeSearch()
+        m.guide.callFunc("focusChannel", { channelID: choice.channelID, start: choice.start })
+        focusCurrent()
+    end if
+end sub
+
 #if DEBUG
     ' The probes play their own video: the player stops first.
     sub openProbes()
         if m.menuOpen then closeChannelMenu()
         if m.pickerOpen then closeTeamPicker()
+        if m.searchOpen then closeSearch()
         m.player.control = "stop"
         m.currentChannel = invalid
         m.player.visible = false

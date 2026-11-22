@@ -217,6 +217,41 @@ function programmesFor(channelID as dynamic) as dynamic
     return GuideReader.programmesFor(currentData(), channelID)
 end function
 
+' Step 19: Search's programme results get their titles here, from the one copy of the guide (the Task's index holds
+' folded titles only). One callFunc per answer, at most LiveSearch.maxProgrammeResults entries.
+function programmeDetails(hits as dynamic) as object
+    details = []
+    if type(hits) <> "roArray" then return details
+    data = currentData()
+    for each hit in hits
+        found = invalid
+        if type(hit) = "roAssociativeArray"
+            programme = GuideReader.programmeAt(GuideReader.programmesFor(data, hit.channelID), hit.start)
+            if programme <> invalid
+                subtitle = textOf(programme.subtitle)
+                if subtitle = "" then subtitle = textOf(programme.episode)
+                found = { title: textOf(programme.title), subtitle: subtitle }
+            end if
+        end if
+        details.Push(found)
+    end for
+    return details
+end function
+
+' Step 19 (MMTVL's LiveTVModel.focusGuide): the guide on the channel at a later programme's start. TimeGrid's
+' jumpToTime is set only where the node has it (unverified on a device).
+function focusChannel(args as dynamic) as boolean
+    if type(args) <> "roAssociativeArray" then return false
+    moved = GuideKeys.focusChannel(m.state, args.channelID)
+    if not moved.ok then return false
+    m.state = moved.state
+    m.column.visible = false
+    rebuildGrid()
+    if GuideReader.isNumber(args.start) then setIfPresent(m.grid, "jumpToTime", args.start)
+    takeFocus()
+    return true
+end function
+
 function currentData() as dynamic
     return GuideReader.read(m.reader, m.top.guideHolder, m.top.guideRevision)
 end function

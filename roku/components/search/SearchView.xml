@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Search (M12 step 19; MMTVL's LiveSearchView over the guide, M7f L12, M7l L12; frame "Search", rucDX): searchDim
+     over the guide, the title, Roku's DynamicMiniKeyboard on the left (styled only through its palette: KeyboardColor
+     tileFill, PrimaryTextColor primaryText, SecondaryItemColor secondaryText, FocusColor focusedRowFill,
+     FocusItemColor focusedRowText), the results on the right in searchResultsRect: the frame's section headers
+     (CHANNELS, TEAMS, PROGRAMMES) above each section's first row, rows of a title and a detail line, the focused one
+     the white focus_row, a picked team's check mark. Under the results, the key hint.
+     The model is LiveSearch's (this view keeps its state). Typing narrows the results at once; after a pause of
+     Theme timing.searchDebounce the view sets query, which the scene sends to SearchTask (channels, programmes) and
+     TeamsTask (teams); their answers come back through answer. Keys: the keyboard takes its own; what it lets
+     through (Right at its right edge, Back, Play), and every key with the results focused, goes through
+     LiveSearch.handleKey. Every key is handled (D49: Back never leaves Live TV; Back on the keyboard closes Search,
+     back to the guide's Search row). -->
+<component name="SearchView" extends="Group">
+    <interface>
+        <!-- In: a Task's answer for a query, { serial, part: "guide", ok, channels, programmes } (programmes with their
+             titles from the guide screen) or { serial, part: "teams", ok, teams }; ok false: that part failed, with no
+             results. Another serial than the newest is dropped. -->
+        <field id="answer" type="assocarray" onChange="onAnswer" />
+        <!-- In: the picked team ids (prefs.teams). -->
+        <field id="picked" type="array" onChange="onPicked" />
+        <!-- Out: { serial, text }, once typing pauses (only for 2 characters or more). -->
+        <field id="query" type="assocarray" alwaysNotify="true" />
+        <!-- Out: LiveSearch.chooseAction's { type: "watch", channelID } or { type: "showInGuide", channelID, start },
+             or { type: "toggleTeam", teamID } (Search stays open). -->
+        <field id="choice" type="assocarray" alwaysNotify="true" />
+        <!-- Out: Back on the keyboard. -->
+        <field id="closed" type="boolean" alwaysNotify="true" />
+        <!-- Out: set on every key, keyboard move and text change (the scene's idle return, D51). -->
+        <field id="input" type="boolean" alwaysNotify="true" />
+        <!-- open({ serial }): an empty search whose serials start at serial (above every earlier session's), focus on
+             the keyboard. takeFocus(): the keyboard or the results. -->
+        <function name="open" />
+        <function name="takeFocus" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/Unicode.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/EPGMatcher.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/TeamCatalog.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/TeamPicker.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/BannerText.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/MyTeams.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/LiveSearch.bs" />
+    <children>
+        <Rectangle id="dim" />
+        <Label id="title" />
+        <DynamicMiniKeyboard id="keyboard" />
+        <Group id="results" />
+        <Label id="message" />
+        <Label id="hint" />
+        <Timer id="debounce" repeat="false" />
+    </children>
+</component>

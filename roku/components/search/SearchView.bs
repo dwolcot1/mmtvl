@@ -1,0 +1,277 @@
+' Search's look and keys (fields in SearchView.xml). m.state is LiveSearch's model, m.picked the picked team ids,
+' m.headers and m.rows the node pools the results are drawn with (3 headers, LiveSearch.visibleResults rows).
+
+sub init()
+    m.theme = Theme.make()
+    colors = m.theme.colors
+    fonts = m.theme.fonts
+    layout = m.theme.layout
+    canvas = m.theme.canvas
+    m.folder = LiveSearch.newFolder()
+    m.state = LiveSearch.newState()
+    m.picked = []
+    shade = m.top.findNode("dim")
+    shade.color = colors.searchDim
+    shade.width = canvas.width
+    shade.height = canvas.height
+    heading = styleLabel(m.top.findNode("title"), fonts.searchTitle, colors.primaryText)
+    heading.text = "Search"
+    heading.translation = [layout.searchKeyboardOrigin.x, layout.searchTitleTop]
+    rect = layout.searchResultsRect
+    note = styleLabel(m.top.findNode("message"), fonts.searchRowTitle, colors.secondaryText)
+    note.translation = [rect.x + layout.menuRowPadding, rect.y]
+    note.width = rect.width - 2 * layout.menuRowPadding
+    note.height = layout.searchRowHeight
+    hint = styleLabel(m.top.findNode("hint"), fonts.settingsHint, colors.secondaryText)
+    hint.translation = [rect.x, layout.searchHintTop]
+    hint.width = rect.width
+    styleKeyboard()
+    m.debounce = m.top.findNode("debounce")
+    m.debounce.duration = m.theme.timing.searchDebounce
+    m.debounce.observeField("fire", "onDebounce")
+    makeResultNodes()
+    render()
+end sub
+
+function styleLabel(label as object, spec as object, color as string) as object
+    label.font = Theme.font(spec)
+    label.color = color
+    label.height = Theme.lineHeight(spec)
+    label.vertAlign = "center"
+    label.wrap = false
+    return label
+end function
+
+' The frame's palette (the only styling DynamicMiniKeyboard takes) and its text box's hint.
+sub styleKeyboard()
+    colors = m.theme.colors
+    origin = m.theme.layout.searchKeyboardOrigin
+    m.keyboard = m.top.findNode("keyboard")
+    m.keyboard.translation = [origin.x, origin.y]
+    palette = CreateObject("roSGNode", "RSGPalette")
+    palette.colors = {
+        KeyboardColor: colors.tileFill,
+        PrimaryTextColor: colors.primaryText,
+        SecondaryItemColor: colors.secondaryText,
+        FocusColor: colors.focusedRowFill,
+        FocusItemColor: colors.focusedRowText
+    }
+    setIfPresent(m.keyboard, "palette", palette)
+    grid = m.keyboard.keyGrid
+    if grid <> invalid
+        setIfPresent(grid, "palette", palette)
+        ' Any move on the keys is input too (the idle return, D51).
+        if grid.hasField("keyFocused") then grid.observeField("keyFocused", "onKeyboardMove")
+    end if
+    editBox = m.keyboard.textEditBox
+    if editBox <> invalid
+        setIfPresent(editBox, "hintText", LiveSearch.placeholder)
+        setIfPresent(editBox, "hintTextColor", colors.secondaryText)
+        setIfPresent(editBox, "textColor", colors.primaryText)
+    end if
+    m.keyboard.observeField("text", "onText")
+end sub
+
+sub setIfPresent(node as object, field as string, value as dynamic)
+    if node.hasField(field) then node.setField(field, value)
+end sub
+
+' Three section headers and visibleResults rows, made once and reused.
+sub makeResultNodes()
+    layout = m.theme.layout
+    colors = m.theme.colors
+    fonts = m.theme.fonts
+    group = m.top.findNode("results")
+    rect = layout.searchResultsRect
+    group.translation = [rect.x, rect.y]
+    m.headers = []
+    for i = 0 to 2
+        header = styleLabel(CreateObject("roSGNode", "Label"), fonts.settingsSection, colors.secondaryText)
+        header.width = rect.width - 2 * layout.menuRowPadding
+        group.appendChild(header)
+        m.headers.Push(header)
+    end for
+    m.rows = []
+    titleSpec = fonts.searchRowTitle
+    detailSpec = fonts.searchRowDetail
+    titleHeight = Theme.lineHeight(titleSpec)
+    detailHeight = Theme.lineHeight(detailSpec)
+    top = Int((layout.searchRowHeight - titleHeight - layout.settingsRowLineSpacing - detailHeight) / 6) * 3
+    checkSize = layout.chooseTeamsCheckSize
+    for i = 0 to LiveSearch.visibleResults - 1
+        row = group.createChild("Group")
+        focus = row.createChild("Poster")
+        focus.uri = m.theme.images.focusRow
+        focus.width = rect.width
+        focus.height = layout.searchRowHeight
+        title = styleLabel(row.createChild("Label"), titleSpec, colors.primaryText)
+        title.translation = [layout.menuRowPadding, top]
+        detail = styleLabel(row.createChild("Label"), detailSpec, colors.secondaryText)
+        detail.translation = [layout.menuRowPadding, top + titleHeight + layout.settingsRowLineSpacing]
+        check = row.createChild("Poster")
+        check.uri = m.theme.images.iconCheck
+        check.width = checkSize
+        check.height = checkSize
+        check.translation = [rect.width - layout.menuRowPadding - checkSize, Int((layout.searchRowHeight - checkSize) / 6) * 3]
+        m.rows.Push({ node: row, focus: focus, title: title, detail: detail, check: check })
+    end for
+end sub
+
+' --- interface functions ---------------------------------------------------------------------------------------
+
+' args { serial }: the session's first serial (one past the scene's newest serial), so serials keep increasing
+' across sessions and an answer from an earlier one is dropped.
+function open(args as dynamic) as boolean
+    m.debounce.control = "stop"
+    firstSerial = 0
+    if type(args) = "roAssociativeArray"
+        if LiveSearch.isNumber(args.serial) then firstSerial = args.serial
+    end if
+    m.state = LiveSearch.newState(firstSerial)
+    m.keyboard.text = ""
+    render()
+    return true
+end function
+
+function takeFocus() as boolean
+    if m.state.focus = "results" then m.top.setFocus(true) else m.keyboard.setFocus(true)
+    return true
+end function
+
+' --- typing and answers ----------------------------------------------------------------------------------------
+
+sub onText()
+    text = m.keyboard.text
+    if not LiveSearch.isText(text) then text = ""
+    if text = m.state.text then return
+    m.top.input = true
+    m.state = LiveSearch.textChanged(m.state, text, m.folder)
+    m.debounce.control = "stop"
+    if LiveSearch.needsQuery(m.state) then m.debounce.control = "start"
+    render()
+end sub
+
+sub onKeyboardMove()
+    m.top.input = true
+end sub
+
+' Typing paused: the query for the newest text.
+sub onDebounce()
+    if not LiveSearch.needsQuery(m.state) then return
+    m.top.query = { serial: m.state.serial, text: m.state.text }
+end sub
+
+sub onAnswer()
+    wasFocus = m.state.focus
+    m.state = LiveSearch.applyAnswer(m.state, m.top.answer)
+    render()
+    ' No results left: the focus goes back to the keyboard (MMTVL's resetFocus).
+    if wasFocus <> m.state.focus and m.top.isInFocusChain() then takeFocus()
+end sub
+
+sub onPicked()
+    picked = m.top.picked
+    if type(picked) <> "roArray" then picked = []
+    m.picked = picked
+    render()
+end sub
+
+' --- keys ------------------------------------------------------------------------------------------------------
+
+' What the keyboard lets through, and every key with the results focused. Every key is handled (D49).
+function onKeyEvent(key as string, press as boolean) as boolean
+    if not press then return true
+    m.top.input = true
+    before = m.state.focus
+    result = LiveSearch.handleKey(m.state, key, press)
+    m.state = result.state
+    outcome = result.outcome
+    if outcome = "close"
+        m.top.closed = true
+        return true
+    else if outcome = "delete"
+        text = m.keyboard.text
+        ' onText runs the change.
+        if Len(text) > 0 then m.keyboard.text = Left(text, Len(text) - 1)
+    else if outcome = "toggleTeam"
+        m.top.choice = { type: "toggleTeam", teamID: result.result.entry.id }
+    else if outcome = "choose"
+        m.top.choice = LiveSearch.chooseAction(result.result, CreateObject("roDateTime").AsSeconds())
+    end if
+    if before <> m.state.focus then takeFocus()
+    render()
+    return true
+end function
+
+' --- drawing ---------------------------------------------------------------------------------------------------
+
+sub render()
+    layout = m.theme.layout
+    colors = m.theme.colors
+    rect = layout.searchResultsRect
+    list = LiveSearch.results(m.state)
+    now = CreateObject("roDateTime").AsSeconds()
+    nowParts = localParts(now)
+    nowParts.seconds = now
+    y = 0
+    headerCount = 0
+    rowCount = 0
+    for each line in LiveSearch.lines(m.state)
+        if line.kind = "header"
+            if headerCount < m.headers.Count()
+                header = m.headers[headerCount]
+                header.text = line.text
+                header.translation = [layout.menuRowPadding, y + layout.searchSectionTopPadding]
+                header.visible = true
+                headerCount++
+            end if
+            y += layout.searchSectionTopPadding + Theme.lineHeight(m.theme.fonts.settingsSection) + layout.searchSectionBottomPadding + layout.searchRowSpacing
+        else if rowCount < m.rows.Count()
+            item = list[line.index]
+            isFocused = m.state.focus = "results" and line.index = m.state.index
+            startParts = invalid
+            if item.kind = "programme" then startParts = localParts(item.entry.start)
+            text = LiveSearch.rowText(item, m.picked, isFocused, nowParts, startParts)
+            row = m.rows[rowCount]
+            row.node.translation = [0, y]
+            row.node.visible = true
+            row.focus.visible = isFocused
+            textWidth = rect.width - 2 * layout.menuRowPadding
+            if text.checked then textWidth = textWidth - layout.chooseTeamsCheckSize - layout.searchCheckGap
+            row.title.text = text.title
+            row.title.width = textWidth
+            row.detail.text = text.detail
+            row.detail.width = textWidth
+            row.check.visible = text.checked
+            if isFocused
+                row.title.color = colors.focusedRowText
+                row.detail.color = colors.focusedRowSecondaryText
+                row.check.blendColor = colors.focusedRowText
+            else
+                row.title.color = colors.primaryText
+                row.detail.color = colors.secondaryText
+                row.check.blendColor = colors.primaryText
+            end if
+            rowCount++
+            y += layout.searchRowHeight + layout.searchRowSpacing
+        end if
+    end for
+    for i = headerCount to m.headers.Count() - 1
+        m.headers[i].visible = false
+    end for
+    for i = rowCount to m.rows.Count() - 1
+        m.rows[i].node.visible = false
+    end for
+    note = m.top.findNode("message")
+    note.text = LiveSearch.message(m.state)
+    note.visible = note.text <> ""
+    m.top.findNode("hint").text = LiveSearch.hint(m.state, m.picked)
+end sub
+
+' Local clock parts for LiveSearch.rowText.
+function localParts(seconds as dynamic) as object
+    date = CreateObject("roDateTime")
+    date.FromSeconds(Int(seconds))
+    date.ToLocalTime()
+    return { year: date.GetYear(), month: date.GetMonth(), day: date.GetDayOfMonth(), weekday: date.GetDayOfWeek(), hours: date.GetHours(), minutes: date.GetMinutes() }
+end function

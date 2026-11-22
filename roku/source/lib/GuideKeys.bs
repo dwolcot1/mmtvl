@@ -19,6 +19,8 @@
 '   visibleStart(first, position, count, visible) -> the first row a list of visible rows shows so that position
 '     is in view, moving as little as possible from first (GuideModel.keepGroupVisible; also the channel menu's
 '     window, LiveMenu): clamped to 0...count - visible.
+'   focusChannel(state, channelID) -> { ok, state }: Search's later programme (step 19, GuideModel.focus): the
+'     channel's row in the selected group, else All Channels, else its own group; focus on the grid.
 '   jumpTarget(state) -> where the screen sends TimeGrid for the model's focus: { row, kind }, kind "channel" (the
 '     row's channel cell, jumpToChannelInfo) or "grid" (a programme cell, jumpToChannel; also with the column open,
 '     which is drawn over the grid). invalid with no rows. The screen keeps it as the pending jump until TimeGrid
@@ -298,6 +300,49 @@ namespace GuideKeys
             current.groupFocus = index
         end if
         return current
+    end function
+
+    ' Step 19 (MMTVL's GuideModel.focus(channelID:at:now:), GuideModel.swift:151-172): Search's later programme. The
+    ' channel's row in the selected group, else in All Channels, else in its own group (the first of those that
+    ' lists it), focused on the grid; the column closes. { ok, state }: ok false (state unchanged) when no group
+    ' lists the channel (hidden, or gone from the playlist).
+    function focusChannel(state as object, channelID as dynamic) as object
+        current = GuideKeys.copyState(state)
+        result = { ok: false, state: current }
+        if not GuideKeys.isText(channelID) or channelID = "" then return result
+        row = GuideKeys.channelRow(current.rows, channelID)
+        if row < 0
+            channelGroup = invalid
+            for each channel in current.lineup.visibleChannels
+                if channel.id = channelID
+                    channelGroup = channel.group
+                    exit for
+                end if
+            end for
+            candidates = [Lineup.allChannelsGroup]
+            if GuideKeys.isText(channelGroup) then candidates.Push(channelGroup)
+            for each candidate in candidates
+                index = GuideKeys.textIndex(current.groups, candidate)
+                if index >= 0
+                    rows = GuideKeys.rowsOf(current.lineup, candidate)
+                    found = GuideKeys.channelRow(rows, channelID)
+                    if found >= 0
+                        current.groupIndex = index
+                        current.groupFocus = index
+                        current.rows = rows
+                        row = found
+                        exit for
+                    end if
+                end if
+            end for
+        end if
+        if row < 0 then return result
+        current.row = row
+        current.focus = "grid"
+        current.cellIndex = 0
+        current.cellCount = 1
+        result.ok = true
+        return result
     end function
 
     function jumpTarget(state as object) as dynamic
