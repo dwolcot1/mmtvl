@@ -1,0 +1,1474 @@
+' My Teams' matching (M12 step 17): a port of MMTVL's TeamMatcher (MMTVL/IPTV/Teams/TeamMatcher.swift, M7f L13,
+' M7l L10, M7m L25–L31), with the same rules in the same order. Pure functions, no nodes.
+' tests/fixtures/teams.golden.json, written by MMTVL's own code, is the contract (tests/local/TeamMatcher.test.bs).
+'
+' Shapes:
+'   index      TeamMatcher.newIndex(teams, { initials, nicknames }): the lookups, built once per catalog and options
+'              (MMTVL's TeamMatcher.Index; 1,431 teams: build it in a Task). teams: TeamCatalog's.
+'   channels   M3U.makeChannels' channels: { id, name (as shown), group, … }.
+'   programme  XMLTVScan's: { title, subtitle, summary, category, start, stop } (seconds; a missing field invalid).
+'   nowPlaying { channel id: programme }; programmes { channel id: [programme] }.
+'   picked     the picked team ids: an array, or an AA used as a set.
+' The rules, as MMTVL's:
+'   - Game entries: a channel named exactly "Away @ Home" (after its " (Home Feed)" / " (Away Feed)"), in a group
+'     without "replay", with a side that is a pro team's full name or alias, or a college key (below). A picked
+'     team's games, playlist order, each game's feeds together, the picked team's own feed first.
+'   - Programmes (the one on now, or the next 72 h): pro teams by a full name or alias in the title or subtitle, or
+'     (outside college programmes) the nickname with a league word in the title, subtitle or category. College: the
+'     sport from the title and category, then the two sides of the subtitle (else the title after its first ":",
+'     else the summary's lead, "The <A> <verb> the <B> …", read by a linear scan, never a regex), each looked up
+'     exactly among that sport's keys: names, schools, aliases, each also followed by the nickname and without
+'     apostrophes, and with Match Initials (options.initials) the abbreviations. A key teams share gives all of them.
+'     With Match Nicknames Alone (options.nicknames) a side that is no key falls back to its nickname, narrowed by a
+'     school word the side shares, else by a conference the title, subtitle or summary lead names, else all of them.
+'   - Texts are read as MMTVL reads them: titles, subtitles, categories and channel names to 400 UTF-16 units,
+'     summaries to 4,096 then (whitespace collapsed) 400, cut at the start of the character there.
+' normalized is MMTVL's: folded (case and diacritics, EPGMatcher's fold table plus this file's few differences,
+' tools/gen-team-tables.swift), every character that isn't a letter, mark or number a space, words joined by single
+' spaces and padded with one at each end, so Instr(text, " lakers ") finds whole words.
+' Approximations, all outside the text real guides use: a code point above U+FFFF folds as EPGMatcher folds it
+' (U+1F000 to U+1FAFF separate, the rest are kept); a cut at 400 units backs over combining characters
+' (Unicode.isExtend) but not other grapheme rules (emoji ZWJ sequences, spacing marks, Hangul); an apostrophe, ":"
+' or " @ " followed by a combining mark is still that character, where Swift compares whole Characters.
+namespace TeamMatcher
+
+    const headingReadLength = 400
+    const summaryLeadLength = 400
+    const summaryReadLength = 4096
+    ' 72 h, in seconds.
+    const upcomingWindow = 259200
+    const homeFeedSuffix = " (Home Feed)"
+    const awayFeedSuffix = " (Away Feed)"
+
+    ' A case-sensitive AA (BrightScript AAs ignore key case by default).
+    function newSet() as object
+        set = {}
+        set.SetModeCaseSensitive()
+        return set
+    end function
+
+    ' The regexes and (on first need) the tables, made once and shared: an index holds one (index.n).
+    function newNormalizer() as object
+        return {
+            epg: EPGMatcher.newNormalizer(),
+            spaces: CreateObject("roRegex", "[\x09-\x0D ]+", ""),
+            kept: invalid,
+            separators: invalid,
+            digits: invalid,
+            words: invalid,
+            phrases: invalid,
+            verbs: TeamMatcher.verbs(),
+            ends: ["for", "at", "in", "on", "to"],
+            shorts: ["st", "mt", "no"]
+        }
+    end function
+
+    ' MMTVL's TeamMatcher.normalized.
+    function normalized(text as string, n = invalid as dynamic) as string
+        if n = invalid then n = TeamMatcher.newNormalizer()
+        folded = text
+        if n.epg.nonASCII.IsMatch(folded) then folded = TeamMatcher.foldNonASCII(folded, n)
+        tokens = []
+        for each token in n.epg.separator.Split(LCase(folded))
+            if token <> "" then tokens.Push(token)
+        end for
+        return " " + tokens.Join(" ") + " "
+    end function
+
+    ' A normalized text with no words.
+    function isBlank(text as string) as boolean
+        for i = 1 to Len(text)
+            if Mid(text, i, 1) <> " " then return false
+        end for
+        return true
+    end function
+
+    ' Every non-ASCII character as MMTVL folds it (see above); ASCII is left for normalized.
+    function foldNonASCII(text as string, n as object) as string
+        if n.epg.mappings = invalid then EPGMatcher.loadFoldTable(n.epg)
+        if n.kept = invalid then TeamMatcher.loadTables(n)
+        parts = []
+        count = Len(text)
+        i = 1
+        while i <= count
+            piece = Mid(text, i, 1)
+            code = Asc(piece)
+            if code >= 128
+                ' An interpreter with UTF-16 strings (brs-node) gives a surrogate pair as two characters.
+                if code >= 55296 and code <= 56319 and i < count
+                    low = Asc(Mid(text, i + 1, 1))
+                    if low >= 56320 and low <= 57343
+                        code = (code - 55296) * 1024 + (low - 56320) + 65536
+                        piece = Mid(text, i, 2)
+                        i++
+                    end if
+                end if
+                if code > 65535
+                    if code >= 126976 and code <= 129791 then piece = " "
+                else if EPGMatcher.inRanges(code, n.kept)
+                    ' as it is
+                else if EPGMatcher.inRanges(code, n.separators)
+                    piece = " "
+                else
+                    mapped = n.epg.mappings[piece]
+                    if mapped <> invalid
+                        piece = mapped
+                    else if EPGMatcher.inRanges(code, n.epg.drops)
+                        piece = ""
+                    else if EPGMatcher.inRanges(code, n.epg.separators)
+                        piece = " "
+                    end if
+                end if
+            end if
+            parts.Push(piece)
+            i++
+        end while
+        return parts.Join("")
+    end function
+
+    sub loadTables(n as object)
+        n.kept = EPGMatcher.parseRanges(TeamMatcher.keptTable())
+        n.separators = EPGMatcher.parseRanges(TeamMatcher.separatorTable())
+        n.digits = TeamMatcher.parseWideRanges(TeamMatcher.digitTable())
+        n.words = TeamMatcher.parseWideRanges(TeamMatcher.wordTable())
+    end sub
+
+    ' "SSSSSSEEEEEE…" (hex, 6 digits each) → { starts, ends }.
+    function parseWideRanges(text as string) as object
+        firsts = []
+        lasts = []
+        cursor = 1
+        length = Len(text)
+        while cursor <= length
+            firsts.Push(Val(Mid(text, cursor, 6), 16))
+            lasts.Push(Val(Mid(text, cursor + 6, 6), 16))
+            cursor += 12
+        end while
+        return { starts: firsts, ends: lasts }
+    end function
+
+    ' MMTVL's normalizedWithoutApostrophes: "Hawai'i" → " hawaii ", "St. John's" → " st johns ".
+    function normalizedWithoutApostrophes(text as string, n as object) as string
+        return TeamMatcher.normalized(text.Replace("'", "").Replace(Chr(8217), "").Replace(Chr(699), ""), n)
+    end function
+
+    ' Index.keys: each text normalized, and normalized without apostrophes; blank ones left out; each once.
+    function keys(texts as object, n as object) as object
+        seen = TeamMatcher.newSet()
+        result = []
+        for each text in texts
+            for each key in [TeamMatcher.normalized(text, n), TeamMatcher.normalizedWithoutApostrophes(text, n)]
+                if not TeamMatcher.isBlank(key) and not seen.DoesExist(key)
+                    seen[key] = true
+                    result.Push(key)
+                end if
+            end for
+        end for
+        return result
+    end function
+
+    ' A normalized text's words.
+    function words(text as string) as object
+        result = []
+        for each piece in text.Split(" ")
+            if piece <> "" then result.Push(piece)
+        end for
+        return result
+    end function
+
+    ' --- Reading only part of a text ---
+
+    ' text cut to at most length UTF-16 units, at the start of the composed character sequence there (MMTVL's
+    ' prefix(_:utf16:)): a character above U+FFFF counts 2, and combining characters stay with the one before them.
+    function prefix(text as string, length as integer, n as object) as string
+        count = Len(text)
+        if count * 2 <= length then return text
+        if not n.epg.nonASCII.IsMatch(text)
+            if count <= length then return text
+            return Left(text, length)
+        end if
+        ' The character holding unit `length` (0-based). On a Roku a string is UTF-8 and Mid gives whole characters
+        ' (above U+FFFF: 2 units); an interpreter with UTF-16 strings gives surrogate halves, a high one 2 units over 2.
+        used = 0
+        i = 1
+        while i <= count
+            code = Asc(Mid(text, i, 1))
+            units = 1
+            stride = 1
+            if code > 65535
+                units = 2
+            else if code >= 55296 and code <= 56319
+                units = 2
+                stride = 2
+            end if
+            if used + units > length then exit while
+            used += units
+            i += stride
+        end while
+        if i > count then return text
+        while i > 1 and Unicode.isExtend(TeamMatcher.codeAt(text, i))
+            i = TeamMatcher.previousIndex(text, i)
+        end while
+        return Left(text, i - 1)
+    end function
+
+    ' The code point at i (a surrogate pair as one).
+    function codeAt(text as string, i as integer) as integer
+        code = Asc(Mid(text, i, 1))
+        if code >= 55296 and code <= 56319
+            low = Asc(Mid(text, i + 1, 1))
+            if low >= 56320 and low <= 57343 then return (code - 55296) * 1024 + (low - 56320) + 65536
+        end if
+        return code
+    end function
+
+    ' Where the character before the one at i starts.
+    function previousIndex(text as string, i as integer) as integer
+        j = i - 1
+        if j >= 2
+            code = Asc(Mid(text, j, 1))
+            if code >= 56320 and code <= 57343
+                high = Asc(Mid(text, j - 1, 1))
+                if high >= 55296 and high <= 56319 then return j - 1
+            end if
+        end if
+        return j
+    end function
+
+    ' A field of a programme, or "" when it has none.
+    function field(value as dynamic) as string
+        if value = invalid then return ""
+        return value
+    end function
+
+    ' MMTVL's bounded: the programme with its title, subtitle and category cut to headingReadLength (a copy).
+    function bounded(programme as object, n as object) as object
+        result = {
+            title: TeamMatcher.prefix(TeamMatcher.field(programme.title), TeamMatcher.headingReadLength, n),
+            subtitle: invalid,
+            category: invalid,
+            summary: programme.summary,
+            start: programme.start,
+            stop: programme.stop
+        }
+        if programme.subtitle <> invalid then result.subtitle = TeamMatcher.prefix(programme.subtitle, TeamMatcher.headingReadLength, n)
+        if programme.category <> invalid then result.category = TeamMatcher.prefix(programme.category, TeamMatcher.headingReadLength, n)
+        return result
+    end function
+
+    ' --- Game entries ---
+
+    ' MMTVL's game(from:): "Miami Heat @ Los Angeles Lakers (Home Feed)" → { away, home, feed: "home" }; feed
+    ' "away" or invalid; invalid when the name isn't "Away @ Home". The name is read to headingReadLength.
+    function game(name as string, n = invalid as dynamic) as dynamic
+        if n = invalid then n = TeamMatcher.newNormalizer()
+        base = TeamMatcher.prefix(name, TeamMatcher.headingReadLength, n)
+        feed = invalid
+        if Right(base, Len(TeamMatcher.homeFeedSuffix)) = TeamMatcher.homeFeedSuffix
+            base = Left(base, Len(base) - Len(TeamMatcher.homeFeedSuffix))
+            feed = "home"
+        else if Right(base, Len(TeamMatcher.awayFeedSuffix)) = TeamMatcher.awayFeedSuffix
+            base = Left(base, Len(base) - Len(TeamMatcher.awayFeedSuffix))
+            feed = "away"
+        end if
+        sides = TeamMatcher.components(base, " @ ")
+        if sides.Count() <> 2 then return invalid
+        away = Unicode.trim(sides[0])
+        home = Unicode.trim(sides[1])
+        if away = "" or home = "" then return invalid
+        return { away: away, home: home, feed: feed }
+    end function
+
+    ' Foundation's components(separatedBy:): every piece between the separators, empty ones included.
+    function components(text as string, separator as string) as object
+        parts = []
+        cursor = 1
+        width = Len(separator)
+        while true
+            found = Instr(cursor, text, separator)
+            if found = 0 then exit while
+            parts.Push(Mid(text, cursor, found - cursor))
+            cursor = found + width
+        end while
+        parts.Push(Mid(text, cursor))
+        return parts
+    end function
+
+    ' The pro team whose full name or an alias is exactly name (case and punctuation aside), else invalid.
+    function teamNamed(name as string, index as object) as dynamic
+        return index.proFullNames[TeamMatcher.normalized(name, index.n)]
+    end function
+
+    ' MMTVL's gameEntry: the game a channel is the entry of, else invalid.
+    function gameEntry(channel as object, index as object) as dynamic
+        n = index.n
+        if Instr(1, Unicode.lower(TeamMatcher.field(channel.group), n.epg.nonASCII), "replay") > 0 then return invalid
+        found = TeamMatcher.game(TeamMatcher.field(channel.name), n)
+        if found = invalid then return invalid
+        if TeamMatcher.isKnownSide(found.away, index) or TeamMatcher.isKnownSide(found.home, index) then return found
+        return invalid
+    end function
+
+    function isKnownSide(side as string, index as object) as boolean
+        if TeamMatcher.teamNamed(side, index) <> invalid then return true
+        return index.collegeSchools.DoesExist(TeamMatcher.normalized(side, index.n))
+    end function
+
+    function isGameEntry(channel as object, index as object) as boolean
+        return TeamMatcher.gameEntry(channel, index) <> invalid
+    end function
+
+    ' The away team, then the home team, of a game entry (pro teams only: a college entry doesn't say its sport).
+    function teamsInGame(channel as object, index as object) as object
+        found = TeamMatcher.gameEntry(channel, index)
+        teams = []
+        if found = invalid then return teams
+        for each side in [found.away, found.home]
+            team = TeamMatcher.teamNamed(side, index)
+            if team <> invalid then teams.Push(team)
+        end for
+        return teams
+    end function
+
+    ' picked as a case-sensitive set.
+    function pickedSet(picked as dynamic) as object
+        if type(picked) = "roAssociativeArray" then return picked
+        set = TeamMatcher.newSet()
+        if picked <> invalid
+            for each id in picked
+                set[id] = true
+            end for
+        end if
+        return set
+    end function
+
+    ' The picked teams the index knows, each once.
+    function candidates(picked as dynamic, index as object) as object
+        teams = []
+        set = TeamMatcher.pickedSet(picked)
+        for each id in set
+            team = index.byID[id]
+            if team <> invalid then teams.Push(team)
+        end for
+        return teams
+    end function
+
+    ' MMTVL's gameChannelIDs: the picked teams' game entries (a side is a pro team by full name, else a college key
+    ' naming a picked school, in any sport), playlist order of each game's first entry, the game's feeds together,
+    ' the picked team's own feed first (with both teams picked, playlist order).
+    function gameChannelIDs(channels as object, picked as dynamic, index as object) as object
+        n = index.n
+        set = TeamMatcher.pickedSet(picked)
+        schools = TeamMatcher.newSet()
+        for each id in set
+            team = index.byID[id]
+            if team <> invalid and TeamCatalog.isCollege(team.league)
+                school = team.school
+                if school = invalid then school = team.name
+                schools[TeamMatcher.normalized(school, n)] = true
+            end if
+        end for
+        order = []
+        feeds = TeamMatcher.newSet()
+        for each channel in channels
+            found = TeamMatcher.gameEntry(channel, index)
+            if found <> invalid
+                away = TeamMatcher.isPickedSide(found.away, set, schools, index)
+                home = TeamMatcher.isPickedSide(found.home, set, schools, index)
+                if away or home
+                    key = TeamMatcher.normalized(found.away, n) + "@" + TeamMatcher.normalized(found.home, n)
+                    if not feeds.DoesExist(key)
+                        order.Push(key)
+                        feeds[key] = []
+                    end if
+                    preferred = false
+                    if found.feed = "home"
+                        preferred = home and not away
+                    else if found.feed = "away"
+                        preferred = away and not home
+                    end if
+                    feeds[key].Push({ id: channel.id, preferred: preferred })
+                end if
+            end if
+        end for
+        ids = []
+        for each key in order
+            for each entry in feeds[key]
+                if entry.preferred then ids.Push(entry.id)
+            end for
+            for each entry in feeds[key]
+                if not entry.preferred then ids.Push(entry.id)
+            end for
+        end for
+        return ids
+    end function
+
+    function isPickedSide(side as string, set as object, schools as object, index as object) as boolean
+        team = TeamMatcher.teamNamed(side, index)
+        if team <> invalid then return set.DoesExist(team.id)
+        named = index.collegeSchools[TeamMatcher.normalized(side, index.n)]
+        if named = invalid then return false
+        for each school in named
+            if schools.DoesExist(school) then return true
+        end for
+        return false
+    end function
+
+    ' --- Programmes ---
+
+    ' MMTVL's isLiveGame: not a pregame or postgame show, highlights, a classic or a replay.
+    function isLiveGame(programme as object, n = invalid as dynamic) as boolean
+        if n = invalid then n = TeamMatcher.newNormalizer()
+        title = TeamMatcher.normalized(TeamMatcher.prefix(TeamMatcher.field(programme.title), TeamMatcher.headingReadLength, n), n)
+        for each excluded in ["pregame", "postgame", "highlights", "classic", "replay"]
+            if Instr(1, title, " " + excluded + " ") > 0 then return false
+        end for
+        return true
+    end function
+
+    ' MMTVL's collegeLeague: the college sport a programme's title and category name ("ncaaf" …), else invalid.
+    function collegeLeague(programme as object, n = invalid as dynamic) as dynamic
+        if n = invalid then n = TeamMatcher.newNormalizer()
+        return TeamMatcher.boundedCollegeLeague(TeamMatcher.bounded(programme, n), n)
+    end function
+
+    function boundedCollegeLeague(programme as object, n as object) as dynamic
+        text = TeamMatcher.normalized(TeamMatcher.field(programme.title) + " " + TeamMatcher.field(programme.category), n)
+        if TeamMatcher.hasAny(text, ["women s college basketball", "ncaaw"]) then return "ncaaw"
+        if TeamMatcher.hasAny(text, ["college basketball", "ncaab", "ncaam"]) then return "ncaam"
+        if TeamMatcher.hasAny(text, ["college football", "ncaaf"]) then return "ncaaf"
+        if TeamMatcher.hasAny(text, ["college baseball"]) then return "ncaabase"
+        return invalid
+    end function
+
+    function hasAny(text as string, needles as object) as boolean
+        for each phrase in needles
+            if Instr(1, text, " " + phrase + " ") > 0 then return true
+        end for
+        return false
+    end function
+
+    ' MMTVL's collegeSides: the two sides, normalized, from the subtitle, else the title after its first ":" (not
+    ' after a leading "Live:"), a leading "<event>: " and a rank dropped; else from the summary's lead. Empty unless
+    ' there are exactly two.
+    function collegeSides(programme as object, n = invalid as dynamic) as object
+        if n = invalid then n = TeamMatcher.newNormalizer()
+        return TeamMatcher.boundedCollegeSides(TeamMatcher.bounded(programme, n), n)
+    end function
+
+    function boundedCollegeSides(programme as object, n as object) as object
+        sides = TeamMatcher.headingSides(programme, n)
+        if sides.Count() > 0 then return sides
+        return TeamMatcher.summarySides(TeamMatcher.field(programme.summary), n)
+    end function
+
+    function headingSides(programme as object, n as object) as object
+        text = ""
+        subtitle = ""
+        if programme.subtitle <> invalid then subtitle = Unicode.trim(programme.subtitle)
+        if subtitle <> ""
+            text = subtitle
+        else
+            title = Unicode.trim(TeamMatcher.field(programme.title))
+            if LCase(Left(title, 5)) = "live:" then title = Mid(title, 6)
+            colon = Instr(1, title, ":")
+            if colon = 0 then return []
+            text = Mid(title, colon + 1)
+        end if
+        ' "SEC Tournament: Georgia vs. Oklahoma" → "Georgia vs. Oklahoma".
+        colon = Instr(1, text, ":")
+        if colon > 0 then text = Mid(text, colon + 1)
+        lowered = Unicode.lower(text, n.epg.nonASCII)
+        for each separator in [" at ", " vs. ", " vs ", " @ "]
+            parts = TeamMatcher.components(lowered, separator)
+            if parts.Count() > 1
+                if parts.Count() <> 2 then return []
+                sides = []
+                for each part in parts
+                    side = TeamMatcher.normalized(TeamMatcher.dropRank(part, n), n)
+                    if TeamMatcher.isBlank(side) then return []
+                    sides.Push(side)
+                end for
+                return sides
+            end if
+        end for
+        return []
+    end function
+
+    ' A side without a leading rank: MMTVL's ^\s*(no\.?\s*\d+|#\s*\d+|\(\s*\d+\s*\))\s+ removed (on lowercased text).
+    function dropRank(side as string, n as object) as string
+        lead = TeamMatcher.leadState(side, n)
+        start = TeamMatcher.skipSpaces(lead, 0)
+        after = TeamMatcher.rankEnd(lead, start)
+        if after < 0 then return side
+        return TeamMatcher.joinPieces(lead, after, lead.count)
+    end function
+
+    ' MMTVL's summarySides: the two sides a summary's lead names, normalized; else empty.
+    function summarySides(summary as string, n = invalid as dynamic) as object
+        if n = invalid then n = TeamMatcher.newNormalizer()
+        cut = TeamMatcher.prefix(summary, TeamMatcher.summaryReadLength, n)
+        collapsed = TeamMatcher.collapseSpaces(cut, TeamMatcher.summaryLeadLength, n)
+        found = TeamMatcher.leadSides(TeamMatcher.prefix(collapsed, TeamMatcher.summaryLeadLength, n), n)
+        if found = invalid then return []
+        a = TeamMatcher.normalized(found[0], n)
+        b = TeamMatcher.normalized(found[1], n)
+        if TeamMatcher.isBlank(a) or TeamMatcher.isBlank(b) then return []
+        return [a, b]
+    end function
+
+    ' Runs of whitespace (ICU's \s, Unicode.isSpace with newlines) as one space. Reading stops once more than
+    ' units UTF-16 units are written: the lead is cut to units next, so the rest can't change it.
+    function collapseSpaces(text as string, units as integer, n as object) as string
+        if not n.epg.nonASCII.IsMatch(text) then return n.spaces.ReplaceAll(text, " ")
+        parts = []
+        written = 0
+        inSpace = false
+        count = Len(text)
+        for i = 1 to count
+            piece = Mid(text, i, 1)
+            code = Asc(piece)
+            if Unicode.isSpace(code, true)
+                if not inSpace
+                    parts.Push(" ")
+                    written++
+                    inSpace = true
+                end if
+            else
+                parts.Push(piece)
+                inSpace = false
+                if code > 65535 then written += 2 else written++
+            end if
+            if written > units then exit for
+        end for
+        return parts.Join("")
+    end function
+
+    ' --- The summary's lead (MMTVL's SummaryLead) ---
+    '
+    ' "The [No. N] <A> [(record)] <verb> the [No. N] <B> [(record)]" at the start of a summary, then for/at/in/on/to
+    ' or "." "," ";". A side may contain parentheses; only a trailing one that starts with a digit is a record and
+    ' dropped. "." after "St"/"Mt"/"No" or an initial doesn't end a side. Run on a collapsed lead of at most 400
+    ' units: a scan over its code points, linear apart from at most four passes (with and without each rank).
+
+    ' The text as code points (a UTF-16 interpreter's surrogate pairs joined) and their pieces of text.
+    function leadState(text as string, n as object) as object
+        codes = []
+        pieces = []
+        count = Len(text)
+        i = 1
+        while i <= count
+            piece = Mid(text, i, 1)
+            code = Asc(piece)
+            if code >= 55296 and code <= 56319 and i < count
+                low = Asc(Mid(text, i + 1, 1))
+                if low >= 56320 and low <= 57343
+                    code = (code - 55296) * 1024 + (low - 56320) + 65536
+                    piece = Mid(text, i, 2)
+                    i++
+                end if
+            end if
+            codes.Push(code)
+            pieces.Push(piece)
+            i++
+        end while
+        return { u: codes, pieces: pieces, count: codes.Count(), n: n, nextClose: invalid }
+    end function
+
+    ' The two sides, as written (not normalized), else invalid.
+    function leadSides(text as string, n as object) as dynamic
+        s = TeamMatcher.leadState(text, n)
+        u = s.u
+        i = TeamMatcher.skipSpaces(s, 0)
+        afterThe = TeamMatcher.word(s, "the", i)
+        if afterThe < 0 or afterThe >= s.count then return invalid
+        if u[afterThe] <> 32 then return invalid
+        i = TeamMatcher.skipSpaces(s, afterThe)
+        s.nextClose = TeamMatcher.closingParentheses(s)
+        for each aStart in TeamMatcher.starts(s, i)
+            verb = TeamMatcher.firstVerb(s, aStart)
+            if verb <> invalid
+                for each bStart in TeamMatcher.starts(s, verb.next)
+                    bEnd = TeamMatcher.firstEnd(s, bStart)
+                    if bEnd >= 0 then return [TeamMatcher.joinPieces(s, aStart, verb.ending), TeamMatcher.joinPieces(s, bStart, bEnd)]
+                end for
+            end if
+        end for
+        return invalid
+    end function
+
+    function joinPieces(s as object, first as integer, last as integer) as string
+        parts = []
+        for k = first to last - 1
+            parts.Push(s.pieces[k])
+        end for
+        return parts.Join("")
+    end function
+
+    ' Where a side may start: after its rank, if it has one, then at i itself.
+    function starts(s as object, i as integer) as object
+        after = TeamMatcher.rankEnd(s, i)
+        if after >= 0 then return [after, i]
+        return [i]
+    end function
+
+    ' The first p > from where a side can end before (a record and) a verb and "the": { ending: p, next: where
+    ' side B starts }, else invalid.
+    function firstVerb(s as object, from as integer) as dynamic
+        p = from + 1
+        while p < s.count
+            after = -1
+            record = TeamMatcher.recordEnd(s, p)
+            if record >= 0 then after = TeamMatcher.verbPhraseEnd(s, record)
+            if after < 0 then after = TeamMatcher.verbPhraseEnd(s, p)
+            if after >= 0 then return { ending: p, next: after }
+            p++
+        end while
+        return invalid
+    end function
+
+    ' The first p > from where side B can end before (a record and) an end, else -1.
+    function firstEnd(s as object, from as integer) as integer
+        p = from + 1
+        while p <= s.count
+            record = TeamMatcher.recordEnd(s, p)
+            if record >= 0
+                if TeamMatcher.isEnd(s, record) then return p
+            end if
+            if TeamMatcher.isEnd(s, p) then return p
+            p++
+        end while
+        return -1
+    end function
+
+    ' The verbs, each a list of words; a trailing "s" (or "es" for clash) on the first is optional.
+    function verbs() as object
+        return [["visit"], ["face"], ["meet"], ["host"], ["clash", "with"], ["take", "on"], ["play"], ["battle"], ["square", "off", "against"]]
+    end function
+
+    ' \s+ <verb> \s+ the \s+ at p: the index after it, else -1.
+    function verbPhraseEnd(s as object, p as integer) as integer
+        u = s.u
+        if p >= s.count then return -1
+        if u[p] <> 32 then return -1
+        start = TeamMatcher.skipSpaces(s, p)
+        for each verb in s.n.verbs
+            i = start
+            matched = true
+            for k = 0 to verb.Count() - 1
+                part = verb[k]
+                if k > 0
+                    if i >= s.count
+                        matched = false
+                    else if u[i] <> 32
+                        matched = false
+                    end if
+                    if not matched then exit for
+                    i = TeamMatcher.skipSpaces(s, i)
+                end if
+                after = TeamMatcher.word(s, part, i)
+                if after < 0
+                    matched = false
+                    exit for
+                end if
+                i = after
+                ' "visits", "clashes": an optional ending on the first word.
+                if k = 0
+                    ending = "s"
+                    if part = "clash" then ending = "es"
+                    longer = TeamMatcher.word(s, ending, i)
+                    if longer >= 0 and longer < s.count
+                        if u[longer] = 32 then i = longer
+                    end if
+                end if
+            end for
+            if matched and i < s.count
+                if u[i] = 32
+                    theStart = TeamMatcher.skipSpaces(s, i)
+                    afterThe = TeamMatcher.word(s, "the", theStart)
+                    if afterThe >= 0 and afterThe < s.count
+                        if u[afterThe] = 32 then return TeamMatcher.skipSpaces(s, afterThe)
+                    end if
+                end if
+            end if
+        end for
+        return -1
+    end function
+
+    ' An end at p: \s+(for|at|in|on|to)\b, or \s*[.,;] not right after "St", "Mt", "No" or one letter.
+    function isEnd(s as object, p as integer) as boolean
+        u = s.u
+        n = s.n
+        if p < s.count
+            if u[p] = 32
+                q = TeamMatcher.skipSpaces(s, p)
+                for each ending in n.ends
+                    after = TeamMatcher.word(s, ending, q)
+                    if after >= 0
+                        if after = s.count then return true
+                        if not TeamMatcher.isWord(u[after], n) then return true
+                    end if
+                end for
+            end if
+        end if
+        q = TeamMatcher.skipSpaces(s, p)
+        if q >= s.count then return false
+        c = u[q]
+        if c <> 46 and c <> 44 and c <> 59 then return false
+        if q >= 2
+            for each short in n.shorts
+                if TeamMatcher.word(s, short, q - 2) >= 0
+                    if q = 2 then return false
+                    if not TeamMatcher.isWord(u[q - 3], n) then return false
+                end if
+            end for
+        end if
+        if q >= 1
+            if TeamMatcher.isWord(u[q - 1], n)
+                if q = 1 then return false
+                if not TeamMatcher.isWord(u[q - 2], n) then return false
+            end if
+        end if
+        return true
+    end function
+
+    ' A record at p, \s*\(\d[^)]*\): the index after its ")", else -1.
+    function recordEnd(s as object, p as integer) as integer
+        q = TeamMatcher.skipSpaces(s, p)
+        if q + 1 >= s.count then return -1
+        if s.u[q] <> 40 or not TeamMatcher.isDigit(s.u[q + 1], s.n) then return -1
+        close = s.nextClose[q + 1]
+        if close < s.count then return close + 1
+        return -1
+    end function
+
+    ' A rank at i, (no\.?\s*\d+|#\s*\d+|\(\s*\d+\s*\))\s+: the index after its spaces, else -1.
+    function rankEnd(s as object, i as integer) as integer
+        u = s.u
+        j = -1
+        after = TeamMatcher.word(s, "no", i)
+        if after >= 0
+            j = after
+            if j < s.count
+                if u[j] = 46 then j++
+            end if
+            j = TeamMatcher.skipDigits(s, TeamMatcher.skipSpaces(s, j))
+        else if i < s.count and u[i] = 35
+            j = TeamMatcher.skipDigits(s, TeamMatcher.skipSpaces(s, i + 1))
+        else if i < s.count and u[i] = 40
+            j = TeamMatcher.skipDigits(s, TeamMatcher.skipSpaces(s, i + 1))
+            if j >= 0
+                j = TeamMatcher.skipSpaces(s, j)
+                if j < s.count and u[j] = 41 then j++ else j = -1
+            end if
+        else
+            return -1
+        end if
+        if j < 0 or j >= s.count then return -1
+        if not Unicode.isSpace(u[j], true) then return -1
+        return TeamMatcher.skipSpaces(s, j)
+    end function
+
+    ' literal (lowercase ASCII) at i, ignoring the case of A–Z: the index after it, else -1. Not a whole-word check.
+    function word(s as object, literal as string, i as integer) as integer
+        u = s.u
+        j = i
+        for k = 1 to Len(literal)
+            if j < 0 or j >= s.count then return -1
+            c = u[j]
+            if c >= 65 and c <= 90 then c += 32
+            if c <> Asc(Mid(literal, k, 1)) then return -1
+            j++
+        end for
+        return j
+    end function
+
+    ' Past whitespace (ICU's \s; the collapsed lead has only spaces).
+    function skipSpaces(s as object, i as integer) as integer
+        j = i
+        while j < s.count
+            if not Unicode.isSpace(s.u[j], true) then return j
+            j++
+        end while
+        return j
+    end function
+
+    ' Past at least one digit, else -1.
+    function skipDigits(s as object, i as integer) as integer
+        j = i
+        while j < s.count
+            if not TeamMatcher.isDigit(s.u[j], s.n) then exit while
+            j++
+        end while
+        if j = i then return -1
+        return j
+    end function
+
+    ' For each index, the index of the first ")" at or after it (count when none).
+    function closingParentheses(s as object) as object
+        result = []
+        for k = 0 to s.count
+            result.Push(s.count)
+        end for
+        i = s.count - 1
+        while i >= 0
+            if s.u[i] = 41 then result[i] = i else result[i] = result[i + 1]
+            i--
+        end while
+        return result
+    end function
+
+    ' ICU's \d: a decimal digit of any script.
+    function isDigit(code as integer, n as object) as boolean
+        if code < 128 then return code >= 48 and code <= 57
+        if n.digits = invalid then TeamMatcher.loadTables(n)
+        return EPGMatcher.inRanges(code, n.digits)
+    end function
+
+    ' ICU's \w: letters, marks, decimal digits, connector punctuation, ZWNJ and ZWJ.
+    function isWord(code as integer, n as object) as boolean
+        if code < 128
+            if code >= 97 and code <= 122 then return true
+            if code >= 65 and code <= 90 then return true
+            return (code >= 48 and code <= 57) or code = 95
+        end if
+        if n.words = invalid then TeamMatcher.loadTables(n)
+        return EPGMatcher.inRanges(code, n.words)
+    end function
+
+    ' --- Conferences (M7m L30) ---
+
+    ' Index.conferencePhrases: how guides name a conference where its catalog name alone isn't enough.
+    function conferencePhrases(n as object) as object
+        if n.phrases <> invalid then return n.phrases
+        table = TeamMatcher.newSet()
+        table["American"] = ["American Athletic", "AAC"]
+        table["Southern"] = ["Southern Conference", "SoCon"]
+        table["Northeast"] = ["Northeast Conference", "NEC"]
+        table["West Coast"] = ["West Coast Conference", "WCC"]
+        table["Mid-American"] = ["Mid-American", "MAC"]
+        table["Atlantic Sun"] = ["Atlantic Sun", "ASUN"]
+        table["Conference USA"] = ["Conference USA", "C-USA", "CUSA"]
+        table["Mountain West"] = ["Mountain West", "MWC"]
+        table["Big Ten"] = ["Big Ten", "B1G"]
+        table["Missouri Valley Football"] = ["Missouri Valley Football", "MVFC"]
+        table["Pioneer Football League"] = ["Pioneer Football League", "Pioneer League"]
+        table["UAC"] = ["UAC", "United Athletic Conference"]
+        table["CAA"] = ["CAA", "Coastal Athletic"]
+        table["FBS Independents"] = []
+        table["FCS Independents"] = []
+        n.phrases = table
+        return table
+    end function
+
+    ' Index.phrases(naming:): the normalized phrases that name a conference ("Big Sky (FCS)" → [" big sky "]).
+    function phrases(conference as string, n = invalid as dynamic) as object
+        if n = invalid then n = TeamMatcher.newNormalizer()
+        shortName = conference
+        paren = Instr(1, conference, "(")
+        if paren > 0 then shortName = Left(conference, paren - 1)
+        shortName = Unicode.trim(shortName)
+        table = TeamMatcher.conferencePhrases(n)
+        names = table[shortName]
+        if names = invalid then names = [shortName]
+        result = []
+        for each name in names
+            phrase = TeamMatcher.normalized(name, n)
+            if not TeamMatcher.isBlank(phrase) then result.Push(phrase)
+        end for
+        return result
+    end function
+
+    ' MMTVL's conferenceSearchText: the title, subtitle and the summary's first summaryLeadLength units, normalized.
+    function conferenceSearchText(programme as object, n = invalid as dynamic) as string
+        if n = invalid then n = TeamMatcher.newNormalizer()
+        b = TeamMatcher.bounded(programme, n)
+        summary = TeamMatcher.prefix(TeamMatcher.field(b.summary), TeamMatcher.summaryLeadLength, n)
+        return TeamMatcher.normalized(TeamMatcher.field(b.title) + " " + TeamMatcher.field(b.subtitle) + " " + summary, n)
+    end function
+
+    ' --- Teams of a programme ---
+
+    ' MMTVL's teams(in:among:): teamsBySide flattened, each team once. candidates: teams (invalid: the index's).
+    function teamsIn(programme as object, among as dynamic, index as object) as object
+        seen = TeamMatcher.newSet()
+        result = []
+        for each side in TeamMatcher.teamsBySide(programme, among, index)
+            for each team in side
+                if not seen.DoesExist(team.id)
+                    seen[team.id] = true
+                    result.Push(team)
+                end if
+            end for
+        end for
+        return result
+    end function
+
+    ' MMTVL's teamsBySide (M7m L31): the candidates a programme is about, one array per side that names any, in the
+    ' programme's order; college sides first (a side that names a team exactly claims it before a nickname-only
+    ' side), then the pro teams it names, one each, in candidate order.
+    function teamsBySide(fullProgramme as object, among as dynamic, index as object) as object
+        n = index.n
+        if among = invalid then among = index.teams
+        programme = TeamMatcher.bounded(fullProgramme, n)
+        sides = []
+        league = TeamMatcher.boundedCollegeLeague(programme, n)
+        if league <> invalid
+            names = index.collegeNames[league]
+            if names <> invalid
+                ids = TeamMatcher.newSet()
+                for each team in among
+                    ids[team.id] = true
+                end for
+                ' The conference search text, made at most once, only for a fallback.
+                state = { programme: programme, text: invalid }
+                named = []
+                for each side in TeamMatcher.boundedCollegeSides(programme, n)
+                    exact = names[side]
+                    if exact <> invalid
+                        named.Push({ teams: exact, exact: true })
+                    else if index.options.nicknames
+                        named.Push({ teams: TeamMatcher.nicknameTeams(side, league, index, state), exact: false })
+                    else
+                        named.Push({ teams: [], exact: false })
+                    end if
+                end for
+                ' Exact sides claim their teams first, then the fallback sides take what's left.
+                seen = TeamMatcher.newSet()
+                found = []
+                for k = 0 to named.Count() - 1
+                    found.Push([])
+                end for
+                for k = 0 to named.Count() - 1
+                    if named[k].exact then found[k] = TeamMatcher.claim(named[k].teams, ids, seen)
+                end for
+                for k = 0 to named.Count() - 1
+                    if not named[k].exact then found[k] = TeamMatcher.claim(named[k].teams, ids, seen)
+                end for
+                for each side in found
+                    if side.Count() > 0 then sides.Push(side)
+                end for
+            end if
+        end if
+        title = TeamMatcher.field(programme.title)
+        subtitle = TeamMatcher.field(programme.subtitle)
+        text = TeamMatcher.normalized(title + " " + subtitle, n)
+        leagueText = TeamMatcher.normalized(title + " " + subtitle + " " + TeamMatcher.field(programme.category), n)
+        normalizedTitle = TeamMatcher.normalized(title, n)
+        ' "basketball" in "College Basketball" isn't the NBA's.
+        isCollegeProgramme = league <> invalid or Instr(1, normalizedTitle, " college ") > 0 or Instr(1, normalizedTitle, " ncaa") > 0
+        for each team in among
+            if not TeamCatalog.isCollege(team.league)
+                if TeamMatcher.proNamed(team, text, leagueText, isCollegeProgramme, index) then sides.Push([team])
+            end if
+        end for
+        return sides
+    end function
+
+    function claim(teams as object, ids as object, seen as object) as object
+        result = []
+        for each team in teams
+            if ids.DoesExist(team.id) and not seen.DoesExist(team.id)
+                seen[team.id] = true
+                result.Push(team)
+            end if
+        end for
+        return result
+    end function
+
+    ' A pro team named in a programme: a full name or alias in text (one that is only the nickname, "Athletics",
+    ' doesn't count alone), or outside college programmes the nickname there with a league word in leagueText.
+    function proNamed(team as object, text as string, leagueText as string, isCollegeProgramme as boolean, index as object) as boolean
+        forms = index.pro[team.id]
+        if forms = invalid then forms = TeamMatcher.proForms(team, index.n)
+        for each name in forms.names
+            if name <> forms.nickname and Instr(1, text, name) > 0 then return true
+        end for
+        if isCollegeProgramme or Instr(1, text, forms.nickname) = 0 then return false
+        for each leagueWord in TeamCatalog.leagueWords(team.league)
+            if Instr(1, leagueText, " " + leagueWord + " ") > 0 then return true
+        end for
+        return false
+    end function
+
+    ' A pro team's normalized full names and nickname.
+    function proForms(team as object, n as object) as object
+        names = []
+        for each name in TeamCatalog.fullNames(team)
+            names.Push(TeamMatcher.normalized(name, n))
+        end for
+        return { names: names, nickname: TeamMatcher.normalized(team.nickname, n) }
+    end function
+
+    ' MMTVL's nicknameTeams (M7m L28): the league's teams a side that is no key names by its nickname (its last
+    ' words, the longest nickname first), narrowed by a shared school word, else by a conference the programme
+    ' names, else all of them; empty when the side ends with no nickname.
+    function nicknameTeams(side as string, league as string, index as object, state as object) as object
+        nicknames = index.collegeNicknames[league]
+        if nicknames = invalid then return []
+        sideWords = TeamMatcher.words(side)
+        top = sideWords.Count()
+        if index.maxNicknameWords < top then top = index.maxNicknameWords
+        for count = top to 1 step -1
+            parts = []
+            for k = sideWords.Count() - count to sideWords.Count() - 1
+                parts.Push(sideWords[k])
+            end for
+            teams = nicknames[" " + parts.Join(" ") + " "]
+            if teams <> invalid
+                if sideWords.Count() > count
+                    before = TeamMatcher.newSet()
+                    for k = 0 to sideWords.Count() - count - 1
+                        before[sideWords[k]] = true
+                    end for
+                    sharing = []
+                    for each team in teams
+                        schoolWords = index.collegeSchoolWords[team.id]
+                        if schoolWords <> invalid
+                            for each schoolWord in schoolWords
+                                if before.DoesExist(schoolWord)
+                                    sharing.Push(team)
+                                    exit for
+                                end if
+                            end for
+                        end if
+                    end for
+                    if sharing.Count() > 0 then return sharing
+                end if
+                if state.text = invalid then state.text = TeamMatcher.conferenceSearchText(state.programme, index.n)
+                named = []
+                for each team in teams
+                    teamPhrases = index.collegeConferences[team.id]
+                    if teamPhrases <> invalid
+                        for each phrase in teamPhrases
+                            if Instr(1, state.text, phrase) > 0
+                                named.Push(team)
+                                exit for
+                            end if
+                        end for
+                    end if
+                end for
+                if named.Count() = 0 then return teams
+                return named
+            end if
+        end for
+        return []
+    end function
+
+    ' --- My Teams ---
+
+    ' MMTVL's channelIDs: the picked teams' game entries, then the network channels whose programme on now is about
+    ' a picked team (playlist order).
+    function channelIDs(channels as object, nowPlaying as object, picked as dynamic, index as object) as object
+        if TeamMatcher.pickedSet(picked).Count() = 0 then return []
+        ids = TeamMatcher.gameChannelIDs(channels, picked, index)
+        ids.Append(TeamMatcher.networkChannelIDs(channels, nowPlaying, picked, index))
+        return ids
+    end function
+
+    ' channelIDs, with (DEBUG builds) a console line of how long it took: the device check of step 17 (100
+    ' channels' programmes in under 500 ms on a stick). Counts only, never names.
+    function timedChannelIDs(channels as object, nowPlaying as object, picked as dynamic, index as object) as object
+        #if DEBUG
+            timer = CreateObject("roTimespan")
+        #end if
+        ids = TeamMatcher.channelIDs(channels, nowPlaying, picked, index)
+        #if DEBUG
+            Log.info("IPTV", "Teams: matched " + channels.Count().ToStr() + " channels (" + nowPlaying.Count().ToStr() + " programmes on now) in " + timer.TotalMilliseconds().ToStr() + " ms: " + ids.Count().ToStr() + " in My Teams")
+        #end if
+        return ids
+    end function
+
+    ' MMTVL's networkChannelIDs: channels that aren't game entries whose programme on now is a live game about a
+    ' picked team. Only the picked teams are looked for.
+    function networkChannelIDs(channels as object, nowPlaying as object, picked as dynamic, index as object) as object
+        pickedTeams = TeamMatcher.candidates(picked, index)
+        ids = []
+        if pickedTeams.Count() = 0 then return ids
+        for each channel in channels
+            programme = nowPlaying[channel.id]
+            if programme <> invalid
+                if not TeamMatcher.isGameEntry(channel, index) and TeamMatcher.isLiveGame(programme, index.n)
+                    if TeamMatcher.teamsIn(programme, pickedTeams, index).Count() > 0 then ids.Push(channel.id)
+                end if
+            end if
+        end for
+        return ids
+    end function
+
+    ' MMTVL's upcomingGames (M7l 8c): programmes starting after now and before now + 72 h on channels that aren't game
+    ' entries, about a picked team by the live-game rules; soonest first, then playlist order; one per start on a
+    ' channel. [{ channel, programme, label }]. The guide's cap of 30 visible games is the lineup's (step 18).
+    function upcomingGames(channels as object, programmes as object, picked as dynamic, now as dynamic, index as object, cancel = invalid as dynamic) as object
+        games = TeamMatcher.finishedUpcomingGames(channels, programmes, picked, now, index, cancel)
+        if games = invalid then return []
+        return games
+    end function
+
+    ' upcomingGames, or invalid when cancel.isCancelled() (asked before each programme) turned true first: a
+    ' cancelled match stops at once and its partial result is never used. cancel: invalid, or an object with an
+    ' isCancelled() method.
+    function finishedUpcomingGames(channels as object, programmes as object, picked as dynamic, now as dynamic, index as object, cancel = invalid as dynamic) as dynamic
+        pickedTeams = TeamMatcher.candidates(picked, index)
+        if pickedTeams.Count() = 0 then return []
+        n = index.n
+        endTime = now + TeamMatcher.upcomingWindow
+        ' Each distinct title, subtitle, category and summary is matched once.
+        matches = TeamMatcher.newSet()
+        found = []
+        for order = 0 to channels.Count() - 1
+            channel = channels[order]
+            if not TeamMatcher.isGameEntry(channel, index)
+                seen = TeamMatcher.newSet()
+                list = programmes[channel.id]
+                if list = invalid then list = []
+                for each programme in list
+                    if cancel <> invalid
+                        if cancel.isCancelled() then return invalid
+                    end if
+                    start = programme.start
+                    if start > now and start < endTime
+                        key = TeamMatcher.field(programme.title) + Chr(31) + TeamMatcher.field(programme.subtitle) + Chr(31) + TeamMatcher.field(programme.category) + Chr(31) + TeamMatcher.field(programme.summary)
+                        about = matches[key]
+                        if about = invalid
+                            about = TeamMatcher.isLiveGame(programme, n) and TeamMatcher.teamsIn(programme, pickedTeams, index).Count() > 0
+                            matches[key] = about
+                        end if
+                        startKey = start.ToStr()
+                        if about and not seen.DoesExist(startKey)
+                            seen[startKey] = true
+                            found.Push({ order: order, start: start, game: { channel: channel, programme: programme, label: TeamMatcher.label(programme) } })
+                        end if
+                    end if
+                end for
+            end if
+        end for
+        games = []
+        for each entry in TeamMatcher.sortedByStart(found)
+            games.Push(entry.game)
+        end for
+        return games
+    end function
+
+    ' By (start, order): a merge sort, so equal keys keep their order on every Roku.
+    function sortedByStart(items as object) as object
+        if items.Count() <= 1 then return items
+        middle = items.Count() \ 2
+        firstHalf = []
+        secondHalf = []
+        for k = 0 to items.Count() - 1
+            if k < middle then firstHalf.Push(items[k]) else secondHalf.Push(items[k])
+        end for
+        firstHalf = TeamMatcher.sortedByStart(firstHalf)
+        secondHalf = TeamMatcher.sortedByStart(secondHalf)
+        result = []
+        a = 0
+        b = 0
+        while a < firstHalf.Count() and b < secondHalf.Count()
+            x = firstHalf[a]
+            y = secondHalf[b]
+            if y.start < x.start or (y.start = x.start and y.order < x.order)
+                result.Push(y)
+                b++
+            else
+                result.Push(x)
+                a++
+            end if
+        end while
+        while a < firstHalf.Count()
+            result.Push(firstHalf[a])
+            a++
+        end while
+        while b < secondHalf.Count()
+            result.Push(secondHalf[b])
+            b++
+        end while
+        return result
+    end function
+
+    ' UpcomingTeamGame.label: the programme's subtitle ("Tampa Bay Buccaneers at Chicago Bears"), else its title.
+    function label(programme as object) as string
+        if programme.subtitle <> invalid
+            subtitle = Unicode.trim(programme.subtitle)
+            if subtitle <> "" then return subtitle
+        end if
+        return TeamMatcher.field(programme.title)
+    end function
+
+    ' --- The index ---
+
+    ' MMTVL's TeamMatcher.Index: the names the matcher looks teams up by, built once from a catalog (TeamCatalog's
+    ' teams, pro then college) and the options ({ initials, nicknames }, both false when invalid).
+    '   byID            id → team (the first)
+    '   proFullNames    pro: every full name and alias, normalized → its team (the last team with it)
+    '   pro             pro: id → { names, nickname }, normalized
+    '   collegeNames    league → key → [team], catalog order. Keys: the name, school and aliases, with initials the
+    '                   abbreviations, and each school form followed by the nickname; each also without apostrophes.
+    '   collegeSchools  key → { normalized school: true } (game entries)
+    '   with nicknames only (else empty): collegeNicknames (league → nickname → [team]), maxNicknameWords,
+    '   collegeSchoolWords (id → { word: true }: the school's and multi-word aliases' words, 3 letters or more, not
+    '   state/university/college/the) and collegeConferences (id → [phrase]).
+    function newIndex(teams as object, options = invalid as dynamic) as object
+        #if DEBUG
+            timer = CreateObject("roTimespan")
+        #end if
+        n = TeamMatcher.newNormalizer()
+        initials = false
+        nicknames = false
+        if options <> invalid
+            if options.initials <> invalid then initials = options.initials
+            if options.nicknames <> invalid then nicknames = options.nicknames
+        end if
+        index = {
+            teams: teams,
+            options: { initials: initials, nicknames: nicknames },
+            n: n,
+            byID: TeamMatcher.newSet(),
+            proFullNames: TeamMatcher.newSet(),
+            pro: TeamMatcher.newSet(),
+            collegeNames: TeamMatcher.newSet(),
+            collegeSchools: TeamMatcher.newSet(),
+            collegeNicknames: TeamMatcher.newSet(),
+            maxNicknameWords: 0,
+            collegeSchoolWords: TeamMatcher.newSet(),
+            collegeConferences: TeamMatcher.newSet()
+        }
+        stopWords = { "state": true, "university": true, "college": true, "the": true }
+        for each team in teams
+            if not index.byID.DoesExist(team.id) then index.byID[team.id] = team
+            if TeamCatalog.isCollege(team.league)
+                schoolName = team.school
+                if schoolName = invalid then schoolName = team.name
+                school = TeamMatcher.normalized(schoolName, n)
+                forms = []
+                if team.school <> invalid then forms.Push(team.school)
+                forms.Append(team.aliases)
+                if initials then forms.Append(team.abbreviations)
+                texts = [team.name]
+                texts.Append(forms)
+                if team.nickname <> ""
+                    for each form in forms
+                        texts.Push(form + " " + team.nickname)
+                    end for
+                end if
+                names = index.collegeNames[team.league]
+                if names = invalid
+                    names = TeamMatcher.newSet()
+                    index.collegeNames[team.league] = names
+                end if
+                for each key in TeamMatcher.keys(texts, n)
+                    list = names[key]
+                    if list = invalid
+                        list = []
+                        names[key] = list
+                    end if
+                    list.Push(team)
+                    schools = index.collegeSchools[key]
+                    if schools = invalid
+                        schools = TeamMatcher.newSet()
+                        index.collegeSchools[key] = schools
+                    end if
+                    schools[school] = true
+                end for
+                if nicknames then TeamMatcher.addFallback(index, team, stopWords)
+            else
+                for each name in TeamCatalog.fullNames(team)
+                    index.proFullNames[TeamMatcher.normalized(name, n)] = team
+                end for
+                index.pro[team.id] = TeamMatcher.proForms(team, n)
+            end if
+        end for
+        #if DEBUG
+            Log.info("IPTV", "Teams: indexed " + teams.Count().ToStr() + " teams in " + timer.TotalMilliseconds().ToStr() + " ms")
+        #end if
+        return index
+    end function
+
+    ' A college team's nickname fallback tables (M7m L28, L30).
+    sub addFallback(index as object, team as object, stopWords as object)
+        n = index.n
+        byNickname = index.collegeNicknames[team.league]
+        if byNickname = invalid
+            byNickname = TeamMatcher.newSet()
+            index.collegeNicknames[team.league] = byNickname
+        end if
+        for each nickname in TeamMatcher.keys([team.nickname], n)
+            list = byNickname[nickname]
+            if list = invalid
+                list = []
+                byNickname[nickname] = list
+            end if
+            list.Push(team)
+            count = TeamMatcher.words(nickname).Count()
+            if count > index.maxNicknameWords then index.maxNicknameWords = count
+        end for
+        ' "Louisiana-Monroe" is two words; "Hawai'i" is one.
+        sources = []
+        if team.school <> invalid then sources.Push(team.school)
+        for each alias in team.aliases
+            if TeamMatcher.words(TeamMatcher.normalizedWithoutApostrophes(alias, n)).Count() > 1 then sources.Push(alias)
+        end for
+        schoolWords = TeamMatcher.newSet()
+        for each key in TeamMatcher.keys(sources, n)
+            for each keyWord in TeamMatcher.words(key)
+                if TeamMatcher.characterCount(keyWord, n) >= 3 and not stopWords.DoesExist(keyWord) then schoolWords[keyWord] = true
+            end for
+        end for
+        index.collegeSchoolWords[team.id] = schoolWords
+        if team.conference <> invalid
+            teamPhrases = TeamMatcher.phrases(team.conference, n)
+            if teamPhrases.Count() > 0 then index.collegeConferences[team.id] = teamPhrases
+        end if
+    end sub
+
+    ' Characters as Swift counts them in a word: combining characters join the one before.
+    function characterCount(text as string, n as object) as integer
+        if not n.epg.nonASCII.IsMatch(text) then return Len(text)
+        count = 0
+        i = 1
+        length = Len(text)
+        while i <= length
+            code = TeamMatcher.codeAt(text, i)
+            if not Unicode.isExtend(code) or count = 0 then count++
+            if code > 65535 and Asc(Mid(text, i, 1)) <= 65535 then i += 2 else i++
+        end while
+        return count
+    end function
+
+    ' --- Generated by tools/gen-team-tables.swift; don't edit by hand. ---
+
+    ' Code points TeamMatcher keeps as they are where EPGMatcher's table separates, 8 hex digits per range (first, last): 4 ranges.
+    function keptTable() as string
+        table = "0F3E0F3F1CE11CE11CF71CF7ABECABEC"
+        return table
+    end function
+
+    ' Code points TeamMatcher turns into a space where EPGMatcher's table keeps or maps them, 8 hex digits per range: 6 ranges.
+    function separatorTable() as string
+        table = "24B624E9F882F882F89AF89EF8A2F8A7F8B8F8B8F8C1F8D6"
+        return table
+    end function
+
+    ' Decimal digits (Nd) above U+007F, 12 hex digits per range (first, last): 71 ranges.
+    function digitTable() as string
+        table = "0006600006690006F00006F90007C00007C900096600096F0009E60009EF000A66000A6F000AE6000AEF000B66000B6F"
+        table += "000BE6000BEF000C66000C6F000CE6000CEF000D66000D6F000DE6000DEF000E50000E59000ED0000ED9000F20000F29"
+        table += "0010400010490010900010990017E00017E900181000181900194600194F0019D00019D9001A80001A89001A90001A99"
+        table += "001B50001B59001BB0001BB9001C40001C49001C50001C5900A62000A62900A8D000A8D900A90000A90900A9D000A9D9"
+        table += "00A9F000A9F900AA5000AA5900ABF000ABF900FF1000FF190104A00104A9010D30010D39010D40010D4901106601106F"
+        table += "0110F00110F901113601113F0111D00111D90112F00112F90114500114590114D00114D90116500116590116C00116C9"
+        table += "0116D00116E30117300117390118E00118E9011950011959011BF0011BF9011C50011C59011D50011D59011DA0011DA9"
+        table += "011DE0011DE9011F50011F59016130016139016A60016A69016AC0016AC9016B50016B59016D70016D7901CCF001CCF9"
+        table += "01D7CE01D7FF01E14001E14901E2F001E2F901E4F001E4F901E5F101E5FA01E95001E95901FBF001FBF9"
+        return table
+    end function
+
+    ' Word characters (SummaryLead.isWord: letters, marks, Nd, Pc, ZWNJ, ZWJ) above U+007F, 12 hex digits per range: 803 ranges.
+    function wordTable() as string
+        table = "0000AA0000AA0000B50000B50000BA0000BA0000C00000D60000D80000F60000F80002C10002C60002D10002E00002E4"
+        table += "0002EC0002EC0002EE0002EE00030000037400037600037700037A00037D00037F00037F00038600038600038800038A"
+        table += "00038C00038C00038E0003A10003A30003F50003F700048100048300052F000531000556000559000559000560000588"
+        table += "0005910005BD0005BF0005BF0005C10005C20005C40005C50005C70005C70005D00005EA0005EF0005F200061000061A"
+        table += "00062000066900066E0006D30006D50006DC0006DF0006E80006EA0006FC0006FF0006FF00071000074A00074D0007B1"
+        table += "0007C00007F50007FA0007FA0007FD0007FD00080000082D00084000085B00086000086A00087000088700088900088F"
+        table += "0008970008E10008E300096300096600096F00097100098300098500098C00098F0009900009930009A80009AA0009B0"
+        table += "0009B20009B20009B60009B90009BC0009C40009C70009C80009CB0009CE0009D70009D70009DC0009DD0009DF0009E3"
+        table += "0009E60009F10009FC0009FC0009FE0009FE000A01000A03000A05000A0A000A0F000A10000A13000A28000A2A000A30"
+        table += "000A32000A33000A35000A36000A38000A39000A3C000A3C000A3E000A42000A47000A48000A4B000A4D000A51000A51"
+        table += "000A59000A5C000A5E000A5E000A66000A75000A81000A83000A85000A8D000A8F000A91000A93000AA8000AAA000AB0"
+        table += "000AB2000AB3000AB5000AB9000ABC000AC5000AC7000AC9000ACB000ACD000AD0000AD0000AE0000AE3000AE6000AEF"
+        table += "000AF9000AFF000B01000B03000B05000B0C000B0F000B10000B13000B28000B2A000B30000B32000B33000B35000B39"
+        table += "000B3C000B44000B47000B48000B4B000B4D000B55000B57000B5C000B5D000B5F000B63000B66000B6F000B71000B71"
+        table += "000B82000B83000B85000B8A000B8E000B90000B92000B95000B99000B9A000B9C000B9C000B9E000B9F000BA3000BA4"
+        table += "000BA8000BAA000BAE000BB9000BBE000BC2000BC6000BC8000BCA000BCD000BD0000BD0000BD7000BD7000BE6000BEF"
+        table += "000C00000C0C000C0E000C10000C12000C28000C2A000C39000C3C000C44000C46000C48000C4A000C4D000C55000C56"
+        table += "000C58000C5A000C5C000C5D000C60000C63000C66000C6F000C80000C83000C85000C8C000C8E000C90000C92000CA8"
+        table += "000CAA000CB3000CB5000CB9000CBC000CC4000CC6000CC8000CCA000CCD000CD5000CD6000CDC000CDE000CE0000CE3"
+        table += "000CE6000CEF000CF1000CF3000D00000D0C000D0E000D10000D12000D44000D46000D48000D4A000D4E000D54000D57"
+        table += "000D5F000D63000D66000D6F000D7A000D7F000D81000D83000D85000D96000D9A000DB1000DB3000DBB000DBD000DBD"
+        table += "000DC0000DC6000DCA000DCA000DCF000DD4000DD6000DD6000DD8000DDF000DE6000DEF000DF2000DF3000E01000E3A"
+        table += "000E40000E4E000E50000E59000E81000E82000E84000E84000E86000E8A000E8C000EA3000EA5000EA5000EA7000EBD"
+        table += "000EC0000EC4000EC6000EC6000EC8000ECE000ED0000ED9000EDC000EDF000F00000F00000F18000F19000F20000F29"
+        table += "000F35000F35000F37000F37000F39000F39000F3E000F47000F49000F6C000F71000F84000F86000F97000F99000FBC"
+        table += "000FC6000FC600100000104900105000109D0010A00010C50010C70010C70010CD0010CD0010D00010FA0010FC001248"
+        table += "00124A00124D00125000125600125800125800125A00125D00126000128800128A00128D0012900012B00012B20012B5"
+        table += "0012B80012BE0012C00012C00012C20012C50012C80012D60012D800131000131200131500131800135A00135D00135F"
+        table += "00138000138F0013A00013F50013F80013FD00140100166C00166F00167F00168100169A0016A00016EA0016EE0016F8"
+        table += "00170000171500171F00173400174000175300176000176C00176E0017700017720017730017800017D30017D70017D7"
+        table += "0017DC0017DD0017E00017E900180B00180D00180F0018190018200018780018800018AA0018B00018F500190000191E"
+        table += "00192000192B00193000193B00194600196D0019700019740019800019AB0019B00019C90019D00019D9001A00001A1B"
+        table += "001A20001A5E001A60001A7C001A7F001A89001A90001A99001AA7001AA7001AB0001ADD001AE0001AEB001B00001B4C"
+        table += "001B50001B59001B6B001B73001B80001BF3001C00001C37001C40001C49001C4D001C7D001C80001C8A001C90001CBA"
+        table += "001CBD001CBF001CD0001CD2001CD4001CFA001D00001F15001F18001F1D001F20001F45001F48001F4D001F50001F57"
+        table += "001F59001F59001F5B001F5B001F5D001F5D001F5F001F7D001F80001FB4001FB6001FBC001FBE001FBE001FC2001FC4"
+        table += "001FC6001FCC001FD0001FD3001FD6001FDB001FE0001FEC001FF2001FF4001FF6001FFC00200C00200D00203F002040"
+        table += "00205400205400207100207100207F00207F00209000209C0020D00020F000210200210200210700210700210A002113"
+        table += "00211500211500211900211D00212400212400212600212600212800212800212A00212D00212F00213900213C00213F"
+        table += "00214500214900214E00214E0021600021880024B60024E9002C00002CE4002CEB002CF3002D00002D25002D27002D27"
+        table += "002D2D002D2D002D30002D67002D6F002D6F002D7F002D96002DA0002DA6002DA8002DAE002DB0002DB6002DB8002DBE"
+        table += "002DC0002DC6002DC8002DCE002DD0002DD6002DD8002DDE002DE0002DFF002E2F002E2F00300500300700302100302F"
+        table += "00303100303500303800303C00304100309600309900309A00309D00309F0030A10030FA0030FC0030FF00310500312F"
+        table += "00313100318E0031A00031BF0031F00031FF003400004DBF004E0000A48C00A4D000A4FD00A50000A60C00A61000A62B"
+        table += "00A64000A67200A67400A67D00A67F00A6F100A71700A71F00A72200A78800A78B00A7DC00A7F100A82700A82C00A82C"
+        table += "00A84000A87300A88000A8C500A8D000A8D900A8E000A8F700A8FB00A8FB00A8FD00A92D00A93000A95300A96000A97C"
+        table += "00A98000A9C000A9CF00A9D900A9E000A9FE00AA0000AA3600AA4000AA4D00AA5000AA5900AA6000AA7600AA7A00AAC2"
+        table += "00AADB00AADD00AAE000AAEF00AAF200AAF600AB0100AB0600AB0900AB0E00AB1100AB1600AB2000AB2600AB2800AB2E"
+        table += "00AB3000AB5A00AB5C00AB6900AB7000ABEA00ABEC00ABED00ABF000ABF900AC0000D7A300D7B000D7C600D7CB00D7FB"
+        table += "00F88200F88200F89A00F89E00F8A200F8A700F8B800F8B800F8C100F8D600F90000FA6D00FA7000FAD900FB0000FB06"
+        table += "00FB1300FB1700FB1D00FB2800FB2A00FB3600FB3800FB3C00FB3E00FB3E00FB4000FB4100FB4300FB4400FB4600FBB1"
+        table += "00FBD300FD3D00FD5000FD8F00FD9200FDC700FDF000FDFB00FE0000FE0F00FE2000FE2F00FE3300FE3400FE4D00FE4F"
+        table += "00FE7000FE7400FE7600FEFC00FF1000FF1900FF2100FF3A00FF3F00FF3F00FF4100FF5A00FF6600FFBE00FFC200FFC7"
+        table += "00FFCA00FFCF00FFD200FFD700FFDA00FFDC01000001000B01000D01002601002801003A01003C01003D01003F01004D"
+        table += "01005001005D0100800100FA0101400101740101FD0101FD01028001029C0102A00102D00102E00102E001030001031F"
+        table += "01032D01034A01035001037A01038001039D0103A00103C30103C80103CF0103D10103D501040001049D0104A00104A9"
+        table += "0104B00104D30104D80104FB01050001052701053001056301057001057A01057C01058A01058C010592010594010595"
+        table += "0105970105A10105A30105B10105B30105B90105BB0105BC0105C00105F3010600010736010740010755010760010767"
+        table += "0107800107850107870107B00107B20107BA01080001080501080801080801080A01083501083701083801083C01083C"
+        table += "01083F01085501086001087601088001089E0108E00108F20108F40108F5010900010915010920010939010940010959"
+        table += "0109800109B70109BE0109BF010A00010A03010A05010A06010A0C010A13010A15010A17010A19010A35010A38010A3A"
+        table += "010A3F010A3F010A60010A7C010A80010A9C010AC0010AC7010AC9010AE6010B00010B35010B40010B55010B60010B72"
+        table += "010B80010B91010C00010C48010C80010CB2010CC0010CF2010D00010D27010D30010D39010D40010D65010D69010D6D"
+        table += "010D6F010D85010E80010EA9010EAB010EAC010EB0010EB1010EC2010EC7010EFA010F1C010F27010F27010F30010F50"
+        table += "010F70010F85010FB0010FC4010FE0010FF601100001104601106601107501107F0110BA0110C20110C20110D00110E8"
+        table += "0110F00110F901110001113401113601113F0111440111470111500111730111760111760111800111C40111C90111CC"
+        table += "0111CE0111DA0111DC0111DC01120001121101121301123701123E01124101128001128601128801128801128A01128D"
+        table += "01128F01129D01129F0112A80112B00112EA0112F00112F901130001130301130501130C01130F011310011313011328"
+        table += "01132A01133001133201133301133501133901133B01134401134701134801134B01134D011350011350011357011357"
+        table += "01135D01136301136601136C01137001137401138001138901138B01138B01138E01138E0113900113B50113B70113C0"
+        table += "0113C20113C20113C50113C50113C70113CA0113CC0113D30113E10113E201140001144A01145001145901145E011461"
+        table += "0114800114C50114C70114C70114D00114D90115800115B50115B80115C00115D80115DD011600011640011644011644"
+        table += "0116500116590116800116B80116C00116C90116D00116E301170001171A01171D01172B011730011739011740011746"
+        table += "01180001183A0118A00118E90118FF01190601190901190901190C011913011915011916011918011935011937011938"
+        table += "01193B0119430119500119590119A00119A70119AA0119D70119DA0119E10119E30119E4011A00011A3E011A47011A47"
+        table += "011A50011A99011A9D011A9D011AB0011AF8011B60011B67011BC0011BE0011BF0011BF9011C00011C08011C0A011C36"
+        table += "011C38011C40011C50011C59011C72011C8F011C92011CA7011CA9011CB6011D00011D06011D08011D09011D0B011D36"
+        table += "011D3A011D3A011D3C011D3D011D3F011D47011D50011D59011D60011D65011D67011D68011D6A011D8E011D90011D91"
+        table += "011D93011D98011DA0011DA9011DB0011DDB011DE0011DE9011EE0011EF6011F00011F10011F12011F3A011F3E011F42"
+        table += "011F50011F5A011FB0011FB001200001239901240001246E012480012543012F90012FF001300001342F013440013455"
+        table += "0134600143FA014400014646016100016139016800016A38016A40016A5E016A60016A69016A70016ABE016AC0016AC9"
+        table += "016AD0016AED016AF0016AF4016B00016B36016B40016B43016B50016B59016B63016B77016B7D016B8F016D40016D6C"
+        table += "016D70016D79016E40016E7F016EA0016EB8016EBB016ED3016F00016F4A016F4F016F87016F8F016F9F016FE0016FE1"
+        table += "016FE3016FE4016FF0016FF6017000018CD5018CFF018D1E018D80018DF201AFF001AFF301AFF501AFFB01AFFD01AFFE"
+        table += "01B00001B12201B13201B13201B15001B15201B15501B15501B16401B16701B17001B2FB01BC0001BC6A01BC7001BC7C"
+        table += "01BC8001BC8801BC9001BC9901BC9D01BC9E01CCF001CCF901CF0001CF2D01CF3001CF4601D16501D16901D16D01D172"
+        table += "01D17B01D18201D18501D18B01D1AA01D1AD01D24201D24401D40001D45401D45601D49C01D49E01D49F01D4A201D4A2"
+        table += "01D4A501D4A601D4A901D4AC01D4AE01D4B901D4BB01D4BB01D4BD01D4C301D4C501D50501D50701D50A01D50D01D514"
+        table += "01D51601D51C01D51E01D53901D53B01D53E01D54001D54401D54601D54601D54A01D55001D55201D6A501D6A801D6C0"
+        table += "01D6C201D6DA01D6DC01D6FA01D6FC01D71401D71601D73401D73601D74E01D75001D76E01D77001D78801D78A01D7A8"
+        table += "01D7AA01D7C201D7C401D7CB01D7CE01D7FF01DA0001DA3601DA3B01DA6C01DA7501DA7501DA8401DA8401DA9B01DA9F"
+        table += "01DAA101DAAF01DF0001DF1E01DF2501DF2A01E00001E00601E00801E01801E01B01E02101E02301E02401E02601E02A"
+        table += "01E03001E06D01E08F01E08F01E10001E12C01E13001E13D01E14001E14901E14E01E14E01E29001E2AE01E2C001E2F9"
+        table += "01E4D001E4F901E5D001E5FA01E6C001E6DE01E6E001E6F501E6FE01E6FF01E7E001E7E601E7E801E7EB01E7ED01E7EE"
+        table += "01E7F001E7FE01E80001E8C401E8D001E8D601E90001E94B01E95001E95901EE0001EE0301EE0501EE1F01EE2101EE22"
+        table += "01EE2401EE2401EE2701EE2701EE2901EE3201EE3401EE3701EE3901EE3901EE3B01EE3B01EE4201EE4201EE4701EE47"
+        table += "01EE4901EE4901EE4B01EE4B01EE4D01EE4F01EE5101EE5201EE5401EE5401EE5701EE5701EE5901EE5901EE5B01EE5B"
+        table += "01EE5D01EE5D01EE5F01EE5F01EE6101EE6201EE6401EE6401EE6701EE6A01EE6C01EE7201EE7401EE7701EE7901EE7C"
+        table += "01EE7E01EE7E01EE8001EE8901EE8B01EE9B01EEA101EEA301EEA501EEA901EEAB01EEBB01F13001F14901F15001F169"
+        table += "01F17001F18901FBF001FBF902000002A6DF02A70002B81D02B82002CEAD02CEB002EBE002EBF002EE5D02F80002FA1D"
+        table += "03000003134A0313500334790E01000E01EF"
+        return table
+    end function
+
+    ' --- End of generated code. ---
+
+end namespace

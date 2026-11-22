@@ -1,0 +1,160 @@
+// Generates TeamMatcher.bs's Unicode tables (M12 step 17) from MMTVL's own definitions, so the Roku port reads text
+// exactly as `TeamMatcher` (MMTVL/IPTV/Teams/TeamMatcher.swift) does on this Mac.
+//
+//   swift roku/tools/gen-team-tables.swift roku/source/lib/TeamMatcher.bs
+//
+// - Folding: TeamMatcher.normalized folds with folding(options: [.caseInsensitive, .diacriticInsensitive],
+//   locale: nil) and turns every scalar that isn't in CharacterSet.alphanumerics into a space. TeamMatcher.bs folds
+//   with EPGMatcher.bs's table (tools/gen-epg-fold.swift: en_US_POSIX, lowercased, Characters that aren't letters or
+//   numbers turned into spaces), which gives the same for every BMP code point after a letter but a few. Those few
+//   are written here: code points TeamMatcher keeps as they are (teamKept) and ones it turns into a space
+//   (teamSeparators). The run stops if any code point folds some third way, which the tables couldn't hold.
+// - Digits: SummaryLead.isDigit and the rank pattern's \d (ICU): every scalar of general category Nd.
+// - Word characters: SummaryLead.isWord (ICU's \w) above U+007F.
+// The tables replace the text between the "generated" markers in TeamMatcher.bs.
+import Foundation
+
+func hex(_ value: UInt32, _ width: Int) -> String { String(format: "%0\(width)X", value) }
+
+func epgFold(_ text: String) -> String {
+    text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+        .lowercased()
+        .map { ($0.isLetter || $0.isNumber) ? String($0) : " " }
+        .joined()
+}
+
+// TeamMatcher.normalized's folding, before spaces collapse.
+func teamFold(_ text: String) -> String {
+    let folded = text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+    var cleaned = String.UnicodeScalarView()
+    for scalar in folded.unicodeScalars {
+        cleaned.append(CharacterSet.alphanumerics.contains(scalar) ? scalar : " ")
+    }
+    return String(cleaned)
+}
+
+func afterLetter(_ fold: (String) -> String, _ text: String) -> String {
+    let joined = fold("x" + text)
+    return joined.hasPrefix("x") ? String(joined.dropFirst()) : fold(text)
+}
+
+// SummaryLead.isWord, as written there.
+func isWord(_ c: Unicode.Scalar) -> Bool {
+    if c.value < 0x80 {
+        return ("a"..."z").contains(c) || ("A"..."Z").contains(c) || ("0"..."9").contains(c) || c == "_"
+    }
+    let properties = c.properties
+    switch properties.generalCategory {
+    case .nonspacingMark, .spacingMark, .enclosingMark, .connectorPunctuation, .decimalNumber: return true
+    default: return properties.isAlphabetic || c.value == 0x200C || c.value == 0x200D
+    }
+}
+
+func isDigit(_ c: Unicode.Scalar) -> Bool { c.properties.numericType == .decimal }
+
+extension Array where Element == (UInt32, UInt32) {
+    mutating func append(range code: UInt32) {
+        if let last = self.last, last.1 == code - 1 {
+            self[count - 1].1 = code
+        } else {
+            append((code, code))
+        }
+    }
+}
+
+var kept: [(UInt32, UInt32)] = []
+var separators: [(UInt32, UInt32)] = []
+for code in UInt32(0x80)...0xFFFF {
+    guard let scalar = Unicode.Scalar(code) else { continue }
+    let text = String(Character(scalar))
+    let team = afterLetter(teamFold, text)
+    let epg = afterLetter(epgFold, text)
+    if team == epg { continue }
+    if team == text {
+        kept.append(range: code)
+    } else if team == " " {
+        separators.append(range: code)
+    } else {
+        FileHandle.standardError.write("U+\(hex(code, 4)) folds to \(team) (EPGMatcher: \(epg)): no table holds it\n"
+            .data(using: .utf8)!)
+        exit(1)
+    }
+}
+
+var digits: [(UInt32, UInt32)] = []
+var words: [(UInt32, UInt32)] = []
+for code in UInt32(0x80)...0x10FFFF {
+    guard let scalar = Unicode.Scalar(code) else { continue }
+    if isDigit(scalar) { digits.append(range: code) }
+    if isWord(scalar) { words.append(range: code) }
+}
+
+func chunked(_ text: String, _ width: Int) -> [String] {
+    var lines: [String] = []
+    var rest = Substring(text)
+    while !rest.isEmpty {
+        lines.append(String(rest.prefix(width)))
+        rest = rest.dropFirst(width)
+    }
+    return lines
+}
+
+func function(_ name: String, _ comment: String, _ text: String) -> String {
+    var lines = ["    ' \(comment)", "    function \(name)() as string"]
+    let parts = chunked(text, 96)
+    for (index, part) in parts.enumerated() {
+        lines.append(index == 0 ? "        table = \"\(part)\"" : "        table += \"\(part)\"")
+    }
+    if parts.isEmpty { lines.append("        table = \"\"") }
+    lines.append("        return table")
+    lines.append("    end function")
+    return lines.joined(separator: "\n")
+}
+
+func table(_ ranges: [(UInt32, UInt32)], _ width: Int) -> String {
+    ranges.map { hex($0.0, width) + hex($0.1, width) }.joined()
+}
+
+let begin = "    ' --- Generated by tools/gen-team-tables.swift; don't edit by hand. ---"
+let end = "    ' --- End of generated code. ---"
+let generated = [
+    begin,
+    "",
+    function("keptTable",
+             "Code points TeamMatcher keeps as they are where EPGMatcher's table separates, 8 hex digits per range "
+                + "(first, last): \(kept.count) ranges.",
+             table(kept, 4)),
+    "",
+    function("separatorTable",
+             "Code points TeamMatcher turns into a space where EPGMatcher's table keeps or maps them, 8 hex digits per "
+                + "range: \(separators.count) ranges.",
+             table(separators, 4)),
+    "",
+    function("digitTable",
+             "Decimal digits (Nd) above U+007F, 12 hex digits per range (first, last): \(digits.count) ranges.",
+             table(digits, 6)),
+    "",
+    function("wordTable",
+             "Word characters (SummaryLead.isWord: letters, marks, Nd, Pc, ZWNJ, ZWJ) above U+007F, 12 hex digits per "
+                + "range: \(words.count) ranges.",
+             table(words, 6)),
+    "",
+    end,
+].joined(separator: "\n")
+
+let arguments = CommandLine.arguments
+guard arguments.count == 2 else {
+    FileHandle.standardError.write("Usage: swift gen-team-tables.swift <TeamMatcher.bs>\n".data(using: .utf8)!)
+    exit(2)
+}
+let libURL = URL(fileURLWithPath: arguments[1])
+let lib = try String(contentsOf: libURL, encoding: .utf8)
+guard let beginRange = lib.range(of: begin), let endRange = lib.range(of: end),
+      beginRange.upperBound <= endRange.lowerBound else {
+    FileHandle.standardError.write("The generated markers aren't in \(arguments[1])\n".data(using: .utf8)!)
+    exit(1)
+}
+try (lib[..<beginRange.lowerBound] + generated + lib[endRange.upperBound...]).write(to: libURL, atomically: true,
+                                                                                    encoding: .utf8)
+print("Kept: \(kept.count) ranges; separators: \(separators.count) ranges; digits: \(digits.count) ranges; "
+      + "word characters: \(words.count) ranges")

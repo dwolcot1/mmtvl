@@ -22,6 +22,8 @@ import Testing
 ///   `TeamCatalog.proTeams` in catalog order, an array of `{abbreviations, aliases, id, league, name, nickname}`, the
 ///   same shape and key order as the college catalog (`college-teams.json`, which the Roku build copies from
 ///   `MMTVL/IPTV/Teams/`), so one `ParseJson` reads either.
+/// - Step 17: `teams.golden.json`, TeamMatcherTests' and MyTeamsTests' cases as data with MMTVL's results (its shape
+///   is described in `RokuTeamsGolden.swift`).
 ///
 /// When MMTVL's behaviour changes on purpose, regenerate the goldens, review the diff, and update the Roku ports:
 ///
@@ -148,6 +150,46 @@ struct RokuParityTests {
         for (index, (a, g)) in zip(actual, golden).enumerated() {
             #expect(a == g, "team \(index) (\(a.id)): \(hint)")
         }
+    }
+
+    /// Step 17: TeamMatcherTests' and MyTeamsTests' cases as data (`RokuTeamsGolden`), with MMTVL's results. The
+    /// golden's inputs must be the ones defined in code, and MMTVL's matcher, run over the golden's inputs, must give
+    /// its expected results; the Roku's `TeamMatcher.bs` must give them too (`roku/tests/local/TeamMatcher.test.bs`).
+    @Test func teamsMatchTheGolden() throws {
+        let actual = RokuTeamsGolden.make()
+        let url = Self.fixtures.appending(path: "teams.golden.json")
+        if Self.writesGoldens {
+            try Self.write(actual, to: url)
+            return
+        }
+        let hint = "regenerate it with: \(Self.regenerate)"
+        let golden = try JSONDecoder().decode(TeamsGolden.self, from: Data(contentsOf: url))
+        #expect(golden.indexes == actual.indexes, "indexes; \(hint)")
+        #expect(golden.teamSets == actual.teamSets, "team sets; \(hint)")
+        #expect(golden.channelSets == actual.channelSets, "channel sets; \(hint)")
+        #expect(golden.coverage == actual.coverage, "coverage; \(hint)")
+        #expect(golden.cases.count == actual.cases.count, "case count; \(hint)")
+        for (n, (a, g)) in zip(actual.cases, golden.cases).enumerated() {
+            #expect(a.inputs == g.inputs, "case \(n) (\(a.test) \(a.op)) inputs; \(hint)")
+        }
+        var context = RokuTeamsGolden.Context(golden)
+        for (n, item) in golden.cases.enumerated() {
+            #expect(RokuTeamsGolden.evaluate(item, in: &context) == item.expected, "case \(n) (\(item.test) \(item.op))")
+        }
+    }
+
+    /// Step 17: the golden accounts for every test of both suites; each carried test has a case.
+    @Test func teamsGoldenCoversBothSuites() {
+        let coverage = RokuTeamsGolden.coverage
+        #expect(coverage.count { $0.test.hasPrefix("TeamMatcherTests.") } == 42)
+        #expect(coverage.count { $0.test.hasPrefix("MyTeamsTests.") } == 14)
+        #expect(Set(coverage.map(\.test)).count == coverage.count)
+        #expect(coverage.allSatisfy { ["full", "matcher", "no"].contains($0.carried) })
+        let tested = Set(RokuTeamsGolden.cases.map(\.test))
+        for entry in coverage {
+            #expect(tested.contains(entry.test) == (entry.carried != "no"), "\(entry.test)")
+        }
+        #expect(tested.isSubset(of: Set(coverage.map(\.test))))
     }
 
     // MARK: - MMTVL's code paths
