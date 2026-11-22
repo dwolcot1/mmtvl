@@ -24,8 +24,9 @@
 '     settings booleans. Reasons: "notObject", "badVersion", "unknownField", "missing <field>", "bad <field>".
 '   peerAllowed(peer, host) -> true when the transfer reports no address (unverified whether a Roku always does),
 '     or the import's own address; a redirect to anything else is refused.
-'   summaryRows(bundle, lastChannelLabel) -> [{ label, value }] for the confirm screen (frame NgJ0S): hosts and
-'     counts, never a URL.
+'   summaryRows(bundle, lastChannelLabel, fromHost) -> [{ label, value }] for the confirm screen (frame NgJ0S): hosts
+'     and counts, never a URL. The first row, "From", is fromHost, the import's own address (checkRequest's host,
+'     the Mac the script printed; step 24 N-8, D60), so a bundle another LAN host sent reads as such.
 '   channelLabel(id, channel) -> "<number>  <name>" when the current playlist has the channel, else the id without
 '     its "id:" or "name:" prefix; "None" for "".
 '   message(reason) -> what the confirm screen says when the import can't be used.
@@ -152,34 +153,10 @@ namespace ImportBundle
     end function
 
     ' The deepest nesting of [ and { outside JSON strings (-1 for unbalanced closers), on the bytes, so a hostile
-    ' file can't make ParseJson recurse deeply.
+    ' file can't make ParseJson recurse deeply. Step 24 (N-3, D56): the loop is JsonDepth.ofBytes, shared with the
+    ' tuner's JSON.
     function depthOf(bytes as object) as integer
-        depth = 0
-        deepest = 0
-        inString = false
-        escaped = false
-        for i = 0 to bytes.Count() - 1
-            b = bytes[i]
-            if inString
-                if escaped
-                    escaped = false
-                else if b = 92
-                    escaped = true
-                else if b = 34
-                    inString = false
-                end if
-            else if b = 34
-                inString = true
-            else if b = 91 or b = 123
-                depth = depth + 1
-                if depth > deepest then deepest = depth
-                if deepest > ImportBundle.maximumDepth then return deepest
-            else if b = 93 or b = 125
-                depth = depth - 1
-                if depth < 0 then return -1
-            end if
-        end for
-        return deepest
+        return JsonDepth.ofBytes(bytes, ImportBundle.maximumDepth)
     end function
 
     function decode(text as dynamic) as object
@@ -290,7 +267,9 @@ namespace ImportBundle
 
     ' --- what the confirm screen shows ------------------------------------------------------------------------
 
-    function summaryRows(bundle as object, lastChannelLabel as string) as object
+    function summaryRows(bundle as object, lastChannelLabel as string, fromHost as string) as object
+        fromValue = fromHost
+        if fromValue = "" then fromValue = "?"
         playlist = Log.host(bundle.playlistURL)
         if playlist = "" then playlist = ImportBundle.noneValue
         guides = ImportBundle.noneValue
@@ -311,6 +290,7 @@ namespace ImportBundle
         matches = ImportBundle.noneValue
         if bundle.overrides.Count() > 0 then matches = bundle.overrides.Count().ToStr() + " set by hand"
         return [
+            { label: "From", value: fromValue },
             { label: "Playlist", value: playlist },
             { label: "Guides", value: guides },
             { label: "Favorites", value: ImportBundle.countOrNone(bundle.favorites.Count(), "channel", "channels") },

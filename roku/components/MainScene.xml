@@ -104,6 +104,7 @@
     <script type="text/brighterscript" uri="pkg:/source/lib/SettingsEdits.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/GuideRuns.bs" />
     <!-- Step 14: Import from MMTVL. -->
+    <script type="text/brighterscript" uri="pkg:/source/lib/JsonDepth.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/ImportBundle.bs" />
     <!-- Step 18: My Teams (the menu's team rows, Choose Teams' catalog, request ordering). -->
     <script type="text/brighterscript" uri="pkg:/source/lib/TeamCatalog.bs" />

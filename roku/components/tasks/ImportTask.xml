@@ -15,5 +15,6 @@
     <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/URLPolicy.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/SettingsStore.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/JsonDepth.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/ImportBundle.bs" />
 </component>

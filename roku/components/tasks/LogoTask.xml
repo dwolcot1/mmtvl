@@ -4,7 +4,8 @@
      banner ask for a logo by setting request, and show the cached file when ready names it; nothing on screen ever
      loads a logo URL. Each logo: URLPolicy.allows with the playlist as the referrer (as url-tvg guides: a public
      playlist can't point the Roku at a LAN host), http(s), the CA bundle for https, at most LogoCache.maximumBytes,
-     LogoCache.timeoutSeconds, then the address reached is checked (URLPolicy.allowsPeer). A logo that failed isn't
+     LogoCache.timeoutSeconds, then the address reached is checked (URLPolicy.allowsPeer). With no playlist
+     (playlistURL "") no logo is fetched (URLPolicy.allowsLogo; step 24 N-1). A logo that failed isn't
      tried again until the app restarts. Requests wait last in, first out (the rows just scrolled to come first), at
      most LogoCache.maximumQueue, each path once (LogoCache's queue; every pending request is taken in before the
      next download). Logs show hosts and counts only (L6). -->
@@ -15,7 +16,8 @@
         <field id="playlistURL" type="string" />
         <!-- In: { url, path }, path = LogoCache.path(url) (anything else is refused). alwaysNotify: every set is a
              request. Step 22: { clear: true } empties the queue (a memory alert turned the logos off); each path
-             dropped is answered as not loaded. -->
+             dropped is answered as not loaded. Step 24 (N-1): { clear: true, reason: "source" } does the same when
+             the Live TV source is removed or changed. -->
         <field id="request" type="assocarray" alwaysNotify="true" />
         <!-- Out: { path, ok } once per request that was tried (ok: path now holds the logo), and { path, ok: false }
              for one dropped from the full queue (not remembered as failed: it may be asked for again). -->

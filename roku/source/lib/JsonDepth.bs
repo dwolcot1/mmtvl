@@ -1,0 +1,54 @@
+' How deeply JSON text nests (M12 step 14's check, shared in step 24 for security N-3, D56). Checked on the bytes
+' before ParseJson, so a hostile file can't make ParseJson recurse deeply. Pure, no nodes; small enough for any
+' thread.
+'
+'   ofBytes(bytes, maximum) -> the deepest nesting of [ and { outside JSON strings in an roByteArray; -1 for an
+'     unbalanced closer. Stops counting as soon as it passes maximum (the value returned is then maximum + 1).
+'   ofText(text, maximum) -> the same for a string (its bytes as roByteArray.FromAsciiString writes them; the
+'     brackets, quotes and backslashes JSON nests with are ASCII, so other characters never change the answer).
+'   fits(text, maximum) -> whether text is a string nested at most maximum deep with no unbalanced closer.
+namespace JsonDepth
+
+    function ofBytes(bytes as object, maximum as integer) as integer
+        depth = 0
+        deepest = 0
+        inString = false
+        escaped = false
+        for i = 0 to bytes.Count() - 1
+            b = bytes[i]
+            if inString
+                if escaped
+                    escaped = false
+                else if b = 92
+                    escaped = true
+                else if b = 34
+                    inString = false
+                end if
+            else if b = 34
+                inString = true
+            else if b = 91 or b = 123
+                depth = depth + 1
+                if depth > deepest then deepest = depth
+                if deepest > maximum then return deepest
+            else if b = 93 or b = 125
+                depth = depth - 1
+                if depth < 0 then return -1
+            end if
+        end for
+        return deepest
+    end function
+
+    function ofText(text as string, maximum as integer) as integer
+        bytes = CreateObject("roByteArray")
+        bytes.FromAsciiString(text)
+        return JsonDepth.ofBytes(bytes, maximum)
+    end function
+
+    function fits(text as dynamic, maximum as integer) as boolean
+        kind = LCase(type(text))
+        if kind <> "string" and kind <> "rostring" then return false
+        depth = JsonDepth.ofText(text, maximum)
+        return depth >= 0 and depth <= maximum
+    end function
+
+end namespace

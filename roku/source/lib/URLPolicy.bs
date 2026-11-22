@@ -16,6 +16,10 @@
 '   URLPolicy.allowsStream(url) -> { ok, reason }: a channel's stream URL, for the player (step 11). As MMTVL,
 '     where the M3U entry is the stream and its own host is always allowed: http or https with a host, whatever
 '     the host is (a public playlist may name a LAN stream). Reason "notWeb" otherwise.
+'   URLPolicy.allowsLogo(url, playlistURL, ownAddresses = invalid) -> { ok, reason }: a channel logo, for LogoTask.
+'     Logos always come from a playlist, so with no playlist ("": Remove Live TV Source) none is fetched (reason
+'     "noPlaylist"; security N-1 of step 24: allows with no referrer would let any host through, LAN and loopback
+'     included); else allows with the playlist as the referrer, as its url-tvg guides.
 '   URLPolicy.allowsPeer(ipAddress, publicChain, ownAddresses = invalid) -> { ok, reason }: the address a transfer
 '     actually reached (roUrlEvent.GetTargetIpAddress; security M-1 of step 8, for the guide task). publicChain:
 '     the URL came from a public referrer, so the peer must be public too; else (a LAN chain) a private LAN
@@ -54,6 +58,12 @@ namespace URLPolicy
         if not URLPolicy.isWebURL(url) then return URLPolicy.verdict("notWeb")
         if referrerURL = "" then return URLPolicy.verdict("")
         return URLPolicy.allowsInChain(url, referrerURL, "", true, ownAddresses)
+    end function
+
+    ' A channel logo (see the top of the file).
+    function allowsLogo(url as string, playlistURL as string, ownAddresses = invalid as dynamic) as object
+        if playlistURL = "" then return URLPolicy.verdict("noPlaylist")
+        return URLPolicy.allows(url, playlistURL, ownAddresses)
     end function
 
     ' A channel's stream URL (decision 2026-11-18, as MMTVL): http or https with a host, any host.

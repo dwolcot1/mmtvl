@@ -49,6 +49,7 @@
     <script type="text/brighterscript" uri="pkg:/source/lib/XMLTVScan.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/EPGMatcher.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/AntennaConfig.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/JsonDepth.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/HDHomeRun.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/AntennaLineup.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/AntennaGuide.bs" />
