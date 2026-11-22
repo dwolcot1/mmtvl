@@ -1,0 +1,157 @@
+' EPGSuggester (M12 step 20): Match Guide's ranking. tests/fixtures/suggestions.golden.json is written by MMTVL's own
+' EPGSuggester.rank (MMTVLTests/RokuParityTests.suggestionsMatchTheGolden): EPGSuggesterTests' five cases and every
+' fixture channel against both fixture guides, plus a tie where guide order and id order disagree (QA of step 20).
+' The five are also here by name, with MMTVL's own expectations.
+' Off-device.
+namespace EPGSuggesterTests
+
+    sub test_rankReproducesTheGolden(t as object)
+        golden = ParseJson(ReadAsciiFile("pkg:/fixtures/suggestions.golden.json"))
+        ' The fixture guides as this port reads them must be the lists MMTVL ranked.
+        fixtureSources = []
+        for each file in ["guide-a.xml", "guide-b.xml"]
+            pass = XMLTVScan.newChannelPass()
+            t.assertTrue(XMLTVScan.scanFile("pkg:/fixtures/" + file, pass, 512).ok, file)
+            fixtureSources.Push({ sourceID: file, channels: XMLTVScan.channelList(pass) })
+        end for
+        t.assertEqual(fixtureSources, golden.fixtureSources, "the fixture guides' channel lists")
+        n = EPGMatcher.newNormalizer()
+        checked = 0
+        for each item in golden.cases
+            sources = item.sources
+            if sources = invalid then sources = fixtureSources
+            actual = EPGSuggester.rank(item.channel, sources, item.limit, n)
+            t.assertEqual(EPGSuggesterTests.refsOf(actual), EPGSuggesterTests.goldenRefs(item.expected), item.name)
+            if actual.Count() = item.expected.Count()
+                for i = 0 to actual.Count() - 1
+                    t.assertEqual(actual[i].name, item.expected[i].name, item.name + " name " + i.ToStr())
+                    scaledScore = EPGSuggesterTests.nanos(actual[i].score)
+                    if Abs(scaledScore - item.expected[i].scoreNanos) > 1 then t.fail(item.name + " score " + i.ToStr() + ": " + scaledScore.ToStr() + " vs " + item.expected[i].scoreNanos.ToStr())
+                end for
+            end if
+            checked += 1
+        end for
+        t.assertEqual(checked, 42, "cases")
+    end sub
+
+    ' --- EPGSuggesterTests, by name ---
+
+    sub test_rareTokensWin(t as object)
+        result = EPGSuggester.rank(EPGSuggesterTests.channel("FanDuel Sports Network Indiana", invalid), [EPGSuggesterTests.fanDuel()], 30)
+        t.assertEqual([result[0].sourceID, result[0].epgID], ["fd", "fanduel.sports.indiana.us"])
+        t.assertEqual(result[0].name, "FanDuel Sports Indiana")
+        for each entry in result
+            t.assertTrue(entry.score > 0 and entry.score <= 1, "0 < score <= 1")
+            t.assertTrue(entry.epgID <> "espn.us", "ESPN shares no token")
+        end for
+        t.assertEqual(result.Count(), 5)
+    end sub
+
+    sub test_limit(t as object)
+        t.assertEqual(EPGSuggester.rank(EPGSuggesterTests.channel("FanDuel Sports Network Indiana", invalid), [EPGSuggesterTests.fanDuel()], 2).Count(), 2)
+    end sub
+
+    ' Equal scores: fewer extra tokens, then guide order, then id.
+    sub test_ties(t as object)
+        one = EPGSuggesterTests.source("one", [["NBA.TV.Canada.us", "NBA TV Canada"], ["NBA.TV.us", "NBA TV"], ["NBA.TV.HD.us", "NBA TV HD"]])
+        two = EPGSuggesterTests.source("two", [["NBA.TV.us", "NBA TV"]])
+        result = EPGSuggester.rank(EPGSuggesterTests.channel("NBA TV", invalid), [one, two], 30)
+        t.assertEqual(EPGSuggesterTests.refsOf(result), ["one/nba.tv.hd.us", "one/nba.tv.us", "two/nba.tv.us", "one/nba.tv.canada.us"])
+    end sub
+
+    sub test_tvgIDDropsItsLastToken(t as object)
+        guide = EPGSuggesterTests.source("g", [["nflnetwork.us2", "Something"], ["X.y", "US"]])
+        result = EPGSuggester.rank(EPGSuggesterTests.channel("NFL Net", "nflnetwork.us"), [guide], 30)
+        ids = []
+        for each entry in result
+            ids.Push(entry.epgID)
+        end for
+        t.assertEqual(ids, ["nflnetwork.us2"])
+    end sub
+
+    ' MMTVL runs it off the main actor; the Roku runs it in MatchGuideTask. The ranking part:
+    sub test_suggestRunsOffTheMainActor(t as object)
+        result = EPGSuggester.rank(EPGSuggesterTests.channel("FanDuel TV", invalid), [EPGSuggesterTests.fanDuel()], 30)
+        t.assertEqual(result[0].epgID, "fanduel.tv.us")
+    end sub
+
+    ' --- the port's own parts ---
+
+    sub test_nothingToRankGivesNothing(t as object)
+        t.assertEqual(EPGSuggester.rank(EPGSuggesterTests.channel("HD", invalid), [EPGSuggesterTests.fanDuel()], 30), [], "no tokens of its own")
+        t.assertEqual(EPGSuggester.rank(EPGSuggesterTests.channel("FanDuel TV", invalid), [], 30), [], "no guides")
+        t.assertEqual(EPGSuggester.rank(EPGSuggesterTests.channel("FanDuel TV", invalid), [EPGSuggesterTests.fanDuel()], 0), [], "limit 0")
+    end sub
+
+    ' The guide index tells which source each suggestion came from, and ids are lowercased.
+    sub test_guideIndexAndLowercasedIDs(t as object)
+        result = EPGSuggester.rank(EPGSuggesterTests.channel("NBA TV", invalid), [EPGSuggesterTests.source("x", []), { sourceID: "y", channels: [{ id: "NBA.TV.US", names: [] }] }], 30)
+        t.assertEqual(result.Count(), 1)
+        t.assertEqual([result[0].guide, result[0].sourceID, result[0].epgID, result[0].name], [1, "y", "nba.tv.us", "NBA.TV.US"], "no display-name: its id as written")
+    end sub
+
+    ' Doubles: within 1e-12 of the true values (BrightScript's Log is single precision).
+    sub test_lnIsDoublePrecision(t as object)
+        EPGSuggesterTests.checkLn(t, 1#, 0#, "1")
+        EPGSuggesterTests.checkLn(t, 2#, 0.6931471805599453#, "2")
+        EPGSuggesterTests.checkLn(t, 10#, 2.302585092994046#, "10")
+        EPGSuggesterTests.checkLn(t, 0.5#, -0.6931471805599453#, "0.5")
+        EPGSuggesterTests.checkLn(t, 7#, 1.9459101490553132#, "7")
+        EPGSuggesterTests.checkLn(t, 27001#, 10.203629181337648#, "27001")
+        t.assertEqual(LCase(type(EPGSuggester.ln(3#))), "double")
+    end sub
+
+    ' --- helpers ---
+
+    sub checkLn(t as object, value as double, expected as double, label as string)
+        difference# = EPGSuggester.ln(value) - expected
+        if Abs(difference#) > 0.000000000001# then t.fail("ln(" + label + ") is off by " + Str(difference#))
+    end sub
+
+    function channel(name as string, tvgID as dynamic) as object
+        return { id: "name:" + LCase(name), name: name, tvgID: tvgID, tvgName: invalid }
+    end function
+
+    ' MMTVL's source(_:_:): ids lowercased, one display-name each.
+    function source(id as string, pairs as object) as object
+        list = []
+        for each pair in pairs
+            list.Push({ id: LCase(pair[0]), names: [pair[1]] })
+        end for
+        return { sourceID: id, channels: list }
+    end function
+
+    function fanDuel() as object
+        return EPGSuggesterTests.source("fd", [
+            ["FanDuel.Sports.Network.Detroit.HD.us", "FanDuel Sports Network Detroit HD"],
+            ["FanDuel.Sports.Network.Florida.us", "FanDuel Sports Network Florida"],
+            ["FanDuel.Sports.Indiana.us", "FanDuel Sports Indiana"],
+            ["FanDuel.TV.us", "FanDuel TV"],
+            ["Fanduel.Racing.us", "Fanduel Racing"],
+            ["ESPN.us", "ESPN"]
+        ])
+    end function
+
+    function refsOf(list as object) as object
+        result = []
+        for each entry in list
+            result.Push(entry.sourceID + "/" + entry.epgID)
+        end for
+        return result
+    end function
+
+    function goldenRefs(list as object) as object
+        result = []
+        for each entry in list
+            result.Push(entry.ref.sourceID + "/" + entry.ref.epgID)
+        end for
+        return result
+    end function
+
+    ' score × 1e9, rounded (the golden's scoreNanos); scores are at most 1, so it fits an Integer.
+    function nanos(score as dynamic) as integer
+        scaled# = score * 1000000000#
+        return Int(scaled# + 0.5#)
+    end function
+
+end namespace

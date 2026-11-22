@@ -1,0 +1,282 @@
+' Match Guide (M12 step 20): a port of MMTVL's IPTVLibrary.guideMatchOptions and setGuideMatch
+' (IPTV/IPTVLibrary.swift:500-566), LiveTVModel.matchMenu and the channel menu's Match Guide row
+' (IPTV/LiveTVModel.swift:937-938, 1061-1083), as pure functions. No nodes. The ranking is EPGSuggester's (in
+' MatchGuideTask); this file is light enough for the scene (it uses Unicode, and GuideSources and URLDisplay for
+' the labels).
+'
+' Shapes:
+'   channel   M3U.makeChannels' fields { id, name, tvgID, tvgName } (tvgID and tvgName may be invalid)
+'   ref       { guide (0-based priority index), epgID (lowercased) }; GuidePipeline's matches add sourceID
+'   choice    { kind: "automatic" } (no override applies), { kind: "none" } (override ""), or
+'             { kind: "epg", guide, epgID } (an override that resolved to the current match)
+'   matchData GuideFetch.matchData's { matches: { channel id: ref }, guides: [[{ id, names }]] } (GuideTask's field)
+'   overrides SettingsStore's { key (lowercased): EPG id or "" }
+'
+'   overrideKey(channel) -> the key a choice is saved under: an antenna channel's id ("antenna:<GuideNumber>",
+'     M7j L12, names repeat on a tuner), else the name as shown. Same as EPGMatcher.overrideKey.
+'   overrideFor(channel, overrides, finder) -> the override the matcher reads for the channel (by its overrideKey,
+'     then its name, then its tvg-id, ignoring case), or invalid.
+'   options(channel, matchData, overrides, suggestions, finder) -> { choice, current, candidates }:
+'     current: the channel's match (ref) or invalid. choice: "none" for an override "", "epg" when the override's
+'     target is the current match, else "automatic". candidates: [{ guide, epgID, name }]: the current match first
+'     (its first display-name, else its id), then the suggestions (EPGSuggester.rank's), each ref once.
+'   menu(channelName, channelID, offered, labelList) -> { title, items, focusedIndex }: "Guide for <name>"; Automatic,
+'     No Guide (value "Selected" on the choice), then the candidates (value: the guide's label, plus " · Selected"
+'     on the chosen one, or " · Automatic" on the current match when the choice is Automatic). Focus on the selected
+'     row. Each item: { id, title, value, action: { type: "matchGuide", channelID, choice } }; ids "match.automatic",
+'     "match.none", "match.<guide>.<epgID>".
+'   overridesAfter(overrides, channel, choice, finder) -> the overrides to save (a new object): every key that is the
+'     channel's id, name or tvg-id (ignoring case) removed, then "" (none) or the EPG id (epg) under its overrideKey;
+'     nothing added for Automatic.
+'   isApplied(overrides, channel, choice, finder) -> whether saved overrides hold the choice (SettingsStore keeps at
+'     most 500 keys, so a save can drop one): the overrideKey holds "" or the id, or (Automatic) none of the
+'     channel's keys is there.
+'   tooMany(overrides) -> more keys than SettingsStore keeps (the save would drop one silently).
+'   rowValue(match, labelList) -> the channel menu's Match Guide value: the matched guide's label, else "None".
+'   labels(sourcesKey, sources) -> each guide's short label (URLDisplay.guideShortLabel), by the index the last
+'     guide run gave it: sourcesKey is that run's (GuideSources.sourcesKey), sources the guides now
+'     (GuideSources.chooseSources); a guide no longer there has "".
+'   sameRef(a, b) -> the same guide and EPG id.
+namespace MatchGuide
+
+    const automaticTitle = "Automatic"
+    const noGuideTitle = "No Guide"
+    const selectedValue = "Selected"
+    const automaticValue = "Automatic"
+    const noMatchValue = "None"
+    const titlePrefix = "Guide for "
+    ' The channel menu's row (the frame's wording, Z3UnCj).
+    const rowTitle = "Match Guide…"
+    ' A choice the 500-key limit would drop (a key past SettingsStore.maximumListEntries).
+    const tooManyMessage = "This Roku keeps at most 500 guide matches, so this one wasn't saved. Set some channels back to Automatic and try again."
+
+    function overrideKey(channel as object) as string
+        if Left(channel.id, 8) = "antenna:" then return channel.id
+        return channel.name
+    end function
+
+    function overrideFor(channel as object, overrides as dynamic, finder as dynamic) as dynamic
+        if type(overrides) <> "roAssociativeArray" then return invalid
+        lowered = MatchGuide.loweredMap(overrides, finder)
+        candidates = [MatchGuide.overrideKey(channel), channel.name]
+        if MatchGuide.isText(channel.tvgID) then candidates.Push(channel.tvgID)
+        for each key in candidates
+            if MatchGuide.isText(key)
+                value = lowered[Unicode.lower(key, finder)]
+                if value <> invalid then return value
+            end if
+        end for
+        return invalid
+    end function
+
+    function options(channel as object, matchData as dynamic, overrides as dynamic, suggestions as dynamic, finder as dynamic) as object
+        current = invalid
+        guides = []
+        if type(matchData) = "roAssociativeArray"
+            if type(matchData.matches) = "roAssociativeArray"
+                found = matchData.matches[channel.id]
+                if type(found) = "roAssociativeArray" then current = { guide: found.guide, epgID: found.epgID }
+            end if
+            if type(matchData.guides) = "roArray" then guides = matchData.guides
+        end if
+        choice = { kind: "automatic" }
+        target = MatchGuide.overrideFor(channel, overrides, finder)
+        if MatchGuide.isText(target)
+            if target = ""
+                choice = { kind: "none" }
+            else if current <> invalid
+                if current.epgID = Unicode.lower(target, finder) then choice = { kind: "epg", guide: current.guide, epgID: current.epgID }
+            end if
+        end if
+        candidates = []
+        if current <> invalid
+            candidates.Push({ guide: current.guide, epgID: current.epgID, name: MatchGuide.guideChannelName(guides, current, finder) })
+        end if
+        if type(suggestions) = "roArray"
+            for each suggestion in suggestions
+                if not MatchGuide.containsRef(candidates, suggestion)
+                    candidates.Push({ guide: suggestion.guide, epgID: suggestion.epgID, name: suggestion.name })
+                end if
+            end for
+        end if
+        return { choice: choice, current: current, candidates: candidates }
+    end function
+
+    function menu(channelName as string, channelID as string, offered as object, labelList as dynamic) as object
+        choice = offered.choice
+        items = [
+            MatchGuide.item("match.automatic", MatchGuide.automaticTitle, MatchGuide.selectedIf(choice.kind = "automatic"), channelID, { kind: "automatic" }),
+            MatchGuide.item("match.none", MatchGuide.noGuideTitle, MatchGuide.selectedIf(choice.kind = "none"), channelID, { kind: "none" })
+        ]
+        focused = 0
+        if choice.kind = "none" then focused = 1
+        for each candidate in offered.candidates
+            label = MatchGuide.labelOf(labelList, candidate.guide)
+            mark = ""
+            if choice.kind = "epg" and MatchGuide.sameRef(choice, candidate)
+                mark = MatchGuide.selectedValue
+                focused = items.Count()
+            else if choice.kind = "automatic" and MatchGuide.sameRef(offered.current, candidate)
+                mark = MatchGuide.automaticValue
+            end if
+            value = label
+            if mark <> ""
+                if value = "" then value = mark else value = value + " " + Chr(183) + " " + mark
+            end if
+            items.Push(MatchGuide.item("match." + candidate.guide.ToStr() + "." + candidate.epgID, candidate.name, value, channelID, { kind: "epg", guide: candidate.guide, epgID: candidate.epgID }))
+        end for
+        return { title: MatchGuide.titlePrefix + channelName, items: items, focusedIndex: focused }
+    end function
+
+    function overridesAfter(overrides as dynamic, channel as object, choice as object, finder as dynamic) as object
+        drop = MatchGuide.channelKeys(channel, finder)
+        result = {}
+        if type(overrides) = "roAssociativeArray"
+            for each key in overrides
+                if not drop.DoesExist(Unicode.lower(key, finder)) then result[key] = overrides[key]
+            end for
+        end if
+        if choice.kind = "none"
+            result[MatchGuide.overrideKey(channel)] = ""
+        else if choice.kind = "epg"
+            result[MatchGuide.overrideKey(channel)] = choice.epgID
+        end if
+        return result
+    end function
+
+    function isApplied(overrides as dynamic, channel as object, choice as object, finder as dynamic) as boolean
+        lowered = {}
+        if type(overrides) = "roAssociativeArray" then lowered = MatchGuide.loweredMap(overrides, finder)
+        if choice.kind = "automatic"
+            for each key in MatchGuide.channelKeys(channel, finder)
+                if lowered.DoesExist(key) then return false
+            end for
+            return true
+        end if
+        value = lowered[Unicode.lower(MatchGuide.overrideKey(channel), finder)]
+        if not MatchGuide.isText(value) then return false
+        if choice.kind = "none" then return value = ""
+        return value = choice.epgID
+    end function
+
+    function tooMany(overrides as dynamic) as boolean
+        if type(overrides) <> "roAssociativeArray" then return false
+        return overrides.Count() > SettingsStore.maximumListEntries
+    end function
+
+    function rowValue(match as dynamic, labelList as dynamic) as string
+        if type(match) <> "roAssociativeArray" then return MatchGuide.noMatchValue
+        label = MatchGuide.labelOf(labelList, match.guide)
+        if label = "" then return MatchGuide.noMatchValue
+        return label
+    end function
+
+    function labels(sourcesKey as dynamic, sources as dynamic) as object
+        result = []
+        if not MatchGuide.isText(sourcesKey) or type(sources) <> "roArray" then return result
+        if sourcesKey = "" then return result
+        for each part in sourcesKey.Split(",")
+            label = ""
+            id = Mid(part, 2)
+            for each source in sources
+                if GuideSources.cacheID(source.url) = id
+                    label = URLDisplay.guideShortLabel(source.url)
+                    exit for
+                end if
+            end for
+            result.Push(label)
+        end for
+        return result
+    end function
+
+    function sameRef(a as dynamic, b as dynamic) as boolean
+        if type(a) <> "roAssociativeArray" or type(b) <> "roAssociativeArray" then return false
+        if not MatchGuide.isNumber(a.guide) or not MatchGuide.isNumber(b.guide) then return false
+        if not MatchGuide.isText(a.epgID) or not MatchGuide.isText(b.epgID) then return false
+        return a.guide = b.guide and a.epgID = b.epgID
+    end function
+
+    ' --- helpers ---
+
+    function item(id as string, title as string, value as string, channelID as string, choice as object) as object
+        return { id: id, title: title, value: value, action: { type: "matchGuide", channelID: channelID, choice: choice } }
+    end function
+
+    function selectedIf(flag as boolean) as string
+        if flag then return MatchGuide.selectedValue
+        return ""
+    end function
+
+    function labelOf(labelList as dynamic, guide as dynamic) as string
+        if type(labelList) <> "roArray" or not MatchGuide.isNumber(guide) then return ""
+        if guide < 0 or guide >= labelList.Count() then return ""
+        if MatchGuide.isText(labelList[guide]) then return labelList[guide]
+        return ""
+    end function
+
+    ' The current match's first display-name in its guide's list, else its id (MMTVL's names.first ?? epgID).
+    function guideChannelName(guides as object, ref as object, finder as dynamic) as string
+        if MatchGuide.isNumber(ref.guide)
+            if ref.guide >= 0 and ref.guide < guides.Count()
+                list = guides[ref.guide]
+                if type(list) = "roArray"
+                    for each epg in list
+                        if type(epg) = "roAssociativeArray" and MatchGuide.isText(epg.id)
+                            if Unicode.lower(epg.id, finder) = ref.epgID
+                                if type(epg.names) = "roArray"
+                                    if epg.names.Count() > 0 and MatchGuide.isText(epg.names[0]) then return epg.names[0]
+                                end if
+                                return ref.epgID
+                            end if
+                        end if
+                    end for
+                end if
+            end if
+        end if
+        return ref.epgID
+    end function
+
+    function containsRef(list as object, ref as dynamic) as boolean
+        for each entry in list
+            if MatchGuide.sameRef(entry, ref) then return true
+        end for
+        return false
+    end function
+
+    ' The channel's id, name and tvg-id, lowercased (MMTVL's setGuideMatch keys), as a case-sensitive set.
+    function channelKeys(channel as object, finder as dynamic) as object
+        keys = {}
+        keys.SetModeCaseSensitive()
+        for each value in [channel.id, channel.name, channel.tvgID]
+            if MatchGuide.isText(value)
+                if value <> "" then keys[Unicode.lower(value, finder)] = true
+            end if
+        end for
+        return keys
+    end function
+
+    ' The overrides with lowercased keys, in a case-sensitive map (the last of keys equal ignoring case wins, in
+    ' sorted order, as EPGMatcher reads them).
+    function loweredMap(overrides as object, finder as dynamic) as object
+        sorted = overrides.Keys()
+        sorted.Sort()
+        result = {}
+        result.SetModeCaseSensitive()
+        for each key in sorted
+            value = overrides[key]
+            if MatchGuide.isText(value) then result[Unicode.lower(key, finder)] = value
+        end for
+        return result
+    end function
+
+    function isText(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "string" or kind = "rostring"
+    end function
+
+    function isNumber(value as dynamic) as boolean
+        kind = LCase(type(value))
+        return kind = "integer" or kind = "roint" or kind = "rointeger" or kind = "longinteger" or kind = "rolonginteger" or kind = "float" or kind = "rofloat" or kind = "double" or kind = "rodouble"
+    end function
+
+end namespace

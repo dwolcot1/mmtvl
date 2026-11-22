@@ -1,0 +1,345 @@
+' Match Guide (M12 step 20): ported from MMTVL's IPTVLibraryTests (matchOptions, noGuideAndAutomatic,
+' manualMatchReimportsWhenItsProgrammesWerentKept, matchGuideOnAnAntennaChannelWritesItsIDKey) and LiveTVModelTests
+' (matchGuideMenu, choosingACandidateMatches; the channel menu row's value is in ChannelMenuTests). Plus the L5 space
+' refusal, the 500-key limit, the guides' labels, the rematch (a run over the same files with the saved overrides
+' leaves the guide data exactly as a fresh match would) and GuideRuns' rematch (no download). The scene's Back, idle
+' and serial handling are device checks (step 23). Off-device.
+namespace MatchGuideTests
+
+    ' --- options (IPTVLibraryTests.matchOptions, noGuideAndAutomatic) ---
+
+    sub test_matchOptions(t as object)
+        nfl = MatchGuideTests.channel("id:nflnetwork.us", "NFL Network", "NFLNetwork.us")
+        matchData = MatchGuideTests.data()
+        suggestions = [{ guide: 0, epgID: "nfl.network.hd.us2", name: "NFL Network HD" }, { guide: 0, epgID: "nfl.redzone.hd.us2", name: "NFL RedZone HD" }]
+        options = MatchGuide.options(nfl, matchData, {}, suggestions, invalid)
+        t.assertEqual(options.choice, { kind: "automatic" })
+        t.assertEqual(options.current, { guide: 0, epgID: "nfl.network.hd.us2" })
+        t.assertEqual(options.candidates[0], { guide: 0, epgID: "nfl.network.hd.us2", name: "NFL Network HD" }, "the current match first, by its first display-name")
+        t.assertEqual(options.candidates.Count(), 2, "the current match once")
+        t.assertEqual(options.candidates[1].epgID, "nfl.redzone.hd.us2")
+
+        ' setGuideMatch(.epg(current)): then the choice is that match.
+        saved = MatchGuide.overridesAfter({}, nfl, { kind: "epg", guide: 0, epgID: "nfl.network.hd.us2" }, invalid)
+        t.assertEqual(saved, { "NFL Network": "nfl.network.hd.us2" })
+        t.assertEqual(MatchGuide.options(nfl, matchData, saved, suggestions, invalid).choice, { kind: "epg", guide: 0, epgID: "nfl.network.hd.us2" })
+        ' An override whose target isn't the current match (it isn't in any guide): Automatic, as MMTVL.
+        t.assertEqual(MatchGuide.options(nfl, matchData, { "nfl network": "gone.us" }, suggestions, invalid).choice, { kind: "automatic" })
+    end sub
+
+    sub test_noGuideAndAutomatic(t as object)
+        nba = MatchGuideTests.channel("id:nbatv.us", "NBA TV", "NBATV.us")
+        store = SettingsStore.load(SettingsStoreTests.fakeRegistry(30000))
+        t.assertTrue(MatchGuideTests.choose(store, nba, { kind: "none" }).ok)
+        t.assertEqual(store.overrides, { "nba tv": "" })
+        t.assertTrue(MatchGuide.isApplied(store.overrides, nba, { kind: "none" }, invalid))
+        t.assertEqual(MatchGuide.options(nba, MatchGuideTests.data(), store.overrides, [], invalid).choice, { kind: "none" })
+
+        ' Automatic removes keys for the name and the tvg-id, in any case.
+        SettingsStore.save(store, "overrides", { "NBATV.us": "x", "nba tv": "", "Other": "other.us" })
+        t.assertTrue(MatchGuideTests.choose(store, nba, { kind: "automatic" }).ok)
+        t.assertEqual(store.overrides, { "other": "other.us" })
+        t.assertTrue(MatchGuide.isApplied(store.overrides, nba, { kind: "automatic" }, invalid))
+        t.assertEqual(MatchGuide.options(nba, MatchGuideTests.data(), store.overrides, [], invalid).choice, { kind: "automatic" })
+    end sub
+
+    ' IPTVLibraryTests.manualMatchReimportsWhenItsProgrammesWerentKept's override part: keyed by the name as shown.
+    sub test_aManualMatchIsKeyedByTheName(t as object)
+        redZone = MatchGuideTests.channel("name:red zone", "Red Zone", invalid)
+        store = SettingsStore.load(SettingsStoreTests.fakeRegistry(30000))
+        t.assertTrue(MatchGuideTests.choose(store, redZone, { kind: "epg", guide: 0, epgID: "nfl.redzone.hd.us2" }).ok)
+        t.assertEqual(store.overrides, { "red zone": "nfl.redzone.hd.us2" })
+        t.assertTrue(MatchGuide.isApplied(store.overrides, redZone, { kind: "epg", guide: 0, epgID: "nfl.redzone.hd.us2" }, invalid))
+        t.assertFalse(MatchGuide.isApplied(store.overrides, redZone, { kind: "none" }, invalid))
+    end sub
+
+    ' IPTVLibraryTests.matchGuideOnAnAntennaChannelWritesItsIDKey (M7j L12): an antenna channel's id key, removing
+    ' keys under its id or name, others kept.
+    sub test_anAntennaChannelWritesItsIDKey(t as object)
+        wsb = MatchGuideTests.channel("antenna:2.1", "WSB-HD", invalid)
+        t.assertEqual(MatchGuide.overrideKey(wsb), "antenna:2.1")
+        t.assertEqual(MatchGuide.overrideKey(wsb), EPGMatcher.overrideKey(wsb), "the matcher's key")
+        overrides = { "WSB-HD": "NFL.Network.HD.us2", "NBA TV": "nbatv.us" }
+        chosen = MatchGuide.overridesAfter(overrides, wsb, { kind: "epg", guide: 1, epgID: "us10002.hdhomerun.com" }, invalid)
+        t.assertEqual(chosen, { "antenna:2.1": "us10002.hdhomerun.com", "NBA TV": "nbatv.us" })
+        none = MatchGuide.overridesAfter(chosen, wsb, { kind: "none" }, invalid)
+        t.assertEqual(none, { "antenna:2.1": "", "NBA TV": "nbatv.us" })
+        automatic = MatchGuide.overridesAfter(none, wsb, { kind: "automatic" }, invalid)
+        t.assertEqual(automatic, { "NBA TV": "nbatv.us" })
+        t.assertEqual(overrides, { "WSB-HD": "NFL.Network.HD.us2", "NBA TV": "nbatv.us" }, "the map passed in is unchanged")
+    end sub
+
+    ' Keys are compared as Swift lowercases them, so a non-ASCII name is removed whatever case it was saved in.
+    sub test_automaticRemovesNonASCIIKeysInAnyCase(t as object)
+        cafe = MatchGuideTests.channel("name:café télé", "Café Télé", invalid)
+        t.assertEqual(MatchGuide.overridesAfter({ "CAFÉ TÉLÉ": "cafe.tele.fr" }, cafe, { kind: "automatic" }, invalid), {})
+        t.assertEqual(MatchGuide.overrideFor(cafe, { "CAFÉ TÉLÉ": "" }, invalid), "")
+    end sub
+
+    ' --- the menu (LiveTVModelTests.matchGuideMenu, choosingACandidateMatches) ---
+
+    sub test_theMenuStartsWithAutomaticAndNoGuide(t as object)
+        options = { choice: { kind: "automatic" }, current: invalid, candidates: [] }
+        menu = MatchGuide.menu("Red Zone", "name:red zone", options, ["custom"])
+        t.assertEqual(menu.title, "Guide for Red Zone")
+        t.assertEqual(MatchGuideTests.idsOf(menu.items), ["match.automatic", "match.none"])
+        t.assertEqual(menu.focusedIndex, 0)
+        t.assertEqual(menu.items[0].value, "Selected")
+        t.assertEqual(menu.items[1].value, "")
+        t.assertEqual(menu.items[0].action, { type: "matchGuide", channelID: "name:red zone", choice: { kind: "automatic" } })
+        t.assertEqual(menu.items[1].action.choice, { kind: "none" })
+    end sub
+
+    sub test_theCurrentMatchAndTheSelectedOne(t as object)
+        current = { guide: 0, epgID: "nfl.network.hd.us2" }
+        candidates = [{ guide: 0, epgID: "nfl.network.hd.us2", name: "NFL Network HD" }, { guide: 1, epgID: "nfl.redzone.hd.us2", name: "NFL RedZone HD" }]
+        labels = ["custom", "US2"]
+        automatic = MatchGuide.menu("NFL Network", "id:nflnetwork.us", { choice: { kind: "automatic" }, current: current, candidates: candidates }, labels)
+        t.assertEqual(MatchGuideTests.idsOf(automatic.items), ["match.automatic", "match.none", "match.0.nfl.network.hd.us2", "match.1.nfl.redzone.hd.us2"])
+        t.assertEqual(automatic.items[2].title, "NFL Network HD")
+        t.assertEqual(automatic.items[2].value, "custom " + Chr(183) + " Automatic")
+        t.assertEqual(automatic.items[3].value, "US2")
+        t.assertEqual(automatic.items[3].action.choice, { kind: "epg", guide: 1, epgID: "nfl.redzone.hd.us2" })
+        t.assertEqual(automatic.focusedIndex, 0)
+
+        chosen = MatchGuide.menu("NFL Network", "id:nflnetwork.us", { choice: { kind: "epg", guide: 0, epgID: "nfl.network.hd.us2" }, current: current, candidates: candidates }, labels)
+        t.assertEqual(chosen.items[0].value, "")
+        t.assertEqual(chosen.items[2].value, "custom " + Chr(183) + " Selected")
+        t.assertEqual(chosen.focusedIndex, 2, "focus on the selected row")
+
+        none = MatchGuide.menu("NFL Network", "id:nflnetwork.us", { choice: { kind: "none" }, current: invalid, candidates: [candidates[1]] }, labels)
+        t.assertEqual(none.items[1].value, "Selected")
+        t.assertEqual(none.focusedIndex, 1)
+        t.assertEqual(none.items[2].value, "US2", "no current match: no Automatic mark")
+    end sub
+
+    ' The channel menu's row value (LiveTVModelTests.matchGuideValueNamesTheGuide) and the guides' labels.
+    sub test_rowValueAndLabels(t as object)
+        t.assertEqual(MatchGuide.rowValue({ guide: 1, epgID: "x" }, ["a", "custom"]), "custom")
+        t.assertEqual(MatchGuide.rowValue(invalid, ["a"]), "None")
+        t.assertEqual(MatchGuide.rowValue({ guide: 4, epgID: "x" }, ["a"]), "None", "a guide no longer there")
+        first = { url: "https://guides.example/epg/custom.xml.gz?token=secret" }
+        second = { url: "https://other.example/US2.xml" }
+        key = GuideSources.sourcesKey([first, second])
+        t.assertEqual(MatchGuide.labels(key, [first, second]), ["custom", "US2"])
+        t.assertEqual(MatchGuide.labels(key, [second]), ["", "US2"], "by cache id: a removed guide has none")
+        t.assertEqual(MatchGuide.labels(invalid, [first]), [])
+        t.assertEqual(FormatJson(MatchGuide.labels(key, [first, second])).Instr("secret"), -1, "never a query")
+    end sub
+
+    ' --- saving (L5) ---
+
+    ' Under 4 KB free, saving the overrides is refused with a message, and nothing is written.
+    sub test_lowSpaceRefusesTheMatchWithAMessage(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        nba = MatchGuideTests.channel("id:nbatv.us", "NBA TV", "NBATV.us")
+        t.assertTrue(MatchGuideTests.choose(store, nba, { kind: "none" }).ok)
+        registry.space = 4095
+        result = MatchGuideTests.choose(store, nba, { kind: "epg", guide: 0, epgID: "nbatv.us" })
+        t.assertFalse(result.ok)
+        t.assertEqual(result.message, SettingsStore.overridesRefusedMessage)
+        t.assertEqual(store.overrides, { "nba tv": "" }, "the old choice stays")
+        t.assertEqual(ParseJson(registry.data.overrides), { "nba tv": "" }, "nothing written")
+        t.assertFalse(MatchGuide.isApplied(store.overrides, nba, { kind: "epg", guide: 0, epgID: "nbatv.us" }, invalid))
+    end sub
+
+    ' The store keeps 500 keys and would drop one silently: the scene refuses with a message first.
+    sub test_moreThan500MatchesAreRefused(t as object)
+        overrides = {}
+        for i = 1 to 500
+            overrides["channel " + i.ToStr()] = ""
+        end for
+        t.assertFalse(MatchGuide.tooMany(overrides))
+        nba = MatchGuideTests.channel("id:nbatv.us", "NBA TV", invalid)
+        t.assertTrue(MatchGuide.tooMany(MatchGuide.overridesAfter(overrides, nba, { kind: "none" }, invalid)))
+        t.assertFalse(MatchGuide.tooMany(MatchGuide.overridesAfter(overrides, nba, { kind: "automatic" }, invalid)))
+        t.assertTrue(MatchGuide.tooManyMessage <> "")
+    end sub
+
+    ' --- the rematch ---
+
+    ' A choice re-runs the matching over the same guide files with the saved overrides; the guide data is then exactly
+    ' what a fresh match with those overrides gives: Channel 7 (no guide before) gets Case Channel and its programme,
+    ' which the first run didn't keep.
+    sub test_theRematchLeavesTheGuideDataAsAFreshMatch(t as object)
+        request = GuideFetchTests.fixtureRequest()
+        store = SettingsStore.load(SettingsStoreTests.fakeRegistry(30000))
+        SettingsStore.save(store, "overrides", request.overrides)
+        before = GuidePipeline.process(request)
+        seven = PlayerSession.channelByID(request.channels, "name:channel 7")
+        t.assertInvalid(before.matches["name:channel 7"], "no guide before")
+        t.assertInvalid(before.guides[1].programmes["case.b"], "its programmes weren't kept")
+
+        t.assertTrue(MatchGuideTests.choose(store, seven, { kind: "epg", guide: 1, epgID: "case.b" }).ok)
+        request.overrides = store.overrides
+        rematched = GuidePipeline.process(request)
+        t.assertEqual(rematched.matches["name:channel 7"], { guide: 1, sourceID: "1", epgID: "case.b" })
+        t.assertEqual(GuidePipeline.programmesFor(rematched, "name:channel 7").Count(), 1, "its programme, read again")
+
+        fresh = GuideFetchTests.fixtureRequest()
+        fresh.overrides.Append({ "channel 7": "case.b" })
+        expected = GuidePipeline.process(fresh)
+        t.assertEqual(FormatJson(GuideFetch.guideData(rematched, 1, 2)), FormatJson(GuideFetch.guideData(expected, 1, 2)), "the guide data")
+        t.assertEqual(FormatJson(GuideFetch.matchData(rematched)), FormatJson(GuideFetch.matchData(expected)), "Match Guide's data")
+        t.assertEqual(rematched.guides[1].matched, before.guides[1].matched + 1, "guide B's count")
+
+        ' No Guide drops it (and its programmes); Automatic gives the golden's match back.
+        t.assertTrue(MatchGuideTests.choose(store, seven, { kind: "none" }).ok)
+        request.overrides = store.overrides
+        none = GuidePipeline.process(request)
+        t.assertInvalid(none.matches["name:channel 7"])
+        t.assertInvalid(none.guides[1].programmes["case.b"])
+        t.assertTrue(MatchGuideTests.choose(store, seven, { kind: "automatic" }).ok)
+        request.overrides = store.overrides
+        back = GuidePipeline.process(request)
+        t.assertEqual(FormatJson(GuideFetch.guideData(back, 1, 2)), FormatJson(GuideFetch.guideData(before, 1, 2)), "as before")
+    end sub
+
+    ' Match Guide's options over the fixtures' run: the current match and the ranked suggestions, each once.
+    sub test_optionsOverTheFixturesRun(t as object)
+        result = GuidePipeline.process(GuideFetchTests.fixtureRequest())
+        matchData = GuideFetch.matchData(result)
+        sources = []
+        for i = 0 to matchData.guides.Count() - 1
+            sources.Push({ sourceID: i.ToStr(), channels: matchData.guides[i] })
+        end for
+        both = PlayerSession.channelByID(GuideFetchTests.fixtureRequest().channels, "id:both.guides.us#2")
+        suggestions = EPGSuggester.rank(both, sources, 30)
+        options = MatchGuide.options(both, matchData, {}, suggestions, invalid)
+        t.assertEqual(options.current, { guide: 0, epgID: "both.guides.us" })
+        t.assertEqual(options.candidates.Count(), 2, "the current match, then guide B's (guide A's is the current one)")
+        t.assertEqual([options.candidates[1].guide, options.candidates[1].epgID], [1, "both.guides.us"])
+    end sub
+
+    ' --- GuideRuns: the rematch downloads nothing ---
+
+    sub test_aSavedMatchStartsARunThatDownloadsNothing(t as object)
+        runs = GuideRuns.overridesChanged(GuideRuns.newState())
+        t.assertTrue(GuideRuns.checkAgain(runs))
+        chosen = MatchGuideTests.check(runs, false, true, { due: false, reason: "" })
+        t.assertEqual([chosen.run, chosen.reason, chosen.cachedOnly, chosen.forgetTimes], [true, "match", true, false])
+        t.assertFalse(GuideRuns.checkAgain(chosen.runs))
+    end sub
+
+    ' A guide due too: the rematch first (no download), then the due run (with downloads) right after it.
+    sub test_aDueGuideRunsRightAfterTheRematch(t as object)
+        first = MatchGuideTests.check(GuideRuns.overridesChanged(GuideRuns.newState()), false, true, { due: true, reason: "guides" })
+        t.assertEqual([first.run, first.reason, first.cachedOnly], [true, "match", true])
+        t.assertTrue(GuideRuns.checkAgain(first.runs), "checked again when it answers")
+        second = MatchGuideTests.check(first.runs, false, true, { due: true, reason: "guides" })
+        t.assertEqual([second.run, second.reason, second.cachedOnly], [true, "guides", false])
+        t.assertFalse(GuideRuns.checkAgain(second.runs))
+    end sub
+
+    ' No run has read these guides ("first", "sources"): a normal run, which matches with the saved overrides too.
+    sub test_noRunYetMeansANormalRun(t as object)
+        for each reason in ["first", "sources"]
+            chosen = MatchGuideTests.check(GuideRuns.overridesChanged(GuideRuns.newState()), false, true, { due: true, reason: reason })
+            t.assertEqual([chosen.run, chosen.reason, chosen.cachedOnly], [true, reason, false], reason)
+            t.assertFalse(GuideRuns.checkAgain(chosen.runs), reason + ": the rematch is in it")
+        end for
+    end sub
+
+    ' Busy: kept until the task answers. No channels: kept. Refresh Now: it rematches too.
+    sub test_theRematchWaitsAndRefreshCoversIt(t as object)
+        busy = MatchGuideTests.check(GuideRuns.overridesChanged(GuideRuns.newState()), true, true, invalid)
+        t.assertFalse(busy.run)
+        t.assertTrue(busy.runs.rematch)
+        noChannels = MatchGuideTests.check(busy.runs, false, false, invalid)
+        t.assertFalse(noChannels.run)
+        t.assertTrue(noChannels.runs.rematch)
+        refreshed = MatchGuideTests.check(GuideRuns.refreshNow(noChannels.runs), false, true, invalid)
+        t.assertEqual([refreshed.run, refreshed.reason, refreshed.cachedOnly, refreshed.forgetTimes], [true, "refresh", false, true])
+        t.assertEqual(refreshed.runs, GuideRuns.newState())
+    end sub
+
+    ' QA of step 20: GuideTask's decision per guide. A rematch (cachedOnly) never downloads a due guide; a normal run
+    ' does. Fresh files and failure waits are the same either way.
+    sub test_fetchStepDownloadsOnlyOutsideARematch(t as object)
+        now = 100000
+        due = now - GuideSources.guideMaxAgeSeconds - 1
+        fresh = now - 60
+        t.assertEqual(GuideFetch.fetchStep(due, invalid, true, now), "noDownload", "cachedOnly, due: read the file")
+        t.assertEqual(GuideFetch.fetchStep(invalid, invalid, true, now), "noDownload", "cachedOnly, no file or time")
+        t.assertEqual(GuideFetch.fetchStep(due, invalid, false, now), "download", "a normal run downloads it")
+        t.assertEqual(GuideFetch.fetchStep(invalid, invalid, false, now), "download")
+        for each cachedOnly in [true, false]
+            t.assertEqual(GuideFetch.fetchStep(fresh, invalid, cachedOnly, now), "fresh")
+            t.assertEqual(GuideFetch.fetchStep(due, { at: now - 60, kind: "failed" }, cachedOnly, now), "waiting")
+            t.assertEqual(GuideFetch.fetchStep(due, { at: now - GuideSources.retryAfterSeconds - 1, kind: "failed" }, cachedOnly, now) = "download", not cachedOnly, "the wait is over")
+        end for
+        t.assertEqual(GuideFetch.fetchStep(due, invalid, invalid, now), "download", "a missing flag is false")
+    end sub
+
+    ' QA of step 20: a rematch run that failed (or was given up) is tried again once the failure wait is over; a
+    ' normal run's failure sets nothing.
+    sub test_aFailedRematchIsTriedAgainAfterTheWait(t as object)
+        started = MatchGuideTests.check(GuideRuns.overridesChanged(GuideRuns.newState()), false, true, { due: false, reason: "" })
+        t.assertEqual([started.run, started.cachedOnly], [true, true])
+        t.assertFalse(started.runs.rematch, "cleared when it starts")
+        failed = GuideRuns.runFailed(started.runs, true)
+        t.assertTrue(failed.rematch, "set again")
+        t.assertTrue(GuideRuns.checkAgain(failed))
+        t.assertFalse(GuideRuns.runFailed(started.runs, false).rematch, "a normal run's failure")
+        now = 50000
+        t.assertTrue(GuideRuns.isWaitingAfterFailure(now - 60, now))
+        t.assertFalse(GuideRuns.isWaitingAfterFailure(now - GuideSources.retryAfterSeconds - 1, now))
+        t.assertFalse(GuideRuns.isWaitingAfterFailure(invalid, now))
+        waiting = GuideRuns.choose(GuideRuns.gate(failed, false).runs, true, { due: false, reason: "waiting" }, true)
+        t.assertFalse(waiting.run, "not during the wait")
+        t.assertTrue(waiting.runs.rematch, "kept")
+        again = GuideRuns.choose(GuideRuns.gate(waiting.runs, false).runs, true, { due: false, reason: "" }, false)
+        t.assertEqual([again.run, again.reason, again.cachedOnly], [true, "match", true], "after the wait")
+        ' A due guide during the wait: its normal run matches with the saved overrides too.
+        due = GuideRuns.choose(GuideRuns.gate(failed, false).runs, true, { due: true, reason: "guides" }, true)
+        t.assertEqual([due.run, due.reason, due.cachedOnly], [true, "guides", false])
+        t.assertFalse(due.runs.rematch)
+    end sub
+
+    ' GuideTask's cachedOnly: a due guide is read from its file with its real time, or has none (and no wait).
+    sub test_withoutDownload(t as object)
+        t.assertEqual(GuideFetch.withoutDownload(true, 1000), { state: "cached", fetchedAt: 1000 })
+        t.assertEqual(GuideFetch.withoutDownload(true, invalid), { state: "cached", fetchedAt: invalid })
+        t.assertEqual(GuideFetch.withoutDownload(false, 1000), { state: "failed", fetchedAt: invalid })
+        ' Its old time keeps it due, so the run after the rematch downloads it.
+        state = { lastKey: "pabc", fetchedAt: { abc: 1000 }, failures: {}, channelsKey: invalid, lastChannelsKey: invalid, channelRunAt: invalid, failedRunAt: invalid }
+        t.assertTrue(GuideSources.needsFetch(state.fetchedAt.abc, invalid, 1000 + GuideSources.guideMaxAgeSeconds + 1))
+    end sub
+
+    ' --- helpers ---
+
+    function channel(id as string, name as string, tvgID as dynamic) as object
+        return { id: id, name: name, tvgID: tvgID, tvgName: invalid }
+    end function
+
+    ' A run's matchData: guide 0 has NFL Network HD (two names) and NBA TV; NFL Network and NBA TV matched.
+    function data() as object
+        return {
+            matches: { "id:nflnetwork.us": { guide: 0, sourceID: "0", epgID: "nfl.network.hd.us2" }, "id:nbatv.us": { guide: 0, sourceID: "0", epgID: "nbatv.us" } },
+            guides: [[{ id: "NFL.Network.HD.us2", names: ["NFL Network HD", "NFL Net"] }, { id: "nbatv.us", names: ["NBA TV"] }]]
+        }
+    end function
+
+    ' The scene's applyGuideMatch without the nodes: the overrides after the choice, saved.
+    function choose(store as object, target as object, choice as object) as object
+        return SettingsStore.save(store, "overrides", MatchGuide.overridesAfter(store.overrides, target, choice, invalid))
+    end function
+
+    ' MainScene.refreshGuideIfDue's part, as GuideRunsTests.check, with cachedOnly.
+    function check(runs as object, busy as boolean, hasChannels as boolean, verdict as dynamic) as object
+        gated = GuideRuns.gate(runs, busy)
+        result = { runs: gated.runs, run: false, reason: "", forgetTimes: false, cachedOnly: false }
+        if not gated.go then return result
+        return GuideRuns.choose(gated.runs, hasChannels, verdict)
+    end function
+
+    function idsOf(list as object) as object
+        ids = []
+        for each entry in list
+            ids.Push(entry.id)
+        end for
+        return ids
+    end function
+
+end namespace

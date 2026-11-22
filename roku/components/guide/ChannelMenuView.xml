@@ -7,8 +7,10 @@
      every key, so Back never leaves Live TV (D49). -->
 <component name="ChannelMenuView" extends="Group">
     <interface>
-        <!-- ChannelMenu.make's menu: { title, subtitle, items: [{ id, title, action }], focusedIndex, firstVisible,
-             visibleRows }. -->
+        <!-- ChannelMenu.make's menu: { title, subtitle, items: [{ id, title, action, value? }], focusedIndex,
+             firstVisible, visibleRows }. Step 20, optional: wide (true: liveMenuWideWidth, Match Guide's long names,
+             MMTVL's isWide) and note (a message under the header in warningText, wrapped to 3 lines: a refused
+             save). A row's value shows right-aligned (MenuListView's values). -->
         <field id="menu" type="assocarray" onChange="onMenu" />
         <!-- Out: { outcome: "choose", action } or { outcome: "close" }. -->
         <field id="choice" type="assocarray" alwaysNotify="true" />
@@ -17,6 +19,9 @@
         <!-- Step 18: replaceItems({ items }): new rows for the open menu (the team rows came), on the row focused
              now, by id (ChannelMenu.withItems); the menu field above is only how it opened. -->
         <function name="replaceItems" />
+        <!-- Step 20: showNote({ text }): the note under the header of the open menu (a refused save), keeping its
+             rows and focus. -->
+        <function name="showNote" />
     </interface>
     <script type="text/brighterscript" uri="pkg:/components/theme/Theme.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/Lineup.bs" />
@@ -28,6 +33,7 @@
             <Poster id="panel" />
             <Label id="title" />
             <Label id="subtitle" />
+            <Label id="note" />
             <MenuListView id="list" />
             <Label id="hint" text="Back: close" />
         </Group>

@@ -19,9 +19,13 @@ sub init()
     m.title = styleLabel("title", fonts.liveMenuTitle, colors.primaryText)
     m.subtitle = styleLabel("subtitle", fonts.liveMenuValue, colors.secondaryText)
     m.hint = styleLabel("hint", fonts.settingsHint, colors.secondaryText)
+    ' Step 20: a refused save's message, wrapped.
+    m.note = styleLabel("note", fonts.liveMenuValue, colors.warningText)
+    m.note.wrap = true
+    m.note.maxLines = 3
+    m.note.height = 0
     m.list = m.top.findNode("list")
     m.list.visibleRows = layout.liveMenuVisibleRows
-    m.list.rowWidth = layout.liveMenuWidth - 2 * layout.menuPanelPadding
     m.list.rowHeight = layout.liveMenuRowHeight
     m.list.textInset = layout.menuRowPadding
     m.list.fontSpec = fonts.liveMenuRow
@@ -45,14 +49,20 @@ sub onMenu()
     layoutMenu()
 end sub
 
-' The panel around m.menu's rows (its height follows the row count).
+' The panel around m.menu's rows (its height follows the row count). Step 20: liveMenuWideWidth when the menu is
+' wide (Match Guide), and the note under the header when there is one.
 sub layoutMenu()
     menu = m.menu
     layout = m.theme.layout
     fonts = m.theme.fonts
     padding = layout.menuPanelPadding
+    panelWidth = layout.liveMenuWidth
+    ' wide is missing on the channel menu (comparing invalid with true is a type mismatch on a Roku).
+    if ChannelMenu.isTrue(menu.wide) then panelWidth = layout.liveMenuWideWidth
+    m.panel.width = panelWidth
+    m.list.rowWidth = panelWidth - 2 * padding
     textX = padding + layout.menuRowPadding
-    textWidth = layout.liveMenuWidth - 2 * textX
+    textWidth = panelWidth - 2 * textX
     y = padding
     m.title.text = menu.title
     m.title.width = textWidth
@@ -68,6 +78,20 @@ sub layoutMenu()
     else
         m.subtitle.visible = false
     end if
+    note = ""
+    if type(menu.note) = "roString" or type(menu.note) = "String" then note = menu.note
+    if note <> ""
+        y = y + layout.liveMenuHeaderSpacing
+        m.note.width = textWidth
+        m.note.height = 0
+        m.note.text = note
+        noteHeight = Int(m.note.boundingRect().height + 0.5)
+        m.note.translation = [textX, y]
+        m.note.visible = true
+        y = y + noteHeight
+    else
+        m.note.visible = false
+    end if
     y = y + layout.menuTitleSpacing
     m.list.translation = [padding, y]
     shown = menu.items.Count()
@@ -79,15 +103,20 @@ sub layoutMenu()
     m.panel.height = height
     canvas = m.theme.canvas
     panelTop = Int((canvas.height - height) / 6) * 3
-    m.top.findNode("panelGroup").translation = [Int((canvas.width - layout.liveMenuWidth) / 2), panelTop]
+    m.top.findNode("panelGroup").translation = [Int((canvas.width - panelWidth) / 2), panelTop]
     showRows()
 end sub
 
 sub showRows()
     titles = []
+    values = []
     for each item in m.menu.items
         titles.Push(item.title)
+        value = ""
+        if type(item.value) = "roString" or type(item.value) = "String" then value = item.value
+        values.Push(value)
     end for
+    m.list.values = values
     m.list.items = titles
     m.list.firstVisible = m.menu.firstVisible
     m.list.focusedIndex = m.menu.focusedIndex
@@ -98,6 +127,19 @@ function replaceItems(args as dynamic) as boolean
     if m.menu = invalid or type(args) <> "roAssociativeArray" then return false
     if type(args.items) <> "roArray" then return false
     m.menu = ChannelMenu.withItems(m.menu, args.items)
+    layoutMenu()
+    return true
+end function
+
+' Step 20: a message over the open menu's rows (Match Guide's refused save), on the live focus.
+function showNote(args as dynamic) as boolean
+    if m.menu = invalid or type(args) <> "roAssociativeArray" then return false
+    text = ""
+    if type(args.text) = "roString" or type(args.text) = "String" then text = args.text
+    updated = {}
+    updated.Append(m.menu)
+    updated.note = text
+    m.menu = updated
     layoutMenu()
     return true
 end function

@@ -192,7 +192,85 @@ struct RokuParityTests {
         #expect(tested.isSubset(of: Set(coverage.map(\.test))))
     }
 
+    /// Step 20: Match Guide's ranking. EPGSuggesterTests' five cases (their inputs, copied here as data) and every
+    /// fixture channel against both fixture guides, each with `EPGSuggester.rank`'s result. The Roku port
+    /// (`roku/source/lib/EPGSuggester.bs`) must give the same refs in the same order, with scores within 1e-9.
+    @Test func suggestionsMatchTheGolden() throws {
+        let actual = try Self.suggestionsGolden()
+        try Self.check(actual, file: "suggestions.golden.json") { actual, golden in
+            #expect(actual.fixtureSources == golden.fixtureSources)
+            #expect(actual.cases.map(\.name) == golden.cases.map(\.name))
+            for (a, g) in zip(actual.cases, golden.cases) {
+                #expect(a.channel == g.channel, "channel of \(a.name)")
+                #expect(a.sources == g.sources, "sources of \(a.name)")
+                #expect(a.limit == g.limit, "limit of \(a.name)")
+                #expect(a.expected.map(\.ref) == g.expected.map(\.ref), "ranking of \(a.name)")
+                for (x, y) in zip(a.expected, g.expected) {
+                    #expect(x.name == y.name, "name in \(a.name)")
+                    #expect(abs(x.scoreNanos - y.scoreNanos) <= 1, "score in \(a.name)")
+                }
+            }
+        }
+    }
+
+    /// Step 20: the golden carries every EPGSuggesterTests test (by name) as a case.
+    @Test func suggestionsGoldenCoversTheSuite() throws {
+        let names = try Self.suggestionsGolden().cases.map(\.name).filter { $0.hasPrefix("EPGSuggesterTests.") }
+        #expect(names == ["EPGSuggesterTests.rareTokensWin", "EPGSuggesterTests.limit", "EPGSuggesterTests.ties",
+                          "EPGSuggesterTests.tvgIDDropsItsLastToken", "EPGSuggesterTests.suggestRunsOffTheMainActor"])
+    }
+
     // MARK: - MMTVL's code paths
+
+    /// EPGSuggesterTests' inputs (`channel`, `source` and `fanDuel` there), then the fixture channels in playlist
+    /// order against guide A then guide B (sourceIDs are the file names), each ranked by MMTVL's own code.
+    nonisolated static func suggestionsGolden() throws -> SuggestionsGolden {
+        func source(_ id: String, _ channels: [(String, String)]) -> EPGSourceChannels {
+            EPGSourceChannels(sourceID: id, channels: channels.map { EPGChannel(id: $0.0.lowercased(), names: [$0.1]) })
+        }
+        let fanDuel = source("fd", [
+            ("FanDuel.Sports.Network.Detroit.HD.us", "FanDuel Sports Network Detroit HD"),
+            ("FanDuel.Sports.Network.Florida.us", "FanDuel Sports Network Florida"),
+            ("FanDuel.Sports.Indiana.us", "FanDuel Sports Indiana"),
+            ("FanDuel.TV.us", "FanDuel TV"),
+            ("Fanduel.Racing.us", "Fanduel Racing"),
+            ("ESPN.us", "ESPN"),
+        ])
+        let one = source("one", [("NBA.TV.Canada.us", "NBA TV Canada"), ("NBA.TV.us", "NBA TV"), ("NBA.TV.HD.us", "NBA TV HD")])
+        let two = source("two", [("NBA.TV.us", "NBA TV")])
+        let tvgGuide = source("g", [("nflnetwork.us2", "Something"), ("X.y", "US")])
+        // QA of step 20: equal score and extra tokens, where guide order and id order disagree (guide first).
+        let lateGuide = source("first", [("zzz.us", "NBA TV")])
+        let earlyID = source("second", [("aaa.us", "NBA TV")])
+        let inline: [(String, SuggestionChannelGolden, [EPGSourceChannels], Int)] = [
+            ("EPGSuggesterTests.rareTokensWin", .init(name: "FanDuel Sports Network Indiana"), [fanDuel], 30),
+            ("EPGSuggesterTests.limit", .init(name: "FanDuel Sports Network Indiana"), [fanDuel], 2),
+            ("EPGSuggesterTests.ties", .init(name: "NBA TV"), [one, two], 30),
+            ("EPGSuggesterTests.tvgIDDropsItsLastToken", .init(name: "NFL Net", tvgID: "nflnetwork.us"), [tvgGuide], 30),
+            ("EPGSuggesterTests.suggestRunsOffTheMainActor", .init(name: "FanDuel TV"), [fanDuel], 30),
+            ("tie: guide order before id", .init(name: "NBA TV"), [lateGuide, earlyID], 30),
+        ]
+        var cases = inline.map { name, channel, sources, limit in
+            SuggestionCaseGolden(name: name, channel: channel, sources: sources.map(SuggestionSourceGolden.init),
+                                 limit: limit, expected: rank(channel.channel, sources, limit))
+        }
+        let fixtureSources = try guideFiles.map { file in
+            EPGSourceChannels(sourceID: file, channels: try parse(file, wantedIDs: { _ in [] }).channels)
+        }
+        for channel in ChannelList.make(from: try playlist()) {
+            let golden = SuggestionChannelGolden(name: channel.name, tvgID: channel.tvgID, tvgName: channel.tvgName)
+            cases.append(SuggestionCaseGolden(name: "fixture \(channel.id)", channel: golden, sources: nil, limit: 30,
+                                              expected: rank(golden.channel, fixtureSources, 30)))
+        }
+        return SuggestionsGolden(fixtureSources: fixtureSources.map(SuggestionSourceGolden.init), cases: cases)
+    }
+
+    nonisolated static func rank(_ channel: Channel, _ sources: [EPGSourceChannels], _ limit: Int) -> [SuggestionGolden] {
+        EPGSuggester.rank(channel, in: sources, limit: limit).map { candidate in
+            SuggestionGolden(ref: SuggestionRefGolden(sourceID: candidate.ref.sourceID, epgID: candidate.ref.epgID),
+                             name: candidate.name, scoreNanos: Int((candidate.score * 1e9).rounded()))
+        }
+    }
 
     nonisolated static func playlist() throws -> M3UPlaylist {
         // As IPTVNetwork.fetchText decodes it (the BOM stays for M3UParser to strip).
@@ -405,4 +483,72 @@ nonisolated struct TeamGolden: Codable, Equatable {
         aliases = team.aliases
         abbreviations = team.abbreviations
     }
+}
+
+// MARK: - Step 20: Match Guide's suggestions
+
+/// `suggestions.golden.json`: `fixtureSources` (guide A then guide B as `XMLTVParser` reads them; a case whose
+/// `sources` is null ranks against these) and `cases`, each `EPGSuggester.rank`'s result in order. Scores are
+/// whole nanos (`score × 1e9`, rounded), so `ParseJson` reads them as integers.
+nonisolated struct SuggestionsGolden: Codable, Equatable {
+    var fixtureSources: [SuggestionSourceGolden]
+    var cases: [SuggestionCaseGolden]
+}
+
+nonisolated struct SuggestionCaseGolden: Codable, Equatable {
+    var name: String
+    var channel: SuggestionChannelGolden
+    /// null: `fixtureSources`.
+    var sources: [SuggestionSourceGolden]?
+    var limit: Int
+    var expected: [SuggestionGolden]
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encode(channel, forKey: .channel)
+        try container.encode(sources, forKey: .sources)
+        try container.encode(limit, forKey: .limit)
+        try container.encode(expected, forKey: .expected)
+    }
+}
+
+/// What the ranking reads of a channel: its name as shown, tvg-id and tvg-name (null when missing).
+nonisolated struct SuggestionChannelGolden: Codable, Equatable {
+    var name: String
+    var tvgID: String? = nil
+    var tvgName: String? = nil
+
+    var channel: Channel {
+        Channel(id: "name:" + name.lowercased(), number: 1, name: name, group: "G", tvgID: tvgID, tvgName: tvgName,
+                logoURL: nil, streamURL: URL(string: "https://cdn/x.m3u8")!)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encode(tvgID, forKey: .tvgID)
+        try container.encode(tvgName, forKey: .tvgName)
+    }
+}
+
+nonisolated struct SuggestionSourceGolden: Codable, Equatable {
+    var sourceID: String
+    var channels: [ChannelNamesGolden]
+
+    init(_ source: EPGSourceChannels) {
+        sourceID = source.sourceID
+        channels = source.channels.map { ChannelNamesGolden(id: $0.id, names: $0.names) }
+    }
+}
+
+nonisolated struct SuggestionRefGolden: Codable, Equatable {
+    var sourceID: String
+    var epgID: String
+}
+
+nonisolated struct SuggestionGolden: Codable, Equatable {
+    var ref: SuggestionRefGolden
+    var name: String
+    var scoreNanos: Int
 }
