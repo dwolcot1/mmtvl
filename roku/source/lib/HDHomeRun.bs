@@ -42,6 +42,9 @@ namespace HDHomeRun
     ' discover.json, status.json, lineup_status.json (MMTVL's HDHomeRunHTTP limits).
     const smallMaxBytes = 16384
     const lineupMaxBytes = 1048576
+    ' Step 24 (N-3, D56): the deepest a tuner's JSON may nest before ParseJson sees it (discover.json and
+    ' lineup_status.json are objects, lineup.json and status.json arrays of objects; this leaves room).
+    const maximumJSONDepth = 8
     const timeoutMs = 2000
     const lineupTimeoutMs = 5000
     const fallbackHost = "hdhomerun.local"
@@ -584,16 +587,26 @@ namespace HDHomeRun
     end function
 
     ' --- the tuner's JSON (lenient, as MMTVL's decoders) ---------------------------------------------------------
+    ' Step 24 (N-3, D56): every text is checked with JsonDepth.fits(text, maximumJSONDepth) before ParseJson, so a
+    ' deeply nested answer is refused without being parsed (discover.json then reads as not a tuner).
 
-    ' An object from JSON text, else invalid.
-    function parseObject(text as dynamic) as dynamic
+    ' ParseJson of text nested at most maximumJSONDepth deep, else invalid (also when ParseJson throws).
+    function decodeJSON(text as dynamic) as dynamic
         if not HDHomeRun.isText(text) then return invalid
+        if not JsonDepth.fits(text, HDHomeRun.maximumJSONDepth) then return invalid
         parsed = invalid
         try
             parsed = ParseJson(text)
         catch e
             parsed = invalid
         end try
+        return parsed
+    end function
+
+    ' An object from JSON text, else invalid.
+    function parseObject(text as dynamic) as dynamic
+        if not HDHomeRun.isText(text) then return invalid
+        parsed = HDHomeRun.decodeJSON(text)
         if type(parsed) <> "roAssociativeArray" then return invalid
         return parsed
     end function
@@ -603,12 +616,7 @@ namespace HDHomeRun
     ' array.
     function parseLineup(text as dynamic) as dynamic
         if not HDHomeRun.isText(text) then return invalid
-        parsed = invalid
-        try
-            parsed = ParseJson(text)
-        catch e
-            parsed = invalid
-        end try
+        parsed = HDHomeRun.decodeJSON(text)
         if type(parsed) <> "roArray" then return invalid
         result = []
         for each item in parsed
@@ -648,12 +656,7 @@ namespace HDHomeRun
     ' the text isn't a JSON array of objects.
     function parseTunerStatus(text as dynamic) as dynamic
         if not HDHomeRun.isText(text) then return invalid
-        parsed = invalid
-        try
-            parsed = ParseJson(text)
-        catch e
-            parsed = invalid
-        end try
+        parsed = HDHomeRun.decodeJSON(text)
         if type(parsed) <> "roArray" then return invalid
         result = []
         for each item in parsed

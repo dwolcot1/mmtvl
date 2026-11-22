@@ -84,6 +84,8 @@ sub init()
     m.importView = invalid
     m.importTask = invalid
     m.importBundle = invalid
+    ' Step 24 (N-8): the address the open import asked (checkRequest's host), for the confirm screen's From row.
+    m.importHost = ""
     m.importWatchdog = CreateObject("roSGNode", "Timer")
     m.importWatchdog.duration = 2 * ImportBundle.fetchTimeoutSeconds
     m.importWatchdog.repeat = false
@@ -1260,6 +1262,7 @@ end sub
 ' A new playlist (MMTVL's setPlaylistURL): the old channels go, and the new list loads now; its guides follow
 ' (a changed channel set reruns the match at once, not after the hourly wait).
 sub changePlaylist()
+    dropWaitingLogos()
     stopPlaylistTask()
     m.guideState.channelRunAt = invalid
     m.top.playlistGuideURLs = []
@@ -1273,6 +1276,13 @@ sub changePlaylist()
     m.guideRuns = GuideRuns.sourcesChanged(m.guideRuns)
     m.playlistAnswered = false
     loadPlaylist()
+end sub
+
+' Step 24 (N-1, D57): the logos still waiting were named by the old playlist, so LogoTask drops them (each answered
+' as not loaded, so the guide may ask again) when the Live TV source is removed or changed. Sent before the new
+' playlistURL, so a logo LogoTask starts in between is judged with the playlist that named it.
+sub dropWaitingLogos()
+    m.logoTask.request = { clear: true, reason: "source" }
 end sub
 
 sub stopPlaylistTask()
@@ -1327,6 +1337,8 @@ sub removeSource()
     m.top.playlistGuideURLs = []
     m.playlistLoadedAt = invalid
     m.lastPlaylistLoad = invalid
+    ' Step 24 (N-1): the waiting logos go first; with no playlist LogoTask then fetches none (URLPolicy.allowsLogo).
+    dropWaitingLogos()
     m.logoTask.playlistURL = ""
     m.top.playlistStatus = "No Live TV source yet"
     showPlaylistStatus(m.top.playlistStatus)
@@ -1399,6 +1411,7 @@ sub onImportRequest()
     m.importView.observeField("choice", "onImportChoice")
     m.top.appendChild(m.importView)
     task = CreateObject("roSGNode", "ImportTask")
+    m.importHost = checked.host
     task.request = { host: checked.host, port: checked.port, secret: checked.secret }
     task.observeField("result", "onImportResult")
     m.importTask = task
@@ -1422,7 +1435,7 @@ sub onImportResult()
         checked = ImportBundle.validate(result.bundle)
         if checked.ok
             m.importBundle = checked.bundle
-            m.importView.state = { kind: "confirm", rows: ImportBundle.summaryRows(m.importBundle, importLastChannelLabel(m.importBundle.lastChannelID)) }
+            m.importView.state = { kind: "confirm", rows: ImportBundle.summaryRows(m.importBundle, importLastChannelLabel(m.importBundle.lastChannelID), m.importHost) }
             return
         end if
         importFailed(checked.reason)
@@ -1512,6 +1525,7 @@ sub applyImportedSettings()
     end if
     m.player.channelUpMovesUpList = m.store.settings.channelUpMovesUpList
     m.guide.settings = SettingsStore.guideSettings(logoSettings())
+    dropWaitingLogos()
     m.logoTask.playlistURL = m.store.source
     m.prefsRevision = m.prefsRevision + 1
     m.deferredLaunchID = ""

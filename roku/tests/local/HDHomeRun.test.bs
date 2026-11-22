@@ -228,6 +228,39 @@ namespace HDHomeRunTests
         t.assertEqual(HDHomeRun.find(io, HDHomeRunTests.options({ broadcast: false, byName: false, typed: "10.9.9.9" })).typedProblem, "notTuner", "the transfer reached another address")
     end sub
 
+    ' Step 24 (security N-3, D56): a tuner's JSON nested deeper than maximumJSONDepth is refused before ParseJson.
+    ' The proof that it isn't parsed: a discover.json that ParseJson would read as a good tuner, but with one field
+    ' nested 9 deep, gives "notTuner". A deeply nested 16 KB answer gives "notTuner" too.
+    sub test_aDeeplyNestedAnswerIsntParsed(t as object)
+        io = HDHomeRunTests.network()
+        typedOnly = HDHomeRunTests.options({ broadcast: false, byName: false, typed: "10.9.9.9" })
+        good = HDHomeRunTests.discover({ DeviceID: "1234ABCD", BaseURL: "http://10.9.9.9", LineupURL: "http://10.9.9.9/lineup.json" })
+        io.answers["http://10.9.9.9/discover.json"] = HDHomeRunTests.answer(FormatJson(good), "")
+        t.assertEqual(HDHomeRun.find(io, typedOnly).typedProblem, "", "the same answer, not nested: a tuner")
+        ' The object is 1 deep, so 7 arrays inside it make 8.
+        good.Extra = [[[[[[["eight"]]]]]]]
+        eight = FormatJson(good)
+        t.assertTrue(JsonDepth.fits(eight, HDHomeRun.maximumJSONDepth), "8 deep is allowed")
+        io.answers["http://10.9.9.9/discover.json"] = HDHomeRunTests.answer(eight, "")
+        t.assertEqual(HDHomeRun.find(io, typedOnly).typedProblem, "", "8 deep: still a tuner")
+        good.Extra = [good.Extra]
+        nine = FormatJson(good)
+        t.assertTrue(type(ParseJson(nine)) = "roAssociativeArray", "ParseJson itself would read it")
+        io.answers["http://10.9.9.9/discover.json"] = HDHomeRunTests.answer(nine, "")
+        found = HDHomeRun.find(io, typedOnly)
+        t.assertEqual(found.devices.Count(), 0)
+        t.assertEqual(found.typedProblem, "notTuner", "9 deep: refused before ParseJson")
+        nested = String(HDHomeRun.smallMaxBytes \ 2, "[") + String(HDHomeRun.smallMaxBytes \ 2, "]")
+        t.assertEqual(Len(nested), 16384)
+        io.answers["http://10.9.9.9/discover.json"] = HDHomeRunTests.answer(nested, "")
+        t.assertEqual(HDHomeRun.find(io, typedOnly).typedProblem, "notTuner", "16 KB of nesting")
+        t.assertInvalid(HDHomeRun.decodeJSON(nested))
+        t.assertInvalid(HDHomeRun.parseLineup("[" + nine + "]"), "lineup.json")
+        t.assertInvalid(HDHomeRun.parseTunerStatus(String(9, "[") + String(9, "]")), "status.json")
+        t.assertInvalid(HDHomeRun.parseLineupStatus(nine), "lineup_status.json")
+        t.assertEqual(HDHomeRun.parseLineupStatus("{""ScanInProgress"":1,""SourceList"":[""Antenna""]}"), { scanInProgress: true }, "a normal one still reads")
+    end sub
+
     ' Settings' check and the task's agree on what a typed address is.
     sub test_theTypedChecksAgree(t as object)
         own = ["192.168.1.50"]

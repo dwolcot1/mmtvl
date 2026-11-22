@@ -15,15 +15,20 @@ end sub
 
 sub loadPlaylist()
     host = Log.host(m.top.playlistURL)
+    downloading = false
     try
         if m.top.mergeOnly = true
             mergeOnly()
             return
         end if
+        downloading = true
         loadPlaylistFrom(m.top.playlistURL, host)
     catch e
         ' Never the exception's message, which could quote the URL: its number only.
         Log.error("IPTV", "Playlist from " + host + " failed: the loader stopped (error " + errorNumber(e) + ")")
+        ' Step 24 (N-2): the download's file holds the playlist's token-bearing URLs; it goes on this path too, as
+        ' ImportTask's. Not after a merge, which never downloads (another task's load may be using the file).
+        if downloading then CreateObject("roFileSystem").Delete(playlistDownloadPath)
         m.top.result = playlistFailure(host)
     end try
 end sub
