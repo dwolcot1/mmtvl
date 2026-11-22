@@ -61,6 +61,16 @@ sub init()
     m.deferredLaunchID = ""
     m.prefsRevision = 0
     m.playlistPrefsRevision = 0
+    ' Step 14: Import from MMTVL. m.importView is the confirm screen while an import is open, m.importTask the
+    ' running fetch, m.importBundle the validated bundle waiting for Replace Settings (the only copy of its URLs
+    ' outside the store; dropped when the import closes).
+    m.importView = invalid
+    m.importTask = invalid
+    m.importBundle = invalid
+    m.importWatchdog = CreateObject("roSGNode", "Timer")
+    m.importWatchdog.duration = 2 * ImportBundle.fetchTimeoutSeconds
+    m.importWatchdog.repeat = false
+    m.importWatchdog.observeField("fire", "onImportWatchdog")
     info = CreateObject("roAppInfo")
     m.versionShort = info.GetValue("major_version") + "." + info.GetValue("minor_version")
     m.buildNumber = info.GetValue("build_version")
@@ -397,9 +407,11 @@ end function
 
 ' The first playlist answer (loaded, failed, timed out, or no source at all) decides what opens: the last channel
 ' full screen if the playlist has it, else the guide (MMTVL's LiveTVModel.open). Not when a channel already plays
-' (OK in the guide while the playlist loaded).
+' (OK in the guide while the playlist loaded). Step 14: it waits while the import confirm shows.
 sub resolveLaunch()
     if not m.launchPending then return
+    ' Step 14: not under an open import (a cold launch with a contentId): Cancel resolves it, Replace loads anew.
+    if m.importView <> invalid then return
     m.launchPending = false
     if m.currentChannel <> invalid then return
     target = PlayerSession.launchTarget(m.channels, m.store.state.lastChannelID)
@@ -690,10 +702,14 @@ sub showScreen(name as string)
     focusCurrent()
 end sub
 
-' The keyboard (the scene's dialog keeps its focus), the notice, then (DEBUG) the Probes screen, then the channel
+' The keyboard (the scene's dialog keeps its focus), the import confirm (step 14), the notice, then (DEBUG) the Probes screen, then the channel
 ' menu, then the screen.
 sub focusCurrent()
     if m.keyboard <> invalid then return
+    if m.importView <> invalid
+        m.importView.setFocus(true)
+        return
+    end if
     if m.notice <> invalid
         m.notice.setFocus(true)
         return
@@ -1066,6 +1082,157 @@ sub deleteGuideFiles()
     m.top.guideRevision = m.top.guideRevision + 1
     m.guide.guideHolder = invalid
     m.guide.guideRevision = m.top.guideRevision
+end sub
+
+' --- step 14: Import from MMTVL ------------------------------------------------------------------------------
+
+' main's request (a cold launch's or roInput's contentId, already parsed): the confirm screen opens over everything
+' while ImportTask fetches. The field is cleared at once. One import at a time: another request while one is open is
+' ignored (the script's offer can't be used twice anyway).
+sub onImportRequest()
+    request = m.top.importRequest
+    if type(request) <> "roAssociativeArray" then return
+    if request.Count() = 0 then return
+    m.top.importRequest = {}
+    if m.importView <> invalid
+        Log.info("Import", "An import is already open; ignoring another")
+        return
+    end if
+    checked = ImportBundle.checkRequest(request)
+    if not checked.ok
+        Log.warn("Import", "Refused an import request (" + checked.reason + ")")
+        return
+    end if
+    Log.info("Import", "Getting the settings from " + checked.host)
+    ' The keyboard is the scene's dialog, drawn over everything: it closes first (onKeyboardClosed clears it).
+    if m.keyboard <> invalid then m.keyboard.close = true
+    m.importView = CreateObject("roSGNode", "ImportConfirmView")
+    m.importView.state = { kind: "loading" }
+    m.importView.observeField("choice", "onImportChoice")
+    m.top.appendChild(m.importView)
+    task = CreateObject("roSGNode", "ImportTask")
+    task.request = { host: checked.host, port: checked.port, secret: checked.secret }
+    task.observeField("result", "onImportResult")
+    m.importTask = task
+    task.control = "run"
+    m.importWatchdog.control = "start"
+    focusCurrent()
+end sub
+
+sub onImportResult()
+    task = m.importTask
+    if task = invalid then return
+    task.unobserveField("result")
+    m.importTask = invalid
+    m.importWatchdog.control = "stop"
+    result = task.result
+    task.result = {}
+    if m.importView = invalid then return
+    if type(result) <> "roAssociativeArray" then result = { ok: false, reason: "crash" }
+    if result.ok = true and type(result.bundle) = "roAssociativeArray"
+        ' Checked again here: the scene writes only what ImportBundle.validate passes.
+        checked = ImportBundle.validate(result.bundle)
+        if checked.ok
+            m.importBundle = checked.bundle
+            m.importView.state = { kind: "confirm", rows: ImportBundle.summaryRows(m.importBundle, importLastChannelLabel(m.importBundle.lastChannelID)) }
+            return
+        end if
+        importFailed(checked.reason)
+        return
+    end if
+    reason = "crash"
+    if PlayerSession.isText(result.reason) then reason = result.reason
+    importFailed(reason)
+end sub
+
+sub importFailed(reason as string)
+    Log.warn("Import", "Import not used (" + reason + ")")
+    m.importBundle = invalid
+    if m.importView <> invalid then m.importView.state = { kind: "failed", message: ImportBundle.message(reason) }
+end sub
+
+sub onImportWatchdog()
+    task = m.importTask
+    if task = invalid then return
+    task.unobserveField("result")
+    task.control = "stop"
+    m.importTask = invalid
+    Log.error("Import", "No answer from the import task")
+    importFailed("timeout")
+end sub
+
+' The confirm screen's "Last channel": the channel's number and name when the current playlist has it (an import
+' usually brings the same playlist), else its id without the kind.
+function importLastChannelLabel(id as string) as string
+    channel = PlayerSession.channelByID(m.channels, id)
+    number = ""
+    if channel <> invalid then number = Lineup.displayNumber(channel)
+    return ImportBundle.channelLabel(id, channel, number)
+end function
+
+' Replace Settings, Cancel (also Back), or OK on a failure.
+sub onImportChoice()
+    view = m.importView
+    if view = invalid then return
+    choice = view.choice
+    if choice = "replace" and m.importBundle <> invalid
+        result = SettingsStore.replaceAll(m.store, m.importBundle)
+        m.importBundle = invalid
+        if not result.ok
+            Log.warn("Import", "Import not saved")
+            view.state = { kind: "failed", message: result.message }
+            return
+        end if
+        closeImport()
+        applyImportedSettings()
+        return
+    end if
+    if choice = "cancel" then Log.info("Import", "Import cancelled; nothing changed")
+    closeImport()
+    ' A launch that waited for the import (resolveLaunch) opens now, if the playlist has answered.
+    if m.playlistTask = invalid then resolveLaunch()
+end sub
+
+sub closeImport()
+    task = m.importTask
+    if task <> invalid
+        task.unobserveField("result")
+        task.control = "stop"
+        m.importTask = invalid
+        m.importWatchdog.control = "stop"
+    end if
+    m.importBundle = invalid
+    if m.importView <> invalid
+        m.importView.unobserveField("choice")
+        m.top.removeChild(m.importView)
+        m.importView = invalid
+    end if
+    focusCurrent()
+end sub
+
+' After Replace Settings (m.store already holds the import): the playing channel stops, every screen gets the new
+' settings, and the new playlist loads (changePlaylist), its guides after it; when it answers, what a launch opens
+' opens (resolveLaunch: the imported last channel, else the guide; it waits while Settings shows).
+sub applyImportedSettings()
+    Log.info("Import", "Settings replaced; loading the new playlist")
+    if m.menuOpen then closeChannelMenu()
+    if m.currentChannel <> invalid
+        m.player.control = "stop"
+        m.currentChannel = invalid
+        m.player.visible = false
+    end if
+    m.player.channelUpMovesUpList = m.store.settings.channelUpMovesUpList
+    m.guide.settings = m.store.settings
+    m.logoTask.playlistURL = m.store.source
+    m.prefsRevision = m.prefsRevision + 1
+    m.deferredLaunchID = ""
+    m.launchPending = true
+    if m.screen = "player" then showScreen("guide")
+    ' Without a playlist there are no channels for the old guides: they go, as Remove Live TV Source's.
+    if m.store.source = "" then forgetGuides()
+    changePlaylist()
+    if m.screen = "guide" then openGuide(false)
+    refreshSettings()
 end sub
 
 #if DEBUG

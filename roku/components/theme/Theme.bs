@@ -149,6 +149,13 @@ namespace Theme
             "noticeHeaderSpacing": 12, ' between the title and the body
             "noticeButtonSpacing": 24,
             "buttonTextInset": 39, ' a capsule button's label inset (focus_capsule / settings_row at 72 high)
+            ' Roku-only: Import confirm (step 14, frame NgJ0S): the notice's panel spacing on the standard glass panel
+            ' over the background; summary rows importSummaryRowHeight high, the label column importSummaryLabelWidth
+            ' wide and importSummaryGap from the value, a importDividerHeight tileFill line above every row but the first.
+            "importSummaryRowHeight": 57,
+            "importSummaryLabelWidth": 261,
+            "importSummaryGap": 24,
+            "importDividerHeight": 3,
             ' Guide (Theme.swift guide*): info top-left, the playing channel's video top-right, the grid below.
             "guideInfoRect": { "x": 120, "y": 60, "width": 981, "height": 360 },
             "guidePreviewRect": { "x": 1161, "y": 60, "width": 639, "height": 360 },

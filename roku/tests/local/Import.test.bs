@@ -1,0 +1,379 @@
+' Import from MMTVL (M12 step 14, L2): ImportBundle's contentId parsing (private IPv4 only, the port, 32 lowercase
+' hex, no junk), the 64 KB cap and the nesting check on the downloaded file, bundle v1's validation (every field's
+' type and limits, version 1, no unknown field), the peer check, the summary rows and the confirm keys, and
+' SettingsStore.replaceAll with a validated bundle (the Roku-only fields kept). The Roku's own addresses are always
+' passed in. Off-device: npm run test:local.
+namespace ImportTests
+
+    const secret = "0123456789abcdef0123456789abcdef"
+
+    ' --- the contentId ------------------------------------------------------------------------------------------
+
+    sub test_aWellFormedContentIDParses(t as object)
+        result = ImportBundle.parseContentID("mmtvl-import:192.168.1.10:49152:" + ImportTests.secret, ["192.168.1.20"])
+        t.assertTrue(result.ok)
+        t.assertEqual(result.host, "192.168.1.10")
+        t.assertEqual(result.port, 49152)
+        t.assertEqual(result.secret, ImportTests.secret)
+        t.assertEqual(result.reason, "")
+        for each host in ["10.0.0.5", "10.255.255.254", "172.16.0.1", "172.31.255.255", "192.168.0.1"]
+            t.assertTrue(ImportBundle.parseContentID("mmtvl-import:" + host + ":1:" + ImportTests.secret, []).ok, host)
+        end for
+        t.assertTrue(ImportBundle.parseContentID("mmtvl-import:10.0.0.5:65535:" + ImportTests.secret, []).ok, "port 65535")
+    end sub
+
+    sub test_otherContentIDsAreNotImports(t as object)
+        for each text in ["", "12345", "MMTVL-IMPORT:192.168.1.10:1:" + ImportTests.secret, " mmtvl-import:192.168.1.10:1:" + ImportTests.secret, "mmtvl-importx"]
+            t.assertEqual(ImportBundle.parseContentID(text, []).reason, "notImport", text)
+        end for
+        t.assertEqual(ImportBundle.parseContentID(invalid, []).reason, "notImport", "invalid")
+        t.assertEqual(ImportBundle.parseContentID(42, []).reason, "notImport", "a number")
+    end sub
+
+    sub test_publicLoopbackAndOtherHostsAreRefused(t as object)
+        for each host in ["8.8.8.8", "127.0.0.1", "127.1", "169.254.1.1", "100.64.0.1", "0.0.0.0", "255.255.255.255", "172.15.0.1", "172.32.0.1", "192.169.1.1", "11.0.0.1", "roku.local", "localhost", "[fd00::1]", "fd00::1", "2130706433", "0x0a.0.0.1", "10.1", "010.0.0.1", "192.168.01.2", "192.168.1.256", "192.168.1.", ".192.168.1.1", "192.168.1.1.1", "192.168.1.1 ", " 192.168.1.1", "192.168.1.1%en0", ""]
+            result = ImportBundle.parseContentID("mmtvl-import:" + host + ":8000:" + ImportTests.secret, [])
+            t.assertFalse(result.ok, host)
+            t.assertTrue(result.reason = "badHost" or result.reason = "badFormat", host + " " + result.reason)
+        end for
+    end sub
+
+    sub test_theRokusOwnAddressIsRefused(t as object)
+        result = ImportBundle.parseContentID("mmtvl-import:192.168.1.20:8000:" + ImportTests.secret, ["127.0.0.1", "192.168.1.20"])
+        t.assertEqual(result.reason, "ownAddress")
+        t.assertEqual(result.host, "")
+        t.assertEqual(result.secret, "")
+    end sub
+
+    sub test_portsAreDecimal1To65535(t as object)
+        for each port in ["0", "65536", "99999", "080", "-1", "+80", "8 0", "", "123456", "0x50", "80a"]
+            t.assertEqual(ImportBundle.parseContentID("mmtvl-import:192.168.1.10:" + port + ":" + ImportTests.secret, []).reason, "badPort", port)
+        end for
+    end sub
+
+    sub test_theSecretIsExactly32LowercaseHex(t as object)
+        for each candidate in [UCase(ImportTests.secret), Left(ImportTests.secret, 31), ImportTests.secret + "0", "0123456789abcdef0123456789abcdeg", "0123456789abcdef 123456789abcdef", ""]
+            reason = ImportBundle.parseContentID("mmtvl-import:192.168.1.10:8000:" + candidate, []).reason
+            t.assertTrue(reason = "badSecret" or reason = "badFormat", candidate + " " + reason)
+        end for
+    end sub
+
+    sub test_junkAroundTheFieldsIsRefused(t as object)
+        base = "mmtvl-import:192.168.1.10:8000:" + ImportTests.secret
+        for each text in [base + ":", base + ":extra", base + "/", "mmtvl-import:192.168.1.10:8000", "mmtvl-import::192.168.1.10:8000:" + ImportTests.secret, "mmtvl-import:192.168.1.10::8000:" + ImportTests.secret, base + Chr(10), base + "0123456789"]
+            t.assertFalse(ImportBundle.parseContentID(text, []).ok, text)
+        end for
+    end sub
+
+    sub test_checkRequestJudgesWhatTheTaskIsGiven(t as object)
+        t.assertTrue(ImportBundle.checkRequest({ host: "10.0.0.2", port: 8000, secret: ImportTests.secret }, []).ok)
+        t.assertFalse(ImportBundle.checkRequest({ host: "8.8.8.8", port: 8000, secret: ImportTests.secret }, []).ok)
+        t.assertFalse(ImportBundle.checkRequest({ host: "10.0.0.2", port: 0, secret: ImportTests.secret }, []).ok)
+        t.assertFalse(ImportBundle.checkRequest({ host: "10.0.0.2", port: 8000 }, []).ok)
+        t.assertFalse(ImportBundle.checkRequest(invalid, []).ok)
+        t.assertEqual(ImportBundle.url({ host: "10.0.0.2", port: 8000, secret: ImportTests.secret }), "http://10.0.0.2:8000/" + ImportTests.secret)
+    end sub
+
+    sub test_onlyTheImportsOwnAddressMayAnswer(t as object)
+        t.assertTrue(ImportBundle.peerAllowed("192.168.1.10", "192.168.1.10"))
+        t.assertTrue(ImportBundle.peerAllowed("", "192.168.1.10"), "not reported")
+        t.assertTrue(ImportBundle.peerAllowed(invalid, "192.168.1.10"), "not reported")
+        t.assertFalse(ImportBundle.peerAllowed("8.8.8.8", "192.168.1.10"), "redirected")
+        t.assertFalse(ImportBundle.peerAllowed("192.168.1.11", "192.168.1.10"), "another LAN host")
+    end sub
+
+    ' --- the file and its size ------------------------------------------------------------------------------------
+
+    sub test_aValidFileReads(t as object)
+        GuideGoldenTests.writeText(FormatJson(ImportTests.sampleBundle()), "tmp:/import-ok.json")
+        result = ImportBundle.readFile("tmp:/import-ok.json")
+        t.assertTrue(result.ok, result.reason)
+        t.assertEqual(result.bundle.playlistURL, "https://iptv.example/get.php?token=abc")
+        t.assertEqual(result.bundle.overrides, { "Metro News 24": "metro.news.us" })
+    end sub
+
+    sub test_aFileOver64KBIsRefusedWithoutParsing(t as object)
+        bundle = ImportTests.sampleBundle()
+        ' Valid JSON and a valid shape apart from its size: 300 hidden channels of 250 characters.
+        padding = String(250, "c")
+        list = []
+        for i = 1 to 300
+            list.Push(padding)
+        end for
+        bundle.hiddenChannels = list
+        written = GuideGoldenTests.writeText(FormatJson(bundle), "tmp:/import-big.json")
+        t.assertTrue(written > 65536, "the fixture is over 64 KB")
+        t.assertEqual(ImportBundle.readFile("tmp:/import-big.json"), { ok: false, bundle: invalid, reason: "tooLarge" })
+        t.assertEqual(ImportBundle.decode(String(65537, " ")).reason, "tooLarge")
+    end sub
+
+    sub test_aFileOfExactly64KBIsRead(t as object)
+        text = FormatJson(ImportTests.sampleBundle())
+        text = Left(text, Len(text) - 1) + String(65536 - Len(text), " ") + "}"
+        t.assertEqual(GuideGoldenTests.writeText(text, "tmp:/import-edge.json"), 65536)
+        t.assertTrue(ImportBundle.readFile("tmp:/import-edge.json").ok)
+    end sub
+
+    sub test_deepNestingIsRefusedBeforeParseJson(t as object)
+        GuideGoldenTests.writeText(String(2000, "[") + String(2000, "]"), "tmp:/import-deep.json")
+        t.assertEqual(ImportBundle.readFile("tmp:/import-deep.json").reason, "tooDeep")
+        bytes = CreateObject("roByteArray")
+        bytes.FromAsciiString("{" + Chr(34) + "a[[[[" + Chr(34) + ":[[1]]}")
+        t.assertEqual(ImportBundle.depthOf(bytes), 3, "brackets inside strings don't count")
+        bytes.FromAsciiString("{" + Chr(34) + "a\" + Chr(34) + "[[[" + Chr(34) + ":1}")
+        t.assertEqual(ImportBundle.depthOf(bytes), 1, "an escaped quote stays in the string")
+    end sub
+
+    sub test_aMissingOrEmptyFileOrNotJSONIsRefused(t as object)
+        t.assertEqual(ImportBundle.readFile("tmp:/import-none.json").reason, "noFile")
+        GuideGoldenTests.writeText("", "tmp:/import-empty.json")
+        t.assertFalse(ImportBundle.readFile("tmp:/import-empty.json").ok)
+        GuideGoldenTests.writeText("<html>not json</html>", "tmp:/import-html.json")
+        t.assertEqual(ImportBundle.readFile("tmp:/import-html.json").reason, "notJSON")
+        t.assertEqual(ImportBundle.decode("[1, 2]").reason, "notObject")
+    end sub
+
+    ' --- bundle v1 ------------------------------------------------------------------------------------------------
+
+    sub test_theScriptsBundleValidates(t as object)
+        result = ImportBundle.validate(ImportTests.sampleBundle())
+        t.assertTrue(result.ok, result.reason)
+        t.assertEqual(result.bundle.Count(), 17)
+        empty = ImportTests.sampleBundle()
+        empty.playlistURL = ""
+        empty.guideURLs = []
+        empty.favorites = []
+        empty.overrides = {}
+        empty.lastChannelID = ""
+        t.assertTrue(ImportBundle.validate(empty).ok, "nothing set")
+    end sub
+
+    sub test_anUnknownVersionIsRefused(t as object)
+        for each version in [0, 2, "1", 1.5, true, invalid]
+            bundle = ImportTests.sampleBundle()
+            bundle.version = version
+            t.assertEqual(ImportBundle.validate(bundle).reason, "badVersion", FormatJson(version))
+        end for
+    end sub
+
+    sub test_missingAndUnknownFieldsAreRefused(t as object)
+        for each name in ImportBundle.fields()
+            bundle = ImportTests.sampleBundle()
+            bundle.Delete(name)
+            t.assertEqual(ImportBundle.validate(bundle).reason, "missing " + name, name)
+        end for
+        extra = ImportTests.sampleBundle()
+        extra.lowMemoryNoticeShown = true
+        t.assertEqual(ImportBundle.validate(extra).reason, "unknownField")
+        emptyKey = ImportTests.sampleBundle()
+        emptyKey[""] = 1
+        t.assertEqual(ImportBundle.validate(emptyKey).reason, "unknownField", "an empty key")
+    end sub
+
+    sub test_urlsMustBeHttpOrHttpsUnder2KB(t as object)
+        for each refused in ["file:///etc/passwd", "ftp://iptv.example/list", "javascript:alert(1)", "https://", "iptv.example/list.m3u", "http://exa mple/x", String(2049, "a"), "https://iptv.example/" + String(2030, "p"), 5]
+            bundle = ImportTests.sampleBundle()
+            bundle.playlistURL = refused
+            t.assertEqual(ImportBundle.validate(bundle).reason, "bad playlistURL", FormatJson(refused))
+            bundle = ImportTests.sampleBundle()
+            bundle.guideURLs = ["https://epg.example/a.xml", refused]
+            t.assertEqual(ImportBundle.validate(bundle).reason, "bad guideURLs", FormatJson(refused))
+        end for
+        bundle = ImportTests.sampleBundle()
+        bundle.guideURLs = [""]
+        t.assertEqual(ImportBundle.validate(bundle).reason, "bad guideURLs", "an empty guide")
+        bundle = ImportTests.sampleBundle()
+        bundle.playlistURL = "https://iptv.example/" + String(2027, "p")
+        t.assertEqual(Len(bundle.playlistURL), 2048)
+        t.assertTrue(ImportBundle.validate(bundle).ok, "exactly 2 KB")
+    end sub
+
+    sub test_atMostSixGuides(t as object)
+        bundle = ImportTests.sampleBundle()
+        bundle.guideURLs = []
+        for i = 1 to 6
+            bundle.guideURLs.Push("https://epg" + i.ToStr() + ".example/g.xml")
+        end for
+        t.assertTrue(ImportBundle.validate(bundle).ok, "six")
+        bundle.guideURLs.Push("https://epg7.example/g.xml")
+        t.assertEqual(ImportBundle.validate(bundle).reason, "bad guideURLs", "seven")
+        bundle.guideURLs = "https://epg.example/g.xml"
+        t.assertEqual(ImportBundle.validate(bundle).reason, "bad guideURLs", "not an array")
+    end sub
+
+    sub test_listsHoldAtMost500IdsOf1To256Characters(t as object)
+        for each name in ImportBundle.listFields()
+            bundle = ImportTests.sampleBundle()
+            list = []
+            for i = 1 to 500
+                list.Push("id:" + i.ToStr())
+            end for
+            bundle[name] = list
+            t.assertTrue(ImportBundle.validate(bundle).ok, name + " 500")
+            list.Push("id:501")
+            t.assertEqual(ImportBundle.validate(bundle).reason, "bad " + name, name + " 501")
+            for each item in ["", String(257, "x"), 5, invalid, ["nested"], { a: 1 }]
+                bundle[name] = ["ok", item]
+                t.assertEqual(ImportBundle.validate(bundle).reason, "bad " + name, name + " " + FormatJson(item))
+            end for
+            bundle[name] = [String(256, "x")]
+            t.assertTrue(ImportBundle.validate(bundle).ok, name + " 256 characters")
+            bundle[name] = { favorites: [] }
+            t.assertEqual(ImportBundle.validate(bundle).reason, "bad " + name, name + " an object")
+        end for
+    end sub
+
+    sub test_overridesAreBounded(t as object)
+        bundle = ImportTests.sampleBundle()
+        map = {}
+        for i = 1 to 500
+            map["channel " + i.ToStr()] = "epg." + i.ToStr()
+        end for
+        bundle.overrides = map
+        t.assertTrue(ImportBundle.validate(bundle).ok, "500")
+        map["channel 501"] = ""
+        t.assertEqual(ImportBundle.validate(bundle).reason, "bad overrides", "501")
+        for each pair in [{ key: String(257, "k"), value: "x" }, { key: "k", value: String(257, "v") }, { key: "k", value: 5 }, { key: "k", value: invalid }, { key: "k", value: ["x"] }]
+            bad = {}
+            bad[pair.key] = pair.value
+            bundle.overrides = bad
+            t.assertEqual(ImportBundle.validate(bundle).reason, "bad overrides", pair.key)
+        end for
+        bundle.overrides = { "": "x" }
+        t.assertEqual(ImportBundle.validate(bundle).reason, "bad overrides", "an empty key")
+        bundle.overrides = []
+        t.assertEqual(ImportBundle.validate(bundle).reason, "bad overrides", "an array")
+        bundle.overrides = { "Local 5": "" }
+        t.assertTrue(ImportBundle.validate(bundle).ok, "no guide")
+    end sub
+
+    sub test_textAndBooleanFields(t as object)
+        for each name in ["lastChannelID", "lastGroup"]
+            for each value in [String(257, "x"), 1, invalid, []]
+                bundle = ImportTests.sampleBundle()
+                bundle[name] = value
+                t.assertEqual(ImportBundle.validate(bundle).reason, "bad " + name, name)
+            end for
+        end for
+        for each name in ImportBundle.booleanFields()
+            for each value in ["true", 1, invalid]
+                bundle = ImportTests.sampleBundle()
+                bundle[name] = value
+                t.assertEqual(ImportBundle.validate(bundle).reason, "bad " + name, name + " " + FormatJson(value))
+            end for
+        end for
+    end sub
+
+    sub test_decodeParsesThenValidates(t as object)
+        t.assertTrue(ImportBundle.decode(FormatJson(ImportTests.sampleBundle())).ok)
+        t.assertEqual(ImportBundle.decode("{" + Chr(34) + "version" + Chr(34) + ":1}").reason, "missing playlistURL")
+        t.assertEqual(ImportBundle.decode("{nope").reason, "notJSON")
+        t.assertEqual(ImportBundle.decode(invalid).reason, "notJSON")
+    end sub
+
+    ' --- the confirm screen ---------------------------------------------------------------------------------------
+
+    sub test_theSummaryShowsHostsAndCountsOnly(t as object)
+        rows = ImportBundle.summaryRows(ImportTests.sampleBundle(), "204  Metro News 24")
+        t.assertEqual(rows, [
+            { label: "Playlist", value: "iptv.example" },
+            { label: "Guides", value: "2: epg.example, guides.example" },
+            { label: "Favorites", value: "2 channels" },
+            { label: "Hidden", value: "1 channel, 2 groups" },
+            { label: "My Teams", value: "1 team" },
+            { label: "Guide matches", value: "1 set by hand" },
+            { label: "Last channel", value: "204  Metro News 24" }
+        ])
+        text = FormatJson(rows)
+        for each secretPart in ["token", "abc", "get.php", "key=", "/g.xml", "https"]
+            t.assertTrue(Instr(1, text, secretPart) = 0, secretPart)
+        end for
+        empty = ImportTests.sampleBundle()
+        empty.playlistURL = ""
+        empty.guideURLs = []
+        empty.favorites = []
+        empty.hiddenChannels = []
+        empty.hiddenGroups = []
+        empty.teams = []
+        empty.overrides = {}
+        values = []
+        for each row in ImportBundle.summaryRows(empty, "None")
+            values.Push(row.value)
+        end for
+        t.assertEqual(values, ["None", "None", "None", "None", "None", "None", "None"])
+    end sub
+
+    sub test_theLastChannelsLabel(t as object)
+        t.assertEqual(ImportBundle.channelLabel("name:metro news 24", { name: "Metro News 24" }, "204"), "204  Metro News 24")
+        t.assertEqual(ImportBundle.channelLabel("name:metro news 24", invalid), "metro news 24")
+        t.assertEqual(ImportBundle.channelLabel("id:espn.us", invalid), "espn.us")
+        t.assertEqual(ImportBundle.channelLabel("antenna:5.1", invalid), "antenna:5.1")
+        t.assertEqual(ImportBundle.channelLabel("", invalid), "None")
+    end sub
+
+    sub test_theConfirmKeys(t as object)
+        t.assertEqual(ImportBundle.handleKey("right", 0, 2), { focused: 1, choice: "" })
+        t.assertEqual(ImportBundle.handleKey("right", 1, 2), { focused: 1, choice: "" })
+        t.assertEqual(ImportBundle.handleKey("left", 1, 2), { focused: 0, choice: "" })
+        t.assertEqual(ImportBundle.handleKey("left", 0, 2), { focused: 0, choice: "" })
+        t.assertEqual(ImportBundle.handleKey("OK", 0, 2), { focused: 0, choice: "0" })
+        t.assertEqual(ImportBundle.handleKey("OK", 1, 2), { focused: 1, choice: "1" })
+        t.assertEqual(ImportBundle.handleKey("back", 0, 2), { focused: 0, choice: "back" })
+        t.assertEqual(ImportBundle.handleKey("home", 0, 2), { focused: 0, choice: "" })
+        t.assertEqual(ImportBundle.handleKey("OK", 0, 0), { focused: 0, choice: "" }, "no buttons while loading")
+    end sub
+
+    sub test_messagesNeverQuoteTheReason(t as object)
+        for each reason in ["tooLarge", "network", "peer", "saveFailed", "bad playlistURL", "unknownField"]
+            text = ImportBundle.message(reason)
+            t.assertTrue(text <> "" and Instr(1, text, reason) = 0, reason)
+        end for
+    end sub
+
+    ' --- writing the store ----------------------------------------------------------------------------------------
+
+    sub test_replaceWritesTheBundleAndKeepsTheRokuOnlyFields(t as object)
+        registry = SettingsStoreTests.fakeRegistry(30000)
+        store = SettingsStore.load(registry)
+        SettingsStore.save(store, "state", { lastChannelID: "old", lastGroup: "", recentChannelIDs: [], lowMemoryNoticeShown: true })
+        settings = SettingsStore.defaultSettings()
+        settings.channelLogos = false
+        SettingsStore.save(store, "settings", settings)
+        bundle = ImportBundle.validate(ImportTests.sampleBundle()).bundle
+        t.assertEqual(SettingsStore.replaceAll(store, bundle), { ok: true, message: "" })
+        reloaded = SettingsStore.load(registry)
+        t.assertEqual(reloaded.source, "https://iptv.example/get.php?token=abc")
+        t.assertEqual(reloaded.guides.Count(), 2)
+        t.assertEqual(reloaded.prefs.favorites, ["id:espn.us", "name:metro news 24"])
+        t.assertEqual(reloaded.overrides, { "metro news 24": "metro.news.us" })
+        t.assertEqual(reloaded.state.lastChannelID, "name:metro news 24")
+        t.assertTrue(reloaded.state.lowMemoryNoticeShown, "the notice stays answered")
+        t.assertFalse(reloaded.settings.channelLogos, "Channel Logos stays off")
+        t.assertFalse(reloaded.settings.channelUpMovesUpList)
+        t.assertTrue(reloaded.settings.usePlaylistGuide)
+    end sub
+
+    ' What scripts/roku-export-settings.py sends (its test fixture's shape).
+    function sampleBundle() as object
+        return {
+            "version": 1,
+            "playlistURL": "https://iptv.example/get.php?token=abc",
+            "guideURLs": ["https://epg.example/xmltv.php?key=abc", "http://guides.example/g.xml"],
+            "usePlaylistGuide": true,
+            "favorites": ["id:espn.us", "name:metro news 24"],
+            "hiddenChannels": ["id:shop.us"],
+            "hiddenGroups": ["Adult", "Antenna"],
+            "teams": ["nba.lal"],
+            "overrides": { "Metro News 24": "metro.news.us" },
+            "lastChannelID": "name:metro news 24",
+            "lastGroup": "Sports",
+            "recentChannelIDs": ["name:metro news 24"],
+            "channelUpMovesUpList": false,
+            "teamMatchInitials": true,
+            "teamMatchNicknames": false,
+            "antennaEnabled": false,
+            "antennaGuide": true
+        }
+    end function
+
+end namespace

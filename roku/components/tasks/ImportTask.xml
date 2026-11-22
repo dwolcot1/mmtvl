@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Fetches an import bundle off the render thread (M12 step 14, L2). Set request ({ host, port, secret }, from
+     ImportBundle.parseContentID), then control = "run". The task clears request once it has read it, checks it again
+     (ImportBundle.checkRequest: a private IPv4 address that isn't the Roku's, the port, 32 lowercase hex), GETs
+     http://<host>:<port>/<secret> into a tmp: file with a size cap of ImportBundle.maximumBytes (64 KB, enforced on
+     the file whether or not the Mac sends a Content-Length), refuses an answer from any address but the Mac's
+     (ImportBundle.peerAllowed: roUrlTransfer follows redirects itself, unverified, with no setting to stop it), and
+     validates it (ImportBundle.readFile). It sets result once: { ok: true, host, bundle } or { ok: false, host,
+     reason }. The URL, port and secret are never logged or put in result; logs show the host only (L6). -->
+<component name="ImportTask" extends="Task">
+    <interface>
+        <field id="request" type="assocarray" />
+        <field id="result" type="assocarray" />
+    </interface>
+    <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/URLPolicy.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/SettingsStore.bs" />
+    <script type="text/brighterscript" uri="pkg:/source/lib/ImportBundle.bs" />
+</component>
