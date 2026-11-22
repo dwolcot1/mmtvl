@@ -1,0 +1,106 @@
+' ImportTask (M12 step 14; fields in ImportTask.xml). Plain HTTP on the LAN (D11's trust level): the script on the
+' Mac serves the bundle once, at a 128-bit secret path, for 10 minutes. A crash in here still sets a failure
+' result; the scene also has a watchdog.
+
+sub init()
+    m.top.functionName = "fetchImport"
+end sub
+
+sub fetchImport()
+    request = m.top.request
+    m.top.request = {}
+    host = ""
+    try
+        checked = ImportBundle.checkRequest(request)
+        if not checked.ok
+            Log.warn("Import", "Refused an import request (" + checked.reason + ")")
+            m.top.result = { ok: false, host: "", reason: checked.reason }
+            return
+        end if
+        host = checked.host
+        m.top.result = fetchBundle(checked)
+    catch e
+        ' Never the exception's message: its number only.
+        number = "?"
+        if type(e) = "roAssociativeArray"
+            if SettingsStore.isNumber(e.number) then number = e.number.ToStr()
+        end if
+        Log.error("Import", "The import from " + host + " stopped (error " + number + ")")
+        CreateObject("roFileSystem").Delete(ImportBundle.downloadPath)
+        m.top.result = { ok: false, host: host, reason: "crash" }
+    end try
+end sub
+
+' GET the bundle into ImportBundle.downloadPath, at most maximumBytes, within fetchTimeoutSeconds; then read and
+' validate it, and delete the file. { ok, host, bundle } or { ok, host, reason }.
+function fetchBundle(checked as object) as object
+    host = checked.host
+    path = ImportBundle.downloadPath
+    fs = CreateObject("roFileSystem")
+    fs.Delete(path)
+    port = CreateObject("roMessagePort")
+    transfer = CreateObject("roUrlTransfer")
+    transfer.SetUrl(ImportBundle.url(checked))
+    transfer.SetPort(port)
+    transfer.RetainBodyOnError(false)
+    transfer.EnableEncodings(false)
+    if not transfer.AsyncGetToFile(path)
+        Log.error("Import", "Couldn't start the import from " + host)
+        return { ok: false, host: host, reason: "start" }
+    end if
+    reason = ""
+    timer = CreateObject("roTimespan")
+    while true
+        remaining = ImportBundle.fetchTimeoutSeconds * 1000 - timer.TotalMilliseconds()
+        if remaining <= 0
+            transfer.AsyncCancel()
+            reason = "timeout"
+            exit while
+        end if
+        if remaining > 250 then remaining = 250
+        msg = Wait(remaining, port)
+        if type(msg) = "roUrlEvent"
+            if msg.GetInt() = 1
+                code = msg.GetResponseCode()
+                if not ImportBundle.peerAllowed(msg.GetTargetIpAddress(), host)
+                    reason = "peer"
+                else if code = 200
+                    reason = ""
+                else if code < 0
+                    reason = "network"
+                    Log.warn("Import", "The import from " + host + " failed: network error " + code.ToStr())
+                else
+                    reason = "http"
+                    Log.warn("Import", "The import from " + host + " failed: HTTP " + code.ToStr())
+                end if
+                exit while
+            end if
+        end if
+        if fileBytes(fs, path) > ImportBundle.maximumBytes
+            transfer.AsyncCancel()
+            reason = "tooLarge"
+            exit while
+        end if
+    end while
+    if reason <> ""
+        fs.Delete(path)
+        Log.warn("Import", "The import from " + host + " wasn't used (" + reason + ")")
+        return { ok: false, host: host, reason: reason }
+    end if
+    read = ImportBundle.readFile(path)
+    fs.Delete(path)
+    if not read.ok
+        Log.warn("Import", "The import from " + host + " wasn't used (" + read.reason + ")")
+        return { ok: false, host: host, reason: read.reason }
+    end if
+    Log.info("Import", "Got the settings from " + host)
+    return { ok: true, host: host, bundle: read.bundle }
+end function
+
+' The file's size so far, 0 when there's none yet.
+function fileBytes(fs as object, path as string) as dynamic
+    info = fs.Stat(path)
+    if type(info) <> "roAssociativeArray" then return 0
+    if SettingsStore.isNumber(info.size) then return info.size
+    return 0
+end function

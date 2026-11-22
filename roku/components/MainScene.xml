@@ -14,7 +14,11 @@
      the keyboard for addresses (StandardKeyboardDialog, as the scene's dialog: a typed URL goes from the dialog to
      the store, never through another node), reloads the playlist or starts a guide run after a source or guide
      change, and gives it a model with no URL in it (SettingsStatus.make). In DEBUG builds the Probes screen opens
-     from Settings → About (L8). Back never leaves the app (D49): the scene handles every key that reaches it. -->
+     from Settings → About (L8). Step 14 (L2): Import from MMTVL: an importRequest (from main) runs ImportTask under
+     the confirm screen (ImportConfirmView, over everything); Replace Settings writes the store
+     (SettingsStore.replaceAll, the Roku-only fields kept), stops the channel and loads the new playlist and guides,
+     then opens what a launch would. Cancel changes nothing. Back never leaves the app (D49): the scene handles every
+     key that reaches it. -->
 <component name="MainScene" extends="Scene">
     <interface>
         <!-- Lineup.build's result for the last playlist that loaded (kept when a later load fails). -->
@@ -39,6 +43,10 @@
         <field id="guideHolder" type="node" />
         <!-- Goes up by 1 each time guideHolder and guideStatuses are replaced; observe this. -->
         <field id="guideRevision" type="integer" value="0" />
+        <!-- Step 14 (L2): set by main from a launch's or roInput's contentId (ImportBundle.parseContentID's
+             { host, port, secret }). The scene hands it to an ImportTask and clears the field at once; it is never
+             logged or shown. -->
+        <field id="importRequest" type="assocarray" onChange="onImportRequest" />
     </interface>
     <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/SettingsStore.bs" />
@@ -64,6 +72,8 @@
     <script type="text/brighterscript" uri="pkg:/source/lib/SettingsStatus.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/SettingsEdits.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/GuideRuns.bs" />
+    <!-- Step 14: Import from MMTVL. -->
+    <script type="text/brighterscript" uri="pkg:/source/lib/ImportBundle.bs" />
     <children>
         <!-- The guide's background too: the guide has none, so the player's Video shows through in its preview place. -->
         <Poster id="background" />
@@ -75,6 +85,7 @@
         <SettingsScreen id="settings" visible="false" />
         <!-- Over the guide or the player while open. -->
         <ChannelMenuView id="channelMenu" visible="false" />
+        <!-- Step 14: ImportConfirmView, while an import is open, is appended over everything (and the notice). -->
         <!-- D51: the 3-minute return to the playing channel (Theme timing.guideIdleReturn), from the last input. -->
         <Timer id="idleTimer" repeat="false" />
     </children>

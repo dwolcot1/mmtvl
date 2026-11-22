@@ -1,34 +1,58 @@
-' MMTVL Live TV for Roku (M12): shows MainScene and runs until the screen closes. Launch args are read from step 14.
+' MMTVL Live TV for Roku (M12): shows MainScene and runs until the screen closes.
+' Step 14 (L2): a launch's contentId (Main's args on a cold launch, an roInputEvent while the app runs) that is an
+' import, "mmtvl-import:<ip>:<port>:<32 hex>", is parsed strictly here (ImportBundle.parseContentID) and handed to the
+' scene's importRequest field; any other contentId is ignored. The contentId is never logged, only why one was
+' refused.
 sub Main(args as dynamic)
     screen = CreateObject("roSGScreen")
     port = CreateObject("roMessagePort")
     screen.SetMessagePort(port)
+    ' Deep links while the app runs (supports_input_launch=1 in the manifest).
+    input = CreateObject("roInput")
+    input.SetMessagePort(port)
     #if DEBUG
         ' Probe i (M12 step 3): whether a contentId arrives by Main(args) or roInput, and its length only.
         probeGlobal = screen.GetGlobalNode()
         probeGlobal.AddField("probeLaunch", "assocarray", false)
         probeGlobal.probeLaunch = { mainLength: probeContentIdLength(args), inputLength: -1 }
-        probeInput = CreateObject("roInput")
-        probeInput.SetMessagePort(port)
     #else
         ' A release build removes what a probe build may have left (typed test URLs; security L-6).
         CreateObject("roRegistry").Delete("mmtvl-probe")
     #end if
-    screen.CreateScene("MainScene")
+    scene = screen.CreateScene("MainScene")
     screen.Show()
     Log.info("App", "Started")
+    deliverImport(scene, args)
 
     while true
         msg = Wait(0, port)
         if type(msg) = "roSGScreenEvent" and msg.IsScreenClosed() then return
-        #if DEBUG
-            if type(msg) = "roInputEvent"
-                launch = probeGlobal.probeLaunch
-                launch.inputLength = probeContentIdLength(msg.GetInfo())
-                probeGlobal.probeLaunch = launch
+        if type(msg) = "roInputEvent"
+            if msg.IsInput()
+                info = msg.GetInfo()
+                #if DEBUG
+                    launch = probeGlobal.probeLaunch
+                    launch.inputLength = probeContentIdLength(info)
+                    probeGlobal.probeLaunch = launch
+                #end if
+                deliverImport(scene, info)
             end if
-        #end if
+        end if
     end while
+end sub
+
+' An import's contentId goes to the scene, parsed; anything else is left alone.
+sub deliverImport(scene as object, launchArgs as dynamic)
+    if type(launchArgs) <> "roAssociativeArray" then return
+    contentId = launchArgs.contentId
+    if contentId = invalid then return
+    parsed = ImportBundle.parseContentID(contentId)
+    if parsed.reason = "notImport" then return
+    if not parsed.ok
+        Log.warn("Import", "Refused an import launch (" + parsed.reason + ")")
+        return
+    end if
+    scene.importRequest = { host: parsed.host, port: parsed.port, secret: parsed.secret }
 end sub
 
 #if DEBUG
