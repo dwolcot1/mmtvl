@@ -10,8 +10,12 @@
 ## Next session starts here
 
 - **Phase 0 (PR #1)** and **phase 1 (PR #2, stacked on PR #1)** are done off-device. Steps 1, 4 and every device check wait for the remote tester's Roku. The probe build is `cd roku && npm run build` → `roku/out/mmtvl-live-tv.zip`. **Ask the user before sending it.**
-- **Phase 2 (UI) is done off-device.** Branches stack: `m12-phase2` (steps 10, 11, 11b) → `m12-step12` → `m12-step13` → `m12-step14` → `m12-step16` (all pushed; step 16 at f7b2ccb) → **`m12-step17`** (worktree `.claude/worktrees/step9`; not pushed yet). There's no PR for phase 2 yet; it will stack on PR #2. Done and QA-passed: steps 10, 11, 11b, 12 (guide), 13 (Settings), 14 (export script and import; security review: no open findings), 16 (teams data) and **17 (TeamMatcher port)**. `test:local`: 535 passed; script tests 40; MMTVL full suite 2094. Every "with a device" check is collected for step 15 in the *Deviations* entries.
-- **Next: step 15 (device build A) is `[human]`** and waits for a Roku on the user's own network. The next off-device work is **step 18 (My Teams)**, `[implementer]`: it adds the `TeamsTask` (catalog read, the index for the current options only, all matching inside the Task; see step 17's *Deviations* entry), the lineup's 30-game cap, and the channel menu as amended. Pencil: to read frames, use `execute` with the file's `uri`, read-only. Pen may have another project in front, so never save from this session unless the user has it open.
+- **Automated run (user, 2026-11-22):** steps 18–22, 24 and 25 run without the user.
+  - Every decision taken without the user is in **[M12-decisions-log.md](M12-decisions-log.md)**, with the reason and pros and cons.
+  - Git: after QA, each step is committed, scanned with gitleaks and pushed. Each phase gets a PR when it's done, stacked on the one before. Once phase 6's automated steps are done, every gate runs again and the PRs are squash-merged in order (#1, #2, #4, #5, then phases 4–6), each rebased onto `master` first.
+  - Device steps (1, 4, 15, 23) stay open for the user.
+- **Branches stack:** `m12-phase0` (PR #1) → `m12-phase1` (#2) → `m12-step13` (#4, phase 2) → `m12-step14` (#5, phase 3) → `m12-step16` → `m12-step17` → **`m12-step18`**. Worktree `.claude/worktrees/step9`. Done and QA-passed: steps 2, 3, 5–14 and 16–18. `test:local`: 566 passed; script tests 40; MMTVL full suite 2094.
+- **Next: step 19 (Search)**, `[implementer]`, then step 20 (Match Guide), which closes phase 4 with a PR (head `m12-step20`, base `m12-step14`). Pencil: read frames with `execute` on the file's `uri`, read-only, and never save from this session.
 - Gates for every Roku step: `cd roku && npm run build && npm run lint && npm run test:local` (264 passed at the end of phase 1), plus `npm run build:release`. No simulator runs with network access. Use a separate git worktree for parallel steps (`git worktree add -b m12-stepN .claude/worktrees/stepN <commit>`); the built-in isolation started from the wrong commit.
 
 ## Goal
@@ -400,7 +404,7 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
   - Game entries ("Away @ Home", not in "…Replay…" groups), programme matching (pro full name, nickname + league word; college "A at B" exact school, the description's first sentence by linear scan, aliases, nickname appended, apostrophes dropped), the Match Initials and Match Nicknames Alone switches, and `upcomingGames`.
   - Fixtures carry over the TeamMatcherTests (42) and MyTeamsTests (14) cases. The Swift side checks `teams.golden.json` too (in `RokuParityTests`).
   - Done when: both sides pass the golden file, and on a device, matching 100 channels' now-programmes takes under 500 ms on the stick (console timing).
-- [ ] **18. My Teams** `[implementer]`, files: `roku/components/teams/**`, `Lineup.bs`, guide
+- [x] **18. My Teams** `[implementer]`, files: `roku/components/teams/**`, `Lineup.bs`, guide
   - The My Teams group: Choose Teams… (leagues → conferences → teams, as M7l), live games, up to 30 upcoming games in 3 days (OK tunes), live team games on top of Favorites.
   - Recomputed after playlist and guide loads, after a team is picked, and every 5 min.
   - The channel menu's Add/Remove … to My Teams for pro game entries and programmes, pro and college (the picked team first, at most 3 a side, as MMTVL's `menuTeamsPerSide`; not college game entries). Mirrors MyTeamsTests' `theChannelMenuOffersEachSidesTeamsPickedFirst` and `…AtMostThreeTeamsASide` (amended at step 17, see *Deviations*).
@@ -742,3 +746,26 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
   - **BrighterScript trap:** a local variable that has the same name as a function in its namespace is silently rewritten to that function, e.g. a local `words` became `TeamMatcher.words`. Rename such locals and check the compiled `.brs`.
   - **Off-device timing (brs-node, not representative):** catalog read 143 ms (1,431 teams); index 740 ms, or 1,567 ms with both options on; matching 100 channels 101 ms.
   - **Device checks (step 15/18):** the DEBUG lines `Teams: matched … in X ms` (under 500 ms for 100 channels on a stick), `Teams: indexed …` and `Teams: read 1307 college teams in X ms` on a Low Roku. Also check whether a Roku's `LCase` changes any non-ASCII character Swift leaves alone, and `prefix`, `foldNonASCII` and `leadState` on the Roku's UTF-8 strings.
+- **2026-11-22, step 18 (built; qa-deep FAIL, then PASS after one fix round).** New:
+  - `TeamsTask`: one for the app's life. It holds the index in its own `m`. With teams picked it builds the index at launch, otherwise when first needed.
+  - Pure `MyTeams.bs` (the menu teams, texts and request serials), `TeamsWork.bs` (the queue, `match` = `updateTeams`, `menuSides`) and `TeamPicker.bs` (order identical to Swift's `localizedStandardCompare` on all 1,428 lines).
+  - `ChooseTeamsView` (frame P9pORE) and `icon_check.png`.
+  - Lineup, guide, channel menu, Settings and scene changes.
+  - `test:local`: 566 passed; release: 105 files.
+  - **Decisions:** D1–D6 in [M12-decisions-log.md](M12-decisions-log.md): MMTVL's leagues, not the frame's; the short-lived guide copy in the Task; the index at launch only with picks; the Channels footer waits for step 20; a one-line upcoming cell; the wording the frames don't show.
+  - **QA fixes:**
+    - The channel menu kept the row focused when it opened, rather than the live one, when the team rows arrived (`ChannelMenu.withItems`, `ChannelMenuView.replaceItems`).
+    - Match and menu answers shared one field and could collapse into one; they now have separate `matchAnswer` and `menuAnswer` fields.
+    - `forgetTeamResults` advances the match serial.
+    - A failed catalog showed "Loading teams…" forever; it now says "Teams couldn't be loaded" and retries on the next open.
+    - The `guideData` single-reader comments are corrected.
+    - A DEBUG timing line around the guide read.
+  - **Accepted (minor):** if `answerMenu` throws while it is being answered mid-match, that menu gets no team rows (reopening asks again). The removed-row clamp path in `withItems` isn't tested; QA read the code and judged it correct.
+  - **Device checks (step 15/23):**
+    - **The done-when:** a picked team that's playing shows its game in My Teams and on top of Favorites. Saved favorites are unchanged, and Move Up/Down shows only below the games.
+    - **The guide and picker:** OK on an upcoming game tunes its channel. Choose Teams… opens the picker; Back steps back through it and never leaves Live TV; the 3-minute idle return closes it.
+    - **The picker's look** at 1080p and 720p: columns, dimming, check marks (`blendColor`), "Loading teams…" on a cold open. A toggle survives a relaunch, in the order added.
+    - **Channel menu team rows:** how late they arrive the first time, and that a row moved to before they arrive stays focused. Long titles truncate in the 720-wide menu.
+    - **Settings → My Teams:** both switches change My Teams after a rebuild.
+    - **DEBUG lines:** "Teams: read the guide (N programmes) in X ms", "Teams: read … teams", "Teams: indexed …" (at launch with picks), and "Teams: matched … in X ms" (under 500 ms for 100 channels). The 5-minute tick doesn't redraw the guide when nothing changed. A Low Roku with teams picked shows no stall or memory warning.
+    - `GetDayOfWeek()` after `ToLocalTime()`; the `›` and `–` glyphs.
