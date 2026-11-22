@@ -206,6 +206,16 @@ namespace Theme
             "searchKeyboardOrigin": { "x": 120, "y": 201 },
             "searchResultsRect": { "x": 801, "y": 201, "width": 999, "height": 780 },
             "searchRowHeight": 84,
+            ' Roku-only (step 19, frame rucDX): the results are rows of searchRowHeight, searchRowSpacing apart, with a
+            ' section header (settingsSection) above each section's first row, padded searchSectionTopPadding above and
+            ' searchSectionBottomPadding below its 30-px line; text menuRowPadding in, the title and detail lines
+            ' settingsRowLineSpacing apart, centred in the row; a picked team's check (chooseTeamsCheckSize)
+            ' searchCheckGap after the text. The key hint's top at searchHintTop, at the results' left.
+            "searchRowSpacing": 9,
+            "searchSectionTopPadding": 15,
+            "searchSectionBottomPadding": 3,
+            "searchCheckGap": 15,
+            "searchHintTop": 999,
             ' Roku-only (step 18, frame P9pORE): Choose Teams over the guide, on searchDim. The title at searchTitleTop,
             ' the path (searchRowDetail) at chooseTeamsPathTop, then up to three lists from chooseTeamsListTop: the
             ' leagues, a college league's conferences and the teams, each in its column (x, width); the open ones
@@ -293,6 +303,7 @@ namespace Theme
             "bannerDuration": 5, ' the banner hides 5 s after a change or OK (step 11); the bar 5 s after a skip
             "pausedOverlayDuration": 15, ' D51
             "guideIdleReturn": 180, ' D51
+            "searchDebounce": 0.3, ' step 19: the query waits for a pause in typing (MMTVL's LiveSearchModel debounce)
             "menuFade": 0.2, ' Theme.swift menuFadeAnimation
             "settingsPage": 0.4, ' Theme.swift settingsPageAnimation (a spring, response 0.4): the track's slide
             "overlayFade": 0.25

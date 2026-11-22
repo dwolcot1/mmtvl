@@ -3,7 +3,8 @@
 ' GuideFetch.guideData's shape. Reading a node field copies the whole value, so one component keeps it: the guide
 ' screen, with a reader made here, once per guideRevision. The player is given only its channel's programmes (the
 ' guide screen's programmesFor, through the scene). Step 18: TeamsTask is a second reader, for each My Teams match
-' with teams picked; its copy lasts only for that match (programmesFor reads its lists there too). Pure functions, no nodes: the holder is anything with a
+' with teams picked; its copy lasts only for that match (programmesFor reads its lists there too). Step 19: SearchTask
+' is a third, once per guide load when Search needs it; it keeps only its title index (LiveSearch.newTitleIndex). Pure functions, no nodes: the holder is anything with a
 ' guideData field (a node on the Roku, an AA in tests). Also the TimeGrid rows' programmes and the guide's info text.
 '
 '   newReader() -> { data, revision, reads }: a reader that has read nothing.
@@ -12,6 +13,7 @@
 '     invalid when there is no holder (the reader forgets what it had). reads counts the field gets.
 '   programmesFor(data, channelID) -> the channel's programmes ({ start, stop, title, subtitle?, summary?, ... },
 '     seconds since 1970) or invalid (GuidePipeline.programmesFor on this shape).
+'   programmeAt(programmes, start) -> the first programme in the list that starts at start, or invalid (step 19).
 '   gridProgrammes(programmes, windowStart, windowEnd) -> the row TimeGrid gets: [{ index, start, duration, title }]
 '     by start time (stable), only programmes that overlap [windowStart, windowEnd) and last more than 0 s. TimeGrid
 '     needs each programme to end at or before the next starts, so an overlapped programme ends where the next one
@@ -59,6 +61,18 @@ namespace GuideReader
         list = guide.programmes[ref.epgID]
         if LCase(type(list)) <> "roarray" then return invalid
         return list
+    end function
+
+    ' Step 19: Search's programme results come back as { channelID, start }; this finds that programme again in the
+    ' channel's list (the first that starts then), or invalid (a newer guide no longer has it).
+    function programmeAt(programmes as dynamic, start as dynamic) as dynamic
+        if LCase(type(programmes)) <> "roarray" or not GuideReader.isNumber(start) then return invalid
+        for each programme in programmes
+            if GuideReader.isProgramme(programme)
+                if programme.start = start then return programme
+            end if
+        end for
+        return invalid
     end function
 
     function gridProgrammes(programmes as dynamic, windowStart as dynamic, windowEnd as dynamic) as object

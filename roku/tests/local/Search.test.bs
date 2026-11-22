@@ -1,0 +1,712 @@
+' Live TV search (M12 step 19): MMTVL's LiveSearchTests (17), on the same playlist and guide (IPTVFixtures.playlist,
+' IPTVFixtures.guide: hour-long programmes "<name> <hour>" from now − 1 h to now + 3 h; now 1,791,200,000) and the real
+' team catalogs. The search runs as on the Roku (LiveSearch's channel, team and programme queries, the answers applied
+' to the model), with no debounce. The LiveTVModel tests are carried as the pure parts the scene uses (LiveSearch's
+' keys and chooseAction, GuideKeys); phone text doesn't exist on a Roku. Then the Roku-only parts: the title index,
+' stale answers, the drawn lines and texts, the idle return and the Task queue. Off-device: npm run test:local.
+namespace SearchTests
+
+    ' MARK: LiveSearchModel (LiveSearchTests)
+
+    sub test_channelsIgnoreCaseAndDiacriticsAndSkipHiddenOnes(t as object)
+        fixture = SearchTests.makeFixture(true, { hiddenChannels: ["id:nbatv.us"] })
+        t.assertEqual(SearchTests.titles(SearchTests.search(fixture, "FUTBOL").channels, "channel"), ["channel Telemundo Fútbol"])
+        t.assertEqual(SearchTests.titles(SearchTests.search(fixture, "celtics LAKERS").channels, "channel"), ["channel Lakers @ Celtics"])
+        ' NBA TV is hidden: neither it nor its programmes are found.
+        nba = SearchTests.search(fixture, "nba tv")
+        t.assertTrue(LiveSearch.isSearching(nba.text))
+        t.assertEqual(LiveSearch.resultCount(nba), 0)
+        ' One character isn't a search.
+        short = SearchTests.search(fixture, "n ")
+        t.assertFalse(LiveSearch.isSearching(short.text))
+        t.assertEqual(LiveSearch.resultCount(short), 0)
+        t.assertFalse(LiveSearch.needsQuery(short), "no query is sent")
+    end sub
+
+    sub test_programmesFollowChannelsFromNowOn(t as object)
+        fixture = SearchTests.makeFixture()
+        state = SearchTests.search(fixture, "nba tv")
+        ' The programme that ended at now isn't found; the one on now is first.
+        t.assertEqual(SearchTests.all(state), ["channel NBA TV", "NBA TV: NBA TV 1", "NBA TV: NBA TV 2", "NBA TV: NBA TV 3"])
+        t.assertTrue(LiveSearch.isOnNow(state.programmes[0], fixture.now))
+        t.assertFalse(LiveSearch.isOnNow(state.programmes[1], fixture.now))
+    end sub
+
+    sub test_keyboardResultsAndBack(t as object)
+        fixture = SearchTests.makeFixture()
+        state = SearchTests.search(fixture, "nba tv")
+        ' Right from the keyboard's right edge (DynamicMiniKeyboard lets it through) enters the results; Left and Back
+        ' return to the keyboard.
+        result = LiveSearch.handleKey(state, "right", true)
+        t.assertEqual(result.outcome, "none")
+        state = result.state
+        t.assertEqual([state.focus, state.index], ["results", 0])
+        state = LiveSearch.handleKey(state, "down", true).state
+        t.assertEqual([state.focus, state.index], ["results", 1])
+        result = LiveSearch.handleKey(state, "back", true)
+        t.assertEqual(result.outcome, "none")
+        t.assertEqual(result.state.focus, "keyboard")
+        t.assertEqual(LiveSearch.handleKey(result.state, "back", true).outcome, "close")
+        ' Typing narrows the results at once, before the query answers.
+        narrowed = LiveSearch.textChanged(result.state, "nba tv 3", fixture.n)
+        t.assertEqual(SearchTests.all(narrowed), ["NBA TV: NBA TV 3"])
+        t.assertTrue(LiveSearch.needsQuery(narrowed), "and the query still runs")
+    end sub
+
+    sub test_teamsComeBetweenChannelsAndProgrammes(t as object)
+        fixture = SearchTests.makeFixture()
+        state = SearchTests.search(fixture, "nba")
+        found = SearchTests.all(state)
+        ' NBA TV, then at most maxTeamResults (12) NBA teams, then NBA TV's programmes.
+        t.assertEqual(found[0], "channel NBA TV")
+        expected = []
+        for each id in SearchTests.leagueIDs("nba", LiveSearch.maxTeamResults)
+            expected.Push("team " + id)
+        end for
+        teamRows = []
+        for i = 1 to LiveSearch.maxTeamResults
+            teamRows.Push(found[i])
+        end for
+        t.assertEqual(teamRows, expected)
+        t.assertTrue(state.programmes.Count() > 0)
+        for i = 1 + LiveSearch.maxTeamResults to found.Count() - 1
+            t.assertEqual(Left(found[i], 8), "NBA TV: ")
+        end for
+    end sub
+
+    sub test_michiganListsCollegeTeamsAndWomenNarrowsToWomensBasketball(t as object)
+        fixture = SearchTests.makeFixture()
+        michigan = SearchTests.search(fixture, "michigan")
+        t.assertEqual(michigan.channels.Count(), 0)
+        t.assertEqual(michigan.teams.Count(), LiveSearch.maxTeamResults)
+        t.assertEqual(michigan.programmes.Count(), 0)
+        for each team in michigan.teams
+            t.assertTrue(Left(team.id, 4) = "ncaa", team.id)
+        end for
+        women = SearchTests.search(fixture, "Michigan WOMEN")
+        t.assertTrue(women.teams.Count() > 0)
+        found = false
+        for each team in women.teams
+            t.assertEqual(Left(team.id, 6), "ncaaw.")
+            if team.id = "ncaaw.michigan-wolverines" then found = true
+        end for
+        t.assertTrue(found)
+    end sub
+
+    sub test_dukeListsDukesFourTeamsBeforeOtherDukes(t as object)
+        fixture = SearchTests.makeFixture()
+        found = SearchTests.teamIDs(SearchTests.search(fixture, "duke"))
+        ' A whole word of the school or name first, in catalog order; then "Dukes" (a word that starts with it).
+        t.assertEqual(SearchTests.first(found, 4), ["ncaaf.duke-blue-devils", "ncaam.duke-blue-devils", "ncaaw.duke-blue-devils", "ncaabase.duke-blue-devils"])
+        t.assertTrue(found.Count() > 4)
+        for i = 4 to found.Count() - 1
+            t.assertEqual(Right(found[i], 6), "-dukes", found[i])
+        end for
+        ' A word that only starts a word: "duk" ranks by catalog order.
+        t.assertEqual(SearchTests.teamIDs(SearchTests.search(fixture, "duk"))[0], "ncaaf.duke-blue-devils")
+    end sub
+
+    ' M7l (QA): words found in the league title or conference don't count for the rank.
+    sub test_aSportWordDoesntSpoilTheRank(t as object)
+        fixture = SearchTests.makeFixture()
+        michigan = SearchTests.teamIDs(SearchTests.search(fixture, "michigan basketball"))
+        ' The school Michigan first (men's, then women's), then Michigan State (a whole word), then Central Michigan.
+        t.assertEqual(SearchTests.first(michigan, 3), ["ncaam.michigan-wolverines", "ncaaw.michigan-wolverines", "ncaam.michigan-state-spartans"])
+        state = SearchTests.indexOf(michigan, "ncaam.michigan-state-spartans")
+        central = SearchTests.indexOf(michigan, "ncaam.central-michigan-chippewas")
+        t.assertTrue(state >= 0 and central >= 0, "both listed")
+        t.assertTrue(state < central)
+        duke = SearchTests.teamIDs(SearchTests.search(fixture, "duke basketball"))
+        t.assertEqual(SearchTests.first(duke, 2), ["ncaam.duke-blue-devils", "ncaaw.duke-blue-devils"])
+        for i = 2 to duke.Count() - 1
+            t.assertEqual(Right(duke[i], 6), "-dukes", duke[i])
+        end for
+    end sub
+
+    ' The school (or an alias) exactly beats a whole word of another school.
+    sub test_theExactSchoolComesFirst(t as object)
+        fixture = SearchTests.makeFixture()
+        michigan = SearchTests.teamIDs(SearchTests.search(fixture, "michigan"))
+        t.assertEqual(SearchTests.first(michigan, 4), ["ncaaf.michigan-wolverines", "ncaam.michigan-wolverines", "ncaaw.michigan-wolverines", "ncaabase.michigan-wolverines"])
+        t.assertEqual(michigan[4], "ncaaf.michigan-state-spartans")
+        texas = SearchTests.teamIDs(SearchTests.search(fixture, "texas"))
+        t.assertEqual(SearchTests.first(texas, 4), ["ncaaf.texas-longhorns", "ncaam.texas-longhorns", "ncaaw.texas-longhorns", "ncaabase.texas-longhorns"])
+        for i = 4 to texas.Count() - 1
+            t.assertFalse(Right(texas[i], 16) = ".texas-longhorns", texas[i])
+        end for
+        t.assertEqual(texas.Count(), LiveSearch.maxTeamResults)
+    end sub
+
+    ' M7m L29: initials and spelled-out names find their teams, whatever the matching options say.
+    sub test_initialsAndAliasesFindTheirTeams(t as object)
+        fixture = SearchTests.makeFixture()
+        ulm = SearchTests.teamIDs(SearchTests.search(fixture, "ULM"))
+        t.assertEqual(SearchTests.first(ulm, 4), ["ncaaf.ul-monroe-warhawks", "ncaam.ul-monroe-warhawks", "ncaaw.ul-monroe-warhawks", "ncaabase.ul-monroe-warhawks"])
+        brigham = SearchTests.teamIDs(SearchTests.search(fixture, "brigham young"))
+        t.assertEqual(brigham[0], "ncaaf.byu-cougars")
+        for each id in brigham
+            t.assertEqual(Right(id, 12), ".byu-cougars", id)
+        end for
+    end sub
+
+    sub test_teamResultsStopAtTwelve(t as object)
+        fixture = SearchTests.makeFixture()
+        t.assertEqual(LiveSearch.maxTeamResults, 12)
+        state = SearchTests.search(fixture, "college basketball")
+        t.assertEqual(state.teams.Count(), 12)
+        ' No whole-word name match: catalog order, the first men's basketball teams.
+        t.assertEqual(SearchTests.teamIDs(state), SearchTests.leagueIDs("ncaam", 12))
+    end sub
+
+    sub test_firstResultSkipsTeams(t as object)
+        fixture = SearchTests.makeDukeFixture()
+        state = SearchTests.search(fixture, "duke")
+        ' Teams first (Duke's, and the Dukes of James Madison and Duquesne), then the game.
+        found = SearchTests.all(state)
+        for i = 0 to found.Count() - 2
+            t.assertEqual(Left(found[i], 5), "team ")
+        end for
+        t.assertEqual(found[found.Count() - 1], "NBA TV: Duke at North Carolina")
+        head = LiveSearch.firstResult(state)
+        t.assertEqual(head.kind, "programme")
+        t.assertEqual(head.entry.title, "Duke at North Carolina")
+        ' Only teams: no first result.
+        devils = SearchTests.search(fixture, "blue devils")
+        t.assertTrue(LiveSearch.resultCount(devils) > 0)
+        t.assertInvalid(LiveSearch.firstResult(devils))
+    end sub
+
+    ' MARK: LiveTVModel (LiveSearchTests), as the scene's parts
+
+    ' phoneTextOpensSearchAndAChannelPlays: OK on a channel plays it (there's no phone text on a Roku).
+    sub test_okOnAChannelPlaysIt(t as object)
+        fixture = SearchTests.makeFixture()
+        state = SearchTests.search(fixture, "nfl network")
+        t.assertEqual(SearchTests.all(state)[0], "channel NFL Network")
+        state = LiveSearch.handleKey(state, "right", true).state
+        result = LiveSearch.handleKey(state, "OK", true)
+        t.assertEqual(result.outcome, "choose")
+        t.assertEqual(LiveSearch.chooseAction(result.result, fixture.now), { type: "watch", channelID: "id:nflnetwork.us" })
+    end sub
+
+    ' aProgrammeOnNowPlaysItsChannel (the phone's Return is the first result).
+    sub test_aProgrammeOnNowPlaysItsChannel(t as object)
+        fixture = SearchTests.makeFixture()
+        state = SearchTests.search(fixture, "nfl network hd 1")
+        t.assertEqual(SearchTests.all(state), ["NFL Network: NFL Network HD 1"])
+        t.assertEqual(LiveSearch.chooseAction(LiveSearch.firstResult(state), fixture.now), { type: "watch", channelID: "id:nflnetwork.us" })
+        state = LiveSearch.handleKey(state, "right", true).state
+        chosen = LiveSearch.handleKey(state, "OK", true)
+        t.assertEqual(chosen.outcome, "choose")
+        t.assertEqual(LiveSearch.chooseAction(chosen.result, fixture.now).type, "watch")
+    end sub
+
+    ' aLaterProgrammeShowsInTheGuide: the guide on the channel at the programme's start, nothing played.
+    sub test_aLaterProgrammeShowsInTheGuide(t as object)
+        fixture = SearchTests.makeFixture()
+        state = SearchTests.search(fixture, "nfl network hd 2")
+        later = state.programmes[0]
+        state = LiveSearch.handleKey(state, "right", true).state
+        chosen = LiveSearch.handleKey(state, "OK", true)
+        action = LiveSearch.chooseAction(chosen.result, fixture.now)
+        t.assertEqual(action, { type: "showInGuide", channelID: "id:nflnetwork.us", start: later.start })
+        t.assertEqual(later.start, fixture.now + 3600)
+        ' The guide was on NBA Games, which doesn't list it: All Channels, on its row, focus on the grid.
+        guide = GuideKeys.open(fixture.lineup, "NBA Games", "")
+        guide.focus = "search"
+        moved = GuideKeys.focusChannel(guide, action.channelID)
+        t.assertTrue(moved.ok)
+        t.assertEqual(moved.state.groups[moved.state.groupIndex], "All Channels")
+        t.assertEqual(moved.state.rows[moved.state.row].channelID, "id:nflnetwork.us")
+        t.assertEqual(moved.state.focus, "grid")
+        ' In the selected group already: the group stays.
+        live = GuideKeys.focusChannel(GuideKeys.open(fixture.lineup, "Live Channels", ""), action.channelID)
+        t.assertEqual(live.state.groups[live.state.groupIndex], "Live Channels")
+        ' A channel no group lists: nothing moves.
+        t.assertFalse(GuideKeys.focusChannel(guide, "id:gone").ok)
+    end sub
+
+    ' The guide side of Search, as the scene runs it: OK on the Search row opens Search and leaves the guide's model on
+    ' that row with the column open; while Search shows, a TimeGrid focus report doesn't move it; Back on the keyboard
+    ' closes Search, and the guide (GuideScreen.takeFocus: the column, since focus is "search") takes the next keys
+    ' from the Search row: Down to the first group, Up back, OK opens Search again, Back to the grid on the same row.
+    sub test_theGuideSearchRowOpensSearchAndBackReturns(t as object)
+        fixture = SearchTests.makeFixture()
+        guide = GuideKeys.open(fixture.lineup, "Live Channels", "id:nbatv.us")
+        guide.canReturn = true
+        group = guide.groupIndex
+        row = guide.row
+        guide = GuideKeys.handle("left", true, guide).state ' the channel cell
+        guide = GuideKeys.handle("left", true, guide).state ' groups
+        guide = GuideKeys.handle("rewind", true, guide).state ' a page up stops at the Search row
+        t.assertEqual(guide.focus, "search")
+        opened = GuideKeys.handle("OK", true, guide)
+        t.assertEqual(opened.action, { type: "openSearch" })
+        guide = opened.state
+        t.assertEqual(guide.focus, "search", "the column stays open under Search")
+        ' TimeGrid reporting a focus while Search shows changes nothing.
+        report = GuideKeys.gridReport(guide.focus, invalid, { row: 3, kind: "grid" })
+        t.assertFalse(report.apply)
+        t.assertFalse(report.isInput)
+        ' Back on the keyboard closes Search.
+        t.assertEqual(LiveSearch.handleKey(LiveSearch.newState(), "back", true).outcome, "close")
+        ' The guide's next keys start from the Search row.
+        down = GuideKeys.handle("down", true, guide)
+        t.assertEqual([down.state.focus, down.state.groupFocus], ["groups", 0])
+        t.assertEqual(GuideKeys.handle("up", true, down.state).state.focus, "search")
+        t.assertEqual(GuideKeys.handle("OK", true, guide).action, { type: "openSearch" }, "Search opens again")
+        back = GuideKeys.handle("back", true, guide)
+        t.assertEqual(back.action, { type: "none" }, "Back from the column never leaves the guide")
+        t.assertEqual([back.state.focus, back.state.groupIndex, back.state.row], ["grid", group, row])
+    end sub
+
+    sub test_okOnATeamTogglesItAndSearchStaysOpen(t as object)
+        fixture = SearchTests.makeFixture()
+        state = SearchTests.search(fixture, "duke")
+        head = LiveSearch.results(state)[0]
+        t.assertEqual(head.kind, "team")
+        duke = head.entry.id
+        prefs = { teams: [] }
+        state = LiveSearch.handleKey(state, "right", true).state
+        t.assertEqual([state.focus, state.index], ["results", 0])
+        result = LiveSearch.handleKey(state, "OK", true)
+        t.assertEqual(result.outcome, "toggleTeam")
+        t.assertEqual(result.result.entry.id, duke)
+        prefs = ChannelMenu.prefsAfter(prefs, { type: "toggleTeam", teamID: duke }, [])
+        t.assertEqual(prefs.teams, [duke])
+        ' Search stays open on the same row, which now says "In My Teams".
+        t.assertEqual([result.state.focus, result.state.index], ["results", 0])
+        text = LiveSearch.rowText(LiveSearch.results(result.state)[0], prefs.teams, true, invalid, invalid)
+        t.assertTrue(text.checked)
+        t.assertEqual(text.detail, "ACC · In My Teams")
+        t.assertEqual(LiveSearch.hint(result.state, prefs.teams), "OK: remove from My Teams · Left: keyboard")
+        ' Again: removed.
+        again = LiveSearch.handleKey(result.state, "OK", true)
+        prefs = ChannelMenu.prefsAfter(prefs, { type: "toggleTeam", teamID: again.result.entry.id }, [])
+        t.assertEqual(prefs.teams, [])
+        t.assertEqual(again.outcome, "toggleTeam")
+    end sub
+
+    ' phoneTextIsIgnoredWithoutChannels: with no channels there are no groups, and the column never reaches its Search
+    ' row (GuideKeys.moveInColumn), so Search can't open.
+    sub test_searchCantOpenWithoutChannels(t as object)
+        empty = Lineup.build([], {})
+        guide = GuideKeys.open(empty, invalid, "")
+        for each key in ["left", "left", "up", "OK", "down", "rewind", "OK", "right"]
+            result = GuideKeys.handle(key, true, guide)
+            t.assertFalse(result.action.type = "openSearch", key)
+            t.assertFalse(result.state.focus = "search", key)
+            guide = result.state
+        end for
+    end sub
+
+    ' MARK: Roku only: the title index
+
+    sub test_theTitleIndexKeepsEachTitleOnceAndDropsEndedProgrammes(t as object)
+        fixture = SearchTests.makeFixture()
+        index = fixture.titleIndex
+        ' 4 guide channels × 4 hours, less the 4 that ended at now; every title differs.
+        t.assertEqual(index.programmeCount, 12)
+        t.assertEqual(index.titleCount, 12)
+        t.assertEqual(index.titles[0] = LCase(index.titles[0]), true)
+        ' NFL Network and NBA TV match the guide; Red Zone has no guide; Lakers @ Celtics and Knicks @ Heat none.
+        t.assertEqual(SearchTests.sortedKeys(index.channelRefs), ["id:nbatv.us", "id:nflnetwork.us"])
+        ' A repeated title is kept once, its airings listed under it.
+        data = SearchTests.guideData(fixture.channels, [["nbatv.us", "NBA TV", ["News", "News", "Paid Programming", "News"]]], fixture.now - 3600)
+        repeated = LiveSearch.newTitleIndex(data, fixture.now, fixture.n)
+        t.assertEqual(repeated.titles, ["news", "paid programming"])
+        t.assertEqual(repeated.occurrences[0].Count(), 3 * 2, "two airings from now (the first ended)")
+        t.assertEqual(LiveSearch.newTitleIndex(invalid, fixture.now).titleCount, 0)
+        ' A cancel during the build gives up.
+        cancel = { isCancelled: function() as boolean
+            return true
+        end function }
+        big = []
+        for i = 1 to LiveSearch.cancelEvery + 1
+            big.Push("Show " + i.ToStr())
+        end for
+        t.assertInvalid(LiveSearch.newTitleIndex(SearchTests.guideData(fixture.channels, [["nbatv.us", "NBA TV", big]], fixture.now - 3600), fixture.now, fixture.n, cancel))
+    end sub
+
+    ' MMTVL's searchProgrammes: one result per channel when a guide channel serves several; soonest first; the limit.
+    sub test_aSharedGuideChannelGivesEachChannelItsResult(t as object)
+        fixture = SearchTests.makeFixture()
+        channels = SearchTests.parse([["NBA TV", "nbatv.us", "Live Channels"], ["NBA TV East", "nbatv.us", "Live Channels"]])
+        data = SearchTests.guideData(channels, [["nbatv.us", "NBA TV", ["Game A", "Game B", "Game C", "Game D"]]], fixture.now - 3600)
+        index = LiveSearch.newTitleIndex(data, fixture.now, fixture.n)
+        ids = [channels[0].id, channels[1].id]
+        found = LiveSearch.searchProgrammes(index, ["game"], ids, fixture.now, 40)
+        t.assertEqual(found.Count(), 6, "3 airings from now × 2 channels")
+        t.assertEqual([found[0].channelID, found[1].channelID], ids)
+        t.assertEqual([found[0].folded, found[2].folded, found[4].folded], ["game b", "game c", "game d"])
+        t.assertEqual(LiveSearch.searchProgrammes(index, ["game"], ids, fixture.now, 3).Count(), 3)
+        ' Only the channels given (the visible ones).
+        t.assertEqual(LiveSearch.searchProgrammes(index, ["game"], [ids[1]], fixture.now, 40).Count(), 3)
+        ' The next 24 h only.
+        t.assertEqual(LiveSearch.searchProgrammes(index, ["game"], ids, fixture.now - 86400 - 7200, 40).Count(), 0)
+    end sub
+
+    ' MARK: Roku only: answers, lines and texts
+
+    sub test_aLateAnswerForAnOlderTextIsDropped(t as object)
+        fixture = SearchTests.makeFixture()
+        state = LiveSearch.textChanged(LiveSearch.newState(), "nb", fixture.n)
+        old = state.serial
+        state = LiveSearch.textChanged(state, "nba", fixture.n)
+        t.assertEqual(LiveSearch.message(state), LiveSearch.searchingText)
+        stale = LiveSearch.applyAnswer(state, { serial: old, part: "teams", teams: [{ id: "x", title: "X", detail: "", text: "nb" }] })
+        t.assertEqual(stale.teams, [])
+        fresh = LiveSearch.applyAnswer(state, { serial: state.serial, part: "teams", teams: [] })
+        t.assertFalse(fresh.waiting.teams)
+        t.assertTrue(fresh.waiting.guide)
+        done = LiveSearch.applyAnswer(fresh, { serial: state.serial, part: "guide", channels: [], programmes: [] })
+        t.assertEqual(LiveSearch.message(done), LiveSearch.noResultsText)
+        ' Below two characters: nothing, and an answer that comes anyway is dropped.
+        cleared = LiveSearch.textChanged(done, "n", fixture.n)
+        t.assertEqual(LiveSearch.message(cleared), LiveSearch.notSearchingText)
+        t.assertEqual(LiveSearch.applyAnswer(cleared, { serial: cleared.serial, part: "teams", teams: [{ id: "x" }] }).teams, [])
+    end sub
+
+    ' Fix 1 of step 19's QA: serials keep increasing across Search sessions (the scene's openSearch seeds each one
+    ' with its newest serial + 1), so a late answer from a closed session never lands in the next.
+    sub test_aLateAnswerFromAnEarlierSessionIsDropped(t as object)
+        fixture = SearchTests.makeFixture()
+        lastUsed = 0
+        earlier = LiveSearch.newState(lastUsed + 1)
+        earlier = LiveSearch.textChanged(earlier, "a", fixture.n)
+        earlier = LiveSearch.textChanged(earlier, "ab", fixture.n)
+        oldSerial = earlier.serial
+        lastUsed = earlier.serial ' the scene's m.searchSerial after the query; then Search closes
+        later = LiveSearch.newState(lastUsed + 1)
+        later = LiveSearch.textChanged(later, "c", fixture.n)
+        later = LiveSearch.textChanged(later, "cd", fixture.n)
+        t.assertTrue(later.serial > oldSerial, "the same number of keys gives a new serial")
+        late = LiveSearch.applyAnswer(later, { serial: oldSerial, part: "teams", ok: true, teams: [{ id: "x", title: "X", detail: "", text: "ab" }] })
+        t.assertEqual(late.teams, [])
+        t.assertTrue(late.waiting.teams)
+        t.assertEqual(LiveSearch.applyAnswer(later, { serial: later.serial, part: "teams", ok: true, teams: [] }).waiting.teams, false)
+    end sub
+
+    ' Fix 2 of step 19's QA: a part that failed answers with no results and ends "Searching…".
+    sub test_aFailedPartEndsSearching(t as object)
+        fixture = SearchTests.makeFixture()
+        state = SearchTests.search(fixture, "nba tv")
+        state = LiveSearch.textChanged(state, "nba tvx", fixture.n)
+        t.assertEqual(LiveSearch.message(state), LiveSearch.searchingText)
+        failedGuide = LiveSearch.applyAnswer(state, { serial: state.serial, part: "guide", ok: false, channels: [], programmes: [] })
+        t.assertFalse(failedGuide.waiting.guide)
+        failedTeams = LiveSearch.applyAnswer(failedGuide, { serial: state.serial, part: "teams", ok: false, teams: [] })
+        t.assertEqual(LiveSearch.message(failedTeams), LiveSearch.noResultsText)
+        ' A failed part leaves no results of its own, whatever came with it.
+        odd = LiveSearch.applyAnswer(state, { serial: state.serial, part: "teams", ok: false, teams: [{ id: "x" }] })
+        t.assertEqual(odd.teams, [])
+    end sub
+
+    ' Fix 3 of step 19's QA: MMTVL's caps, 8 channels and 40 programmes (the 12 teams: teamResultsStopAtTwelve).
+    sub test_channelAndProgrammeResultsStopAtEightAndForty(t as object)
+        t.assertEqual(LiveSearch.maxChannelResults, 8)
+        t.assertEqual(LiveSearch.maxProgrammeResults, 40)
+        now = 1791200000
+        n = LiveSearch.newFolder()
+        specs = []
+        for i = 1 to 10
+            specs.Push(["Sports " + i.ToStr(), "sports" + i.ToStr() + ".us", "Sports"])
+        end for
+        channels = SearchTests.parse(specs)
+        shown = []
+        ids = []
+        for each channel in channels
+            shown.Push({ id: channel.id, name: channel.name, number: Lineup.displayNumber(channel), group: channel.group })
+            ids.Push(channel.id)
+        end for
+        found = LiveSearch.channelsMatching(LiveSearch.channelIndex(shown, n), ["sports"])
+        t.assertEqual(found.Count(), 8)
+        t.assertEqual(found[7].name, "Sports 8", "the first 8, in lineup order")
+        ' Three guide channels with 24 hour-long games each from now: 72 airings in the next 24 h.
+        guideSpecs = []
+        for c = 1 to 3
+            games = []
+            for hour = 0 to 23
+                games.Push("Game " + c.ToStr() + "." + hour.ToStr())
+            end for
+            guideSpecs.Push(["sports" + c.ToStr() + ".us", "Sports " + c.ToStr(), games])
+        end for
+        index = LiveSearch.newTitleIndex(SearchTests.guideData(channels, guideSpecs, now), now, n)
+        t.assertEqual(index.programmeCount, 72)
+        hits = LiveSearch.searchProgrammes(index, ["game"], ids, now, LiveSearch.maxProgrammeResults)
+        t.assertEqual(hits.Count(), 40)
+        ' Soonest first: the 40 earliest of the 72 (13 or 14 hours of the three channels).
+        t.assertEqual(hits[0].start, now)
+        t.assertTrue(hits[39].start <= now + 13 * 3600, "never a later one ahead of an earlier one")
+        state = SearchTests.searchIn(shown, ids, index, now, n, "sports")
+        t.assertEqual(state.channels.Count(), 8)
+    end sub
+
+    sub test_resultsShowSectionHeadersAndPageBySix(t as object)
+        fixture = SearchTests.makeFixture()
+        state = SearchTests.search(fixture, "nba")
+        drawn = LiveSearch.lines(state)
+        t.assertEqual(drawn[0], { kind: "header", text: "CHANNELS" })
+        t.assertEqual(drawn[1], { kind: "row", index: 0 })
+        t.assertEqual(drawn[2], { kind: "header", text: "TEAMS" })
+        t.assertEqual(drawn.Count(), 2 + LiveSearch.visibleResults)
+        ' Fast Forward pages by 6; the window follows the focus; the programmes' header shows above their first row.
+        ' 1 channel, 12 teams, 3 programmes.
+        t.assertEqual(LiveSearch.resultCount(state), 16)
+        state = LiveSearch.handleKey(state, "right", true).state
+        state = LiveSearch.handleKey(state, "fastforward", true).state
+        state = LiveSearch.handleKey(state, "fastforward", true).state
+        t.assertEqual([state.index, state.first], [12, 7])
+        t.assertEqual(LiveSearch.lines(state)[0], { kind: "row", index: 7 }, "no header mid-section")
+        state = LiveSearch.handleKey(state, "fastforward", true).state
+        t.assertEqual([state.index, state.first], [15, 10], "clamped to the last")
+        drawn = LiveSearch.lines(state)
+        t.assertEqual(drawn[3], { kind: "header", text: "PROGRAMMES" })
+        t.assertEqual(drawn[4], { kind: "row", index: 13 })
+        state = LiveSearch.handleKey(state, "rewind", true).state
+        t.assertEqual(state.index, 9)
+    end sub
+
+    sub test_rowTextsAndHints(t as object)
+        fixture = SearchTests.makeFixture()
+        state = SearchTests.search(fixture, "nba tv")
+        list = LiveSearch.results(state)
+        nowParts = { seconds: fixture.now, year: 2026, month: 10, day: 5, weekday: 1, hours: 20, minutes: 0 }
+        channel = LiveSearch.rowText(list[0], [], false, nowParts, invalid)
+        t.assertEqual(channel, { title: "NBA TV", detail: "2 · Live Channels", checked: false })
+        onNow = LiveSearch.rowText(list[1], [], false, nowParts, { year: 2026, month: 10, day: 5, weekday: 1, hours: 19, minutes: 0 })
+        t.assertEqual(onNow.detail, "2 NBA TV · On Now")
+        later = LiveSearch.rowText(list[2], [], false, nowParts, { year: 2026, month: 10, day: 5, weekday: 1, hours: 21, minutes: 0 })
+        t.assertEqual(later.detail, "2 NBA TV · 9:00 PM")
+        tomorrow = LiveSearch.rowText(list[3], [], false, nowParts, { year: 2026, month: 10, day: 6, weekday: 2, hours: 0, minutes: 30 })
+        t.assertEqual(tomorrow.detail, "2 NBA TV · Tue 12:30 AM")
+        t.assertEqual(later.title, "NBA TV 2")
+        t.assertEqual(LiveSearch.hint(state, []), "OK: type · Play: delete · Right: results · Back: close search")
+        t.assertEqual(LiveSearch.handleKey(state, "play", true).outcome, "delete")
+        focused = LiveSearch.handleKey(state, "right", true).state
+        t.assertEqual(LiveSearch.hint(focused, []), "OK: watch · Left: keyboard · Back: keyboard")
+        ' A team: the frame's detail, and the pro league for a pro team.
+        team = invalid
+        for each item in LiveSearch.results(SearchTests.search(fixture, "lakers"))
+            if item.kind = "team" and item.entry.id = "nba.lal" then team = item
+        end for
+        t.assertEqual(team.kind, "team")
+        t.assertEqual(LiveSearch.rowText(team, [], true, nowParts, invalid), { title: "Los Angeles Lakers", detail: "NBA · Add to My Teams", checked: false })
+        t.assertEqual(LiveSearch.rowText(team, [], false, nowParts, invalid).detail, "NBA")
+        t.assertEqual(LiveSearch.message(LiveSearch.newState()), "Type a channel, team or show")
+    end sub
+
+    ' MARK: Roku only: the idle return and the Task queue
+
+    sub test_theIdleReturnClosesSearch(t as object)
+        result = GuideIdle.outcome({ screen: "guide", searchOpen: true, isPlaying: true })
+        t.assertEqual(result, { closeMenu: false, closePicker: false, closeSearch: true, returnToChannel: true, changed: true })
+        stays = GuideIdle.outcome({ screen: "guide", searchOpen: true, isPlaying: false })
+        t.assertFalse(stays.closeSearch, "nothing playing: Search stays")
+    end sub
+
+    sub test_aSearchGoesBeforeTheCatalogAndTheMatch(t as object)
+        queue = TeamsWork.newQueue()
+        t.assertTrue(TeamsWork.take(queue, { kind: "match", serial: 1 }))
+        t.assertFalse(TeamsWork.take(queue, { kind: "catalog" }))
+        t.assertFalse(TeamsWork.take(queue, { kind: "search", serial: 1, text: "du" }))
+        t.assertFalse(TeamsWork.take(queue, { kind: "search", serial: 2, text: "duk" }), "the newest search replaces it")
+        t.assertFalse(TeamsWork.take(queue, { kind: "menu", serial: 1 }))
+        t.assertEqual(TeamsWork.nextRequest(queue).kind, "menu")
+        t.assertEqual(TeamsWork.nextRequest(queue), { kind: "search", serial: 2, text: "duk" })
+        t.assertEqual(TeamsWork.nextRequest(queue).kind, "catalog")
+        t.assertEqual(TeamsWork.nextRequest(queue).kind, "match")
+        t.assertInvalid(TeamsWork.nextRequest(queue))
+    end sub
+
+    sub test_foldingMatchesFoundationsForSearch(t as object)
+        n = LiveSearch.newFolder()
+        t.assertEqual(LiveSearch.folded("Telemundo Fútbol", n), "telemundo futbol")
+        t.assertEqual(LiveSearch.folded("ÉCOLE Ångström", n), "ecole angstrom")
+        t.assertEqual(LiveSearch.queryWords("  Celtics" + Chr(9) + "LAKERS ", n), ["celtics", "lakers"])
+        t.assertEqual(LiveSearch.tokenList("Texas A&M", n), ["texas", "a", "m"])
+        t.assertFalse(LiveSearch.isSearching(" a ", n))
+        t.assertTrue(LiveSearch.isSearching("a b", n), "two characters, spaces aside")
+    end sub
+
+    ' MARK: fixtures
+
+    ' The fixture playlist (with Telemundo Fútbol when asked), its lineup, the guide's title index and the teams.
+    function makeFixture(withFutbol = false as boolean, prefs = {} as object) as object
+        now = 1791200000
+        n = LiveSearch.newFolder()
+        channels = LineupTests.channels()
+        if withFutbol then channels = SearchTests.parse([["NFL Network", "nflnetwork.us", "Live Channels"], ["NBA TV", "nbatv.us", "Live Channels"], ["Red Zone", "", "Live Channels"], ["Lakers @ Celtics", "Lakers @ Celtics", "NBA Games"], ["Knicks @ Heat", "Knicks @ Heat", "NBA Games"], ["Telemundo Fútbol", "futbol.us", "Live Channels"]])
+        guideChannels = [["NFL.Network.HD.us2", "NFL Network HD"], ["nbatv.us", "NBA TV"], ["NFL.RedZone.HD.us2", "NFL RedZone"], ["Unrelated.us2", "Unrelated"]]
+        specs = []
+        for each pair in guideChannels
+            names = []
+            for hour = 0 to 3
+                names.Push(pair[1] + " " + hour.ToStr())
+            end for
+            specs.Push([pair[0], pair[1], names])
+        end for
+        data = SearchTests.guideData(channels, specs, now - 3600)
+        return SearchTests.fixtureWith(channels, prefs, data, now, n)
+    end function
+
+    ' The fixture playlist with a guide whose NBA TV programme on now is a Duke game.
+    function makeDukeFixture() as object
+        now = 1791200000
+        n = LiveSearch.newFolder()
+        channels = LineupTests.channels()
+        data = SearchTests.guideData(channels, [["nbatv.us", "NBA TV", ["Duke at North Carolina"]]], now - 1800)
+        data.guides[0].programmes["nbatv.us"][0].stop = now + 3600
+        return SearchTests.fixtureWith(channels, {}, data, now, n)
+    end function
+
+    function fixtureWith(channels as object, prefs as object, data as object, now as integer, n as object) as object
+        built = Lineup.build(channels, prefs)
+        shown = []
+        ids = []
+        for each channel in built.visibleChannels
+            shown.Push({ id: channel.id, name: channel.name, number: Lineup.displayNumber(channel), group: channel.group })
+            ids.Push(channel.id)
+        end for
+        return { now: now, n: n, channels: channels, lineup: built, channelEntries: LiveSearch.channelIndex(shown, n), channelIDs: ids, data: data, titleIndex: LiveSearch.newTitleIndex(data, now, n), teamIndex: SearchTests.teams(n) }
+    end function
+
+    ' The search as the Roku runs it: the text changes, then the guide part (SearchTask, with the titles the guide
+    ' screen adds) and the teams part (TeamsTask) answer.
+    function search(fixture as object, text as string) as object
+        state = LiveSearch.textChanged(LiveSearch.newState(), text, fixture.n)
+        if not LiveSearch.needsQuery(state) then return state
+        wordList = LiveSearch.queryWords(text, fixture.n)
+        found = LiveSearch.channelsMatching(fixture.channelEntries, wordList)
+        programmes = []
+        for each hit in LiveSearch.searchProgrammes(fixture.titleIndex, wordList, fixture.channelIDs, fixture.now, LiveSearch.maxProgrammeResults)
+            channel = invalid
+            for each entry in fixture.channelEntries
+                if entry.id = hit.channelID then channel = entry
+            end for
+            programme = GuideReader.programmeAt(GuideReader.programmesFor(fixture.data, hit.channelID), hit.start)
+            hit.channelName = channel.name
+            hit.channelNumber = channel.number
+            hit.title = programme.title
+            hit.subtitle = ""
+            programmes.Push(hit)
+        end for
+        state = LiveSearch.applyAnswer(state, { serial: state.serial, part: "guide", channels: found, programmes: programmes })
+        return LiveSearch.applyAnswer(state, { serial: state.serial, part: "teams", teams: LiveSearch.teamsMatching(fixture.teamIndex, wordList, fixture.n) })
+    end function
+
+    ' The guide part of a search over the given channels and index, applied to a fresh model.
+    function searchIn(shown as object, ids as object, index as object, now as integer, n as object, text as string) as object
+        state = LiveSearch.textChanged(LiveSearch.newState(), text, n)
+        wordList = LiveSearch.queryWords(text, n)
+        found = LiveSearch.channelsMatching(LiveSearch.channelIndex(shown, n), wordList)
+        hits = LiveSearch.searchProgrammes(index, wordList, ids, now, LiveSearch.maxProgrammeResults)
+        return LiveSearch.applyAnswer(state, { serial: state.serial, part: "guide", ok: true, channels: found, programmes: hits })
+    end function
+
+    ' Both catalogs' search entries, made once per run.
+    function teams(n as object) as object
+        if m.searchTestTeams = invalid
+            catalog = TeamCatalog.loadPro()
+            catalog.Append(TeamCatalog.loadCollege())
+            m.searchTestCatalog = catalog
+            m.searchTestTeams = LiveSearch.teamIndex(catalog, n)
+        end if
+        return m.searchTestTeams
+    end function
+
+    function leagueIDs(league as string, count as integer) as object
+        SearchTests.teams(LiveSearch.newFolder())
+        found = []
+        for each team in m.searchTestCatalog
+            if team.league = league and found.Count() < count then found.Push(team.id)
+        end for
+        return found
+    end function
+
+    ' Channels from [name, tvg-id, group] (M3U's own parsing and ids).
+    function parse(specs as object) as object
+        lines = ["#EXTM3U"]
+        for i = 0 to specs.Count() - 1
+            spec = specs[i]
+            lines.Push("#EXTINF:0 tvg-id=`" + spec[1] + "` tvg-name=`" + spec[0] + "` group-title=`" + spec[2] + "`," + spec[0])
+            lines.Push(LineupTests.streamURL(i + 1))
+        end for
+        return M3U.makeChannels(M3U.parse(lines.Join(Chr(10)).Replace("`", Chr(34))).entries)
+    end function
+
+    ' GuideFetch.guideData's shape for one guide: specs [[epg id, display name, [titles]]], hour-long programmes from
+    ' firstStart; matched to channels with EPGMatcher, as the guide task does.
+    function guideData(channels as object, specs as object, firstStart as integer) as object
+        list = []
+        programmes = EPGMatcher.newSet()
+        count = 0
+        for each spec in specs
+            list.Push({ id: spec[0], names: [spec[1]] })
+            entries = []
+            for i = 0 to spec[2].Count() - 1
+                start = firstStart + i * 3600
+                entries.Push({ start: start, stop: start + 3600, title: spec[2][i] })
+                count++
+            end for
+            programmes[LCase(spec[0])] = entries
+        end for
+        matches = EPGMatcher.match(channels, [{ sourceID: "custom", channels: list }], {})
+        return { windowStart: firstStart, windowEnd: firstStart + 86400, programmeCount: count, matches: matches, guides: [{ programmes: programmes, channels: list }] }
+    end function
+
+    function all(state as object) as object
+        found = []
+        for each item in LiveSearch.results(state)
+            if item.kind = "channel"
+                found.Push("channel " + item.entry.name)
+            else if item.kind = "team"
+                found.Push("team " + item.entry.id)
+            else
+                found.Push(item.entry.channelName + ": " + item.entry.title)
+            end if
+        end for
+        return found
+    end function
+
+    function titles(list as object, kind as string) as object
+        found = []
+        for each entry in list
+            found.Push(kind + " " + entry.name)
+        end for
+        return found
+    end function
+
+    function teamIDs(state as object) as object
+        found = []
+        for each team in state.teams
+            found.Push(team.id)
+        end for
+        return found
+    end function
+
+    function first(list as object, count as integer) as object
+        found = []
+        for i = 0 to count - 1
+            if i < list.Count() then found.Push(list[i])
+        end for
+        return found
+    end function
+
+    function indexOf(list as object, value as string) as integer
+        for i = 0 to list.Count() - 1
+            if list[i] = value then return i
+        end for
+        return -1
+    end function
+
+    function sortedKeys(set as object) as object
+        keys = []
+        for each key in set
+            keys.Push(key)
+        end for
+        keys.Sort()
+        return keys
+    end function
+
+end namespace

@@ -7,12 +7,13 @@
 '     match   { picked, options }: My Teams' live channels and upcoming games
 '     menu    { channel: { id, name, group }, programme (the one on now, or invalid), options }: the menu's sides
 '     catalog {}: publish the slim catalog (TeamPicker.slimCatalog)
-'   newQueue() -> { match, menu, catalog }: at most one waiting request of each kind.
+'     search  { text } (step 19): Search's teams (LiveSearch.teamsMatching); text "" only makes the search entries
+'   newQueue() -> { match, menu, search, catalog }: at most one waiting request of each kind.
 '   take(queue, request) -> true when request is a match: a newer match supersedes the one waiting and the one
 '     running (a pick, a Matching switch, a playlist or guide load, the 5-minute tick: the newest decides). A newer
-'     menu request replaces a waiting one. Anything else is ignored (false).
-'   nextRequest(queue) -> the request to do now, taken out of the queue: a menu first (someone is looking at it), then the
-'     catalog, then the match; invalid when none waits.
+'     menu or search request replaces a waiting one. Anything else is ignored (false).
+'   nextRequest(queue) -> the request to do now, taken out of the queue: a menu first (someone is looking at it), then a
+'     search (someone is typing), then the catalog, then the match; invalid when none waits.
 '   options(value) -> { initials, nicknames }, booleans (false when missing); sameOptions(a, b).
 '   match(channels, data, picked, now, index, cancel) -> MMTVL's updateTeams for one set of picks and options:
 '     channels  TeamsTask's channels ([{ id, name, group }], playlist order)
@@ -33,7 +34,7 @@
 namespace TeamsWork
 
     function newQueue() as object
-        return { match: invalid, menu: invalid, catalog: false }
+        return { match: invalid, menu: invalid, search: invalid, catalog: false }
     end function
 
     function take(queue as object, request as dynamic) as boolean
@@ -45,6 +46,8 @@ namespace TeamsWork
             return true
         else if kind = "menu"
             queue.menu = request
+        else if kind = "search"
+            queue.search = request
         else if kind = "catalog"
             queue.catalog = true
         end if
@@ -55,6 +58,11 @@ namespace TeamsWork
         if queue.menu <> invalid
             request = queue.menu
             queue.menu = invalid
+            return request
+        end if
+        if queue.search <> invalid
+            request = queue.search
+            queue.search = invalid
             return request
         end if
         if queue.catalog

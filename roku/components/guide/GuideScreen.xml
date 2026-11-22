@@ -39,10 +39,16 @@
         <field id="input" type="boolean" alwaysNotify="true" />
         <!-- open({ lastGroup, channelID }): the remembered group and the channel to focus (GuideKeys.open).
              takeFocus(): focus on the grid or the column (the scene's focusCurrent; open doesn't take focus).
-             programmesFor(channelID): that channel's programmes (a copy of one list) or invalid. -->
+             programmesFor(channelID): that channel's programmes (a copy of one list) or invalid.
+             Step 19: programmeDetails(hits): for Search's programme results ([{ channelID, start }]) each programme's
+             { title, subtitle } (subtitle: the subtitle, else the episode, else ""), or invalid where the guide no
+             longer has it. focusChannel({ channelID, start }): Search's later programme: the guide on the channel's
+             row (its group as GuideKeys.focusChannel picks), the column closed, TimeGrid sent to start. -->
         <function name="open" />
         <function name="takeFocus" />
         <function name="programmesFor" />
+        <function name="programmeDetails" />
+        <function name="focusChannel" />
     </interface>
     <script type="text/brighterscript" uri="pkg:/source/lib/Log.bs" />
     <script type="text/brighterscript" uri="pkg:/source/lib/Lineup.bs" />

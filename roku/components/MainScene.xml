@@ -22,7 +22,11 @@
      5 minutes (the newest request wins); its live channel ids and upcoming games go into the lineup (Lineup.build).
      Choose Teams (ChooseTeamsView) opens over the guide from My Teams' first row; the channel menu asks TeamsTask for
      the teams of its channel and adds their rows when they come; the slim catalog is asked for when Settings or
-     Choose Teams first opens. Back never leaves the app (D49): the scene handles every key that reaches it. -->
+     Choose Teams first opens. Step 19: Search (SearchView) opens over the guide from its Search row; its queries go to
+     SearchTask (channels and programmes, against a title index built once per guide load) and TeamsTask (teams); OK
+     on a channel or a programme on now plays it, on a later programme shows it in the guide, on a team adds or
+     removes it (Search stays open); Back and the 3-minute idle return close it. Back never leaves the app (D49): the
+     scene handles every key that reaches it. -->
 <component name="MainScene" extends="Scene">
     <interface>
         <!-- Lineup.build's result for the last playlist that loaded (kept when a later load fails). -->
@@ -44,7 +48,8 @@
              plain field get per guideRevision, kept in its m; never MoveFromField, never per row); the player's banner
              and the channel menu get one channel's programmes from it (GuideScreen.programmesFor). Step 18: TeamsTask
              (its guideHolder field) is a second reader, for each My Teams match with teams picked, and lets its copy
-             go when the match ends. invalid until a run finishes. -->
+             go when the match ends. Step 19: SearchTask is a third, once per guide load when Search needs it: it
+             keeps only its title index and lets the copy go. invalid until a run finishes. -->
         <field id="guideHolder" type="node" />
         <!-- Goes up by 1 each time guideHolder and guideStatuses are replaced; observe this. -->
         <field id="guideRevision" type="integer" value="0" />
@@ -94,6 +99,8 @@
         <SettingsScreen id="settings" visible="false" />
         <!-- Step 18: Choose Teams, over the guide while open. -->
         <ChooseTeamsView id="teamPicker" visible="false" />
+        <!-- Step 19: Search, over the guide while open. -->
+        <SearchView id="search" visible="false" />
         <!-- Over the guide or the player while open. -->
         <ChannelMenuView id="channelMenu" visible="false" />
         <!-- Step 14: ImportConfirmView, while an import is open, is appended over everything (and the notice). -->

@@ -1,0 +1,157 @@
+' SearchTask (fields in SearchTask.xml). m.inbox holds what came in and hasn't been served: the newest query, whether a
+' prepare waits, and whether the channels changed. m.index is the title index for guide revision m.indexRevision,
+' m.channelEntries LiveSearch.channelIndex of the channels field (invalid until needed after a change).
+
+sub init()
+    m.top.functionName = "runSearch"
+end sub
+
+sub runSearch()
+    m.port = CreateObject("roMessagePort")
+    m.top.observeField("request", m.port)
+    m.top.observeField("channels", m.port)
+    m.top.observeField("guideRevision", m.port)
+    m.inbox = { query: invalid, prepare: false, channelsChanged: true, revision: m.top.guideRevision }
+    m.folder = LiveSearch.newFolder()
+    m.index = invalid
+    m.indexRevision = -1
+    m.channelEntries = invalid
+    m.channelIDs = []
+    while true
+        ' A query given up for a newer one is already waiting: no wait then.
+        if m.inbox.query = invalid and not m.inbox.prepare then takeMessage(m.inbox, Wait(0, m.port))
+        drain(m.port, m.inbox)
+        m.serving = invalid
+        try
+            serveInbox()
+        catch e
+            ' Never the exception's text: its number only.
+            Log.error("Search", "The search task stopped a request (error " + errorNumber(e) + ")")
+            ' The query being served fails with no results, so Search stops saying "Searching…" (fix 2 of QA).
+            if m.serving <> invalid then m.top.answer = { serial: m.serving.serial, part: "guide", ok: false, channels: [], programmes: [] }
+            m.inbox.query = invalid
+        end try
+    end while
+end sub
+
+sub serveInbox()
+    if m.inbox.revision <> m.indexRevision and m.index <> invalid
+        ' A new guide: the old index goes now; the next search builds the new one.
+        m.index = invalid
+    end if
+    if m.inbox.channelsChanged
+        m.inbox.channelsChanged = false
+        m.channelEntries = invalid
+    end if
+    if m.inbox.prepare
+        m.inbox.prepare = false
+        ensureChannels()
+        ensureIndex()
+        drain(m.port, m.inbox)
+    end if
+    if m.inbox.query <> invalid
+        request = m.inbox.query
+        m.inbox.query = invalid
+        m.serving = request
+        answerQuery(request)
+    end if
+end sub
+
+' What a message asks, kept in inbox (no m: the cancel check calls it too).
+sub takeMessage(inbox as object, msg as dynamic)
+    if type(msg) <> "roSGNodeEvent" then return
+    field = msg.getField()
+    data = msg.getData()
+    if field = "request"
+        if type(data) <> "roAssociativeArray" then return
+        if data.kind = "prepare"
+            inbox.prepare = true
+        else if data.kind = "query"
+            inbox.query = data
+        end if
+    else if field = "channels"
+        inbox.channelsChanged = true
+    else if field = "guideRevision"
+        inbox.revision = data
+    end if
+end sub
+
+sub drain(port as object, inbox as object)
+    msg = port.GetMessage()
+    while msg <> invalid
+        takeMessage(inbox, msg)
+        msg = port.GetMessage()
+    end while
+end sub
+
+function errorNumber(e as dynamic) as string
+    if type(e) = "roAssociativeArray"
+        if e.number <> invalid then return e.number.ToStr()
+    end if
+    return "?"
+end function
+
+sub ensureChannels()
+    if m.channelEntries <> invalid then return
+    m.channelEntries = LiveSearch.channelIndex(m.top.channels, m.folder)
+    m.channelIDs = []
+    m.channelByID = {}
+    m.channelByID.SetModeCaseSensitive()
+    for each entry in m.channelEntries
+        m.channelIDs.Push(entry.id)
+        if not m.channelByID.DoesExist(entry.id) then m.channelByID[entry.id] = entry
+    end for
+end sub
+
+' The title index for the current guide, built from one read of the guide data, which goes when this returns.
+sub ensureIndex()
+    revision = m.top.guideRevision
+    if m.index <> invalid and m.indexRevision = revision then return
+    m.index = invalid
+    #if DEBUG
+        timer = CreateObject("roTimespan")
+    #end if
+    data = invalid
+    holder = m.top.guideHolder
+    if holder <> invalid then data = holder.guideData
+    #if DEBUG
+        readMs = timer.TotalMilliseconds()
+    #end if
+    m.index = LiveSearch.newTitleIndex(data, CreateObject("roDateTime").AsSeconds(), m.folder)
+    m.indexRevision = revision
+    m.inbox.revision = revision
+    #if DEBUG
+        ' Step 19: what the index costs (counts and times only).
+        Log.info("Search", "Indexed " + m.index.programmeCount.ToStr() + " programmes (" + m.index.titleCount.ToStr() + " titles) in " + timer.TotalMilliseconds().ToStr() + " ms (guide read " + readMs.ToStr() + " ms)")
+    #end if
+end sub
+
+sub answerQuery(request as object)
+    ensureChannels()
+    ensureIndex()
+    #if DEBUG
+        timer = CreateObject("roTimespan")
+    #end if
+    wordList = LiveSearch.queryWords(request.text, m.folder)
+    found = LiveSearch.channelsMatching(m.channelEntries, wordList)
+    cancel = { port: m.port, inbox: m.inbox, isCancelled: isSuperseded }
+    hits = LiveSearch.searchProgrammes(m.index, wordList, m.channelIDs, CreateObject("roDateTime").AsSeconds(), LiveSearch.maxProgrammeResults, cancel)
+    if hits = invalid then return
+    for each hit in hits
+        channel = m.channelByID[hit.channelID]
+        if channel <> invalid
+            hit.channelName = channel.name
+            hit.channelNumber = channel.number
+        end if
+    end for
+    #if DEBUG
+        Log.info("Search", "Found " + found.Count().ToStr() + " channels, " + hits.Count().ToStr() + " programmes in " + timer.TotalMilliseconds().ToStr() + " ms")
+    #end if
+    m.top.answer = { serial: request.serial, part: "guide", ok: true, channels: found, programmes: hits }
+end sub
+
+' The query's cancel check (m is the cancel object above): takes in what came, and gives up for a newer query.
+function isSuperseded() as boolean
+    drain(m.port, m.inbox)
+    return m.inbox.query <> invalid
+end function
