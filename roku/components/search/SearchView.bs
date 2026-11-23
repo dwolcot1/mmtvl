@@ -48,6 +48,7 @@ sub styleKeyboard()
     colors = m.theme.colors
     origin = m.theme.layout.searchKeyboardOrigin
     m.keyboard = m.top.findNode("keyboard")
+    m.keys = m.top.findNode("keys")
     m.keyboard.translation = [origin.x, origin.y]
     palette = CreateObject("roSGNode", "RSGPalette")
     palette.colors = {
@@ -135,7 +136,7 @@ function open(args as dynamic) as boolean
 end function
 
 function takeFocus() as boolean
-    if m.state.focus = "results" then m.top.setFocus(true) else m.keyboard.setFocus(true)
+    if m.state.focus = "results" then m.keys.setFocus(true) else m.keyboard.setFocus(true)
     return true
 end function
 

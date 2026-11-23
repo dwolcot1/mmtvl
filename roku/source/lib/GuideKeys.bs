@@ -43,7 +43,8 @@
 '     state  { focus, lineup, groups, groupIndex, groupFocus, rows, row, cellIndex, cellCount, canReturn,
 '              isPlaying }
 '       focus       "grid" (a programme cell), "channel" (the row's channel cell, M6 L8), "groups" (the group
-'                   column) or "search" (the Search row above the groups, M7f L12)
+'                   column), "search" (the Search row above the groups, M7f L12) or "settings" (step 15: the
+'                   Settings row below the groups)
 '       groups      lineup.groups; groupIndex: the selected group; groupFocus: the focused one in the column
 '       rows        rowsOf(lineup, the selected group); row: the focused row
 '       cellIndex   the focused programme cell in the row (0 = the first, the one on now), cellCount its cells
@@ -65,12 +66,13 @@
 '   up / down          the row (or, in the column, the group) above / below; loops (M7n L3)
 '   left               grid: the previous cell, from the first cell the channel cell; channel cell: the groups
 '                      (on the selected group); groups / Search: back to the grid
-'   right              grid: the next cell; channel cell: the grid; groups: select the group; Search: open Search
+'   right              grid: the next cell; channel cell: the grid; groups: select the group; Search: open Search;
+'                      Settings: open Settings (step 15)
 '   rewind / channelup     page up: 6 rows (MMTVL's visibleRows), 7 in the column (visibleGroupRows)
 '   fastforward / channeldown  page down. A page stops at the end row and wraps only from it.
 '   OK                 grid: play; channel cell: the channel menu; groups: select the group; Search: open Search;
-'                      Choose Teams: the team picker; an upcoming game: play its channel
-'   options            the channel menu (grid or channel cell); Settings in the column (Search or a group) and
+'                      Settings: open Settings (step 15); Choose Teams: the team picker; an upcoming game: play its channel
+'   options            the channel menu (grid or channel cell); Settings anywhere in the column and
 '                      when the group has no rows (step 13: MMTVL reaches Settings from Home, which a Roku app
 '                      doesn't have); nothing on Choose Teams
 '   back               the column or Search: back to the grid; else return to the channel, and with nothing to
@@ -151,7 +153,7 @@ namespace GuideKeys
             result.action = GuideKeys.action("togglePause")
             return result
         end if
-        if current.focus = "groups" or current.focus = "search"
+        if GuideKeys.isColumnFocus(current.focus)
             GuideKeys.handleColumn(key, result)
             return result
         end if
@@ -246,6 +248,9 @@ namespace GuideKeys
             if current.focus = "search"
                 ' Focus stays, so closing Search comes back to the Search row.
                 result.action = GuideKeys.action("openSearch")
+            else if current.focus = "settings"
+                ' Step 15: the same, for Settings: Back from Settings comes back to this row.
+                result.action = GuideKeys.action("openSettings")
             else if current.groupFocus >= 0 and current.groupFocus < current.groups.Count()
                 current.groupIndex = current.groupFocus
                 current.rows = GuideKeys.rowsOf(current.lineup, current.groups[current.groupIndex])
@@ -367,7 +372,7 @@ namespace GuideKeys
             own = pending.kind = reported.kind and pending.row = reported.row
         end if
         if GuideKeys.isText(focus)
-            if focus = "groups" or focus = "search" then return result
+            if GuideKeys.isColumnFocus(focus) then return result
         end if
         if rebuilding
             result.apply = own
@@ -415,7 +420,12 @@ namespace GuideKeys
         return { type: "returnToChannel", reload: not current.isPlaying }
     end function
 
+    ' Step 15: with no groups (no channels) the column is the Settings row alone; Search needs channels.
     sub focusGroups(current as object)
+        if current.groups.Count() = 0
+            current.focus = "settings"
+            return
+        end if
         current.focus = "groups"
         current.groupFocus = current.groupIndex
     end sub
@@ -441,14 +451,16 @@ namespace GuideKeys
         if (stepSize > 0 and current.row < before) or (stepSize < 0 and current.row > before) then result.wrapped = true
     end sub
 
-    ' The group column loops like the rows: position 0 is Search, 1… the groups. Without groups Search stays.
+    ' The group column loops like the rows: position 0 is Search, 1… the groups, then (step 15) Settings.
     sub moveInColumn(result as object, stepSize as integer)
         current = result.state
         groupCount = current.groups.Count()
-        if groupCount = 0 then return
-        position = 0
-        if current.focus = "groups" then position = current.groupFocus + 1
-        last = groupCount
+        if groupCount = 0
+            current.focus = "settings"
+            return
+        end if
+        position = GuideKeys.columnPosition(current)
+        last = groupCount + 1
         target = position + stepSize
         newPosition = target
         if stepSize = 1 or stepSize = -1
@@ -461,11 +473,26 @@ namespace GuideKeys
         if (stepSize > 0 and newPosition < position) or (stepSize < 0 and newPosition > position) then result.wrapped = true
         if newPosition = 0
             current.focus = "search"
+        else if newPosition = last
+            current.focus = "settings"
         else
             current.focus = "groups"
             current.groupFocus = newPosition - 1
         end if
     end sub
+
+    ' Step 15: the column's rows are Search, the groups, then Settings.
+    function isColumnFocus(focus as dynamic) as boolean
+        if not GuideKeys.isText(focus) then return false
+        return focus = "groups" or focus = "search" or focus = "settings"
+    end function
+
+    ' The focused row's place in the column (0 Search, 1… the groups, then Settings); 0 outside the column.
+    function columnPosition(state as object) as integer
+        if state.focus = "groups" then return state.groupFocus + 1
+        if state.focus = "settings" then return state.groups.Count() + 1
+        return 0
+    end function
 
     function rowAtFocus(current as object) as dynamic
         if current.row < 0 or current.row >= current.rows.Count() then return invalid
@@ -515,7 +542,7 @@ namespace GuideKeys
             value = state[field]
             if value <> invalid and GuideKeys.sameKind(value, result[field]) then result[field] = value
         end for
-        if result.focus <> "grid" and result.focus <> "channel" and result.focus <> "groups" and result.focus <> "search" then result.focus = "grid"
+        if result.focus <> "grid" and result.focus <> "channel" and not GuideKeys.isColumnFocus(result.focus) then result.focus = "grid"
         if result.cellCount < 1 then result.cellCount = 1
         if result.cellIndex >= result.cellCount then result.cellIndex = result.cellCount - 1
         if result.cellIndex < 0 then result.cellIndex = 0

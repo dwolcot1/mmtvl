@@ -201,17 +201,17 @@ namespace GuideKeysTests
     sub test_rewindAndFastForwardPageTheGroups(t as object)
         state = GuideKeysTests.toGroups(GuideKeysTests.model("Live", "id:c1"))
         t.assertEqual(state.focus, "groups")
-        last = state.groups.Count() - 1
+        ' Step 15: the column ends on the Settings row, after the last group.
         state = GuideKeysTests.press(state, "fastforward")
-        t.assertEqual([state.focus, state.groupFocus], ["groups", last])
+        t.assertEqual(state.focus, "settings")
         state = GuideKeysTests.press(state, "fastforward")
         t.assertEqual(state.focus, "search")
         state = GuideKeysTests.press(state, "fastforward")
-        t.assertEqual([state.focus, state.groupFocus], ["groups", last])
+        t.assertEqual(state.focus, "settings")
         state = GuideKeysTests.press(state, "rewind")
         t.assertEqual(state.focus, "search")
         state = GuideKeysTests.press(state, "rewind")
-        t.assertEqual([state.focus, state.groupFocus], ["groups", last])
+        t.assertEqual(state.focus, "settings")
         t.assertEqual(GuideKeys.pageGroupRows, 7)
     end sub
 
@@ -292,12 +292,18 @@ namespace GuideKeysTests
         t.assertEqual(state.groupFocus, 2)
         state = GuideKeysTests.press(GuideKeysTests.press(state, "down"), "down")
         t.assertEqual([state.focus, state.groupFocus], ["groups", 4])
+        ' Step 15: the Settings row follows the last group, then the column loops to Search.
         result = GuideKeys.handle("down", true, state)
+        t.assertEqual(result.state.focus, "settings")
+        t.assertFalse(result.wrapped)
+        result = GuideKeys.handle("down", true, result.state)
         t.assertEqual(result.state.focus, "search")
         t.assertTrue(result.wrapped)
         result = GuideKeys.handle("up", true, result.state)
-        t.assertEqual([result.state.focus, result.state.groupFocus], ["groups", 4])
+        t.assertEqual(result.state.focus, "settings")
         t.assertTrue(result.wrapped)
+        result = GuideKeys.handle("up", true, result.state)
+        t.assertEqual([result.state.focus, result.state.groupFocus], ["groups", 4])
         result = GuideKeys.handle("up", true, result.state)
         t.assertEqual(result.state.groupFocus, 3)
         t.assertFalse(result.wrapped, "an ordinary step isn't a loop")
@@ -312,10 +318,10 @@ namespace GuideKeysTests
             state = GuideKeysTests.press(state, "up")
         end for
         t.assertEqual(state.focus, "search")
-        ' Up loops to the last group, Down comes back.
+        ' Up loops to the Settings row (step 15), Down comes back.
         result = GuideKeys.handle("up", true, state)
         t.assertEqual(result.action, { type: "none" })
-        t.assertEqual([result.state.focus, result.state.groupFocus], ["groups", state.groups.Count() - 1])
+        t.assertEqual(result.state.focus, "settings")
         state = GuideKeysTests.press(result.state, "down")
         result = GuideKeys.handle("OK", true, state)
         t.assertEqual(result.action, { type: "openSearch" })
@@ -365,6 +371,52 @@ namespace GuideKeysTests
         state = GuideKeysTests.press(GuideKeysTests.press(GuideKeysTests.press(state, "up"), "up"), "up")
         t.assertEqual(state.focus, "search")
         t.assertEqual(GuideKeys.handle("options", true, state).action, { type: "openSettings" })
+    end sub
+
+    ' Step 15: the Settings row, last in the column: OK, Right and * open Settings; focus stays on the row, so Back
+    ' from Settings comes back to it; Back here closes the column; the group and row don't change.
+    sub test_theSettingsRowOpensSettings(t as object)
+        state = GuideKeysTests.toGroups(GuideKeysTests.model("NBA", "id:c8"))
+        state = GuideKeysTests.press(GuideKeysTests.press(state, "fastforward"), "fastforward")
+        if state.focus <> "settings" then state = GuideKeysTests.press(state, "rewind")
+        t.assertEqual(state.focus, "settings")
+        t.assertEqual(GuideKeys.columnPosition(state), state.groups.Count() + 1)
+        for each key in ["OK", "right", "options"]
+            result = GuideKeys.handle(key, true, state)
+            t.assertEqual(result.action, { type: "openSettings" }, key)
+            t.assertEqual(result.state.focus, "settings", key)
+            t.assertEqual(GuideKeysTests.selectedGroup(result.state), "NBA", key)
+            t.assertEqual(GuideKeysTests.focusedID(result.state), "id:c8", key)
+        end for
+        result = GuideKeys.handle("back", true, state)
+        t.assertEqual(result.action, { type: "none" })
+        t.assertEqual(result.state.focus, "grid")
+        t.assertEqual(GuideKeys.handle("left", true, state).state.focus, "grid")
+        t.assertEqual(GuideKeys.copyState(state).focus, "settings", "copyState keeps it")
+        t.assertTrue(GuideKeys.isColumnFocus("settings"))
+        t.assertFalse(GuideKeys.isColumnFocus("channel"))
+        t.assertFalse(GuideKeys.isColumnFocus(invalid))
+    end sub
+
+    ' Step 15: the column's Settings row is a group-column focus for TimeGrid's reports (the column keeps its focus).
+    sub test_aGridReportWhileOnTheSettingsRowKeepsTheColumn(t as object)
+        decision = GuideKeys.gridReport("settings", invalid, { row: 3, kind: "grid" })
+        t.assertFalse(decision.apply)
+        t.assertFalse(decision.isInput)
+    end sub
+
+    ' Step 15: with no channels the column is the Settings row alone (Search needs channels): Left twice reaches it,
+    ' Up and Down stay on it, OK opens Settings.
+    sub test_withNoChannelsTheColumnIsSettingsAlone(t as object)
+        state = GuideKeys.open(Lineup.build([], {}), "", "")
+        state = GuideKeysTests.toGroups(state)
+        t.assertEqual(state.focus, "settings")
+        t.assertEqual(GuideKeys.columnPosition(state), 1)
+        for each key in ["up", "down", "rewind", "fastforward"]
+            state = GuideKeysTests.press(state, key)
+            t.assertEqual(state.focus, "settings", key)
+        end for
+        t.assertEqual(GuideKeys.handle("OK", true, state).action, { type: "openSettings" })
     end sub
 
     ' Step 13: with no channels (a first launch with no playlist), * opens Settings from the guide itself.
