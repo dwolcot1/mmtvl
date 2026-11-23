@@ -22,7 +22,7 @@ namespace MyTeamsLineupTests
     sub test_myTeamsIsAlwaysAfterFavoritesAndUpcomingRowsStayOutOfFavorites(t as object)
         channels = LineupTests.channels()
         none = Lineup.build(channels, {})
-        t.assertEqual(none.groups, ["My Teams", "All Channels", "Live Channels", "NBA Games"])
+        t.assertEqual(none.groups, ["Favorites", "My Teams", "All Channels", "Live Channels", "NBA Games"])
         t.assertEqual(Lineup.channelsIn(none, "My Teams"), [])
         t.assertEqual(none.upcomingTeamGames, [])
         upcoming = [MyTeamsLineupTests.makeUpcoming(LineupTests.nfl(), 3, "A at B")]
@@ -224,7 +224,7 @@ namespace MyTeamsLineupTests
         t.assertEqual(noGuide.upcoming, [])
         ' Unpicked: nothing; My Teams stays in the lineup.
         unpicked = TeamsWork.match(channels, data, [], now, index)
-        t.assertEqual(Lineup.build(LineupTests.channels(), {}, unpicked.liveIDs, unpicked.upcoming).groups[0], "My Teams")
+        t.assertEqual(Lineup.build(LineupTests.channels(), {}, unpicked.liveIDs, unpicked.upcoming).groups[1], "My Teams")
     end sub
 
     ' Game entries need no guide (TeamMatcherTests.pickingATeamBuildsTheTeamsGroup's lineup part).

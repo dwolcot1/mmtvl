@@ -12,7 +12,8 @@
 '     liveTeamGames  channel ids of the picked teams' live games, in TeamMatcher's order (TeamsTask, step 18).
 '     upcomingGames  TeamsTask's upcoming games, soonest first: [{ channelID, programme, label }] (step 18).
 '   lineup: plain data (safe in a node field):
-'     groups                  "Favorites" when its list isn't empty, "My Teams" whenever a channel is visible,
+'     groups                  "Favorites" and "My Teams" whenever a channel is visible (step 15: Favorites even when
+'                             empty, where the guide shows its empty-state row; MMTVL lists it only when it isn't),
 '                             then guideGroups(visibleChannels): "Antenna", "All Channels", the playlist's groups.
 '     visibleChannels         playlist order, without hidden channels and hidden groups.
 '     favorites               prefs.favorites order, visible only: the saved favorites (never the team games).
@@ -27,6 +28,10 @@
 namespace Lineup
 
     const favoritesGroup = "Favorites"
+    ' Step 15: an empty Favorites' one row in the guide (GuideKeys.rowsOf: { kind: "favoritesEmpty" }).
+    const favoritesEmptyChannel = "No favorites yet"
+    const favoritesEmptyCell = "Press * on a channel, then choose Add to Favorites"
+    const favoritesEmptyInfo = "Press * on any channel and choose Add to Favorites. Your teams' live games show here too."
     const teamsGroup = "My Teams"
     ' A remembered lastGroup of "Teams" (MMTVL before M7l 8c) reads as "My Teams".
     const legacyTeamsGroup = "Teams"
@@ -81,7 +86,7 @@ namespace Lineup
         end if
 
         names = []
-        if favoritesList.Count() > 0 then names.Push(Lineup.favoritesGroup)
+        if visible.Count() > 0 or favoritesList.Count() > 0 then names.Push(Lineup.favoritesGroup)
         if visible.Count() > 0 then names.Push(Lineup.teamsGroup)
         names.Append(Lineup.guideGroups(visible))
         return {

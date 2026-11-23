@@ -7,7 +7,7 @@ namespace LineupTests
 
     sub test_noPreferencesKeepsTheGroups(t as object)
         built = Lineup.build(LineupTests.channels(), {})
-        t.assertEqual(built.groups, ["My Teams", "All Channels", "Live Channels", "NBA Games"])
+        t.assertEqual(built.groups, ["Favorites", "My Teams", "All Channels", "Live Channels", "NBA Games"])
         t.assertEqual(built.favorites, [])
         t.assertEqual(built.visibleChannels.Count(), 5)
         t.assertEqual(Lineup.channelsIn(built, "All Channels").Count(), 5)
@@ -34,7 +34,7 @@ namespace LineupTests
     sub test_hidingAGroup(t as object)
         built = Lineup.build(LineupTests.channels(), { hiddenGroups: ["NBA Games"] })
         ' One visible group left, so no All Channels.
-        t.assertEqual(built.groups, ["My Teams", "Live Channels"])
+        t.assertEqual(built.groups, ["Favorites", "My Teams", "Live Channels"])
         t.assertEqual(LineupTests.names(built.visibleChannels), ["NFL Network", "NBA TV", "Red Zone"])
         t.assertEqual(Lineup.channelsIn(built, "NBA Games"), [])
     end sub
@@ -43,7 +43,9 @@ namespace LineupTests
         built = Lineup.build(LineupTests.channels(), { favorites: ["id:gone", LineupTests.redZone()] })
         t.assertEqual(LineupTests.names(built.favorites), ["Red Zone"])
         none = Lineup.build(LineupTests.channels(), { favorites: ["id:gone"] })
-        t.assertEqual(none.groups[0], "My Teams")
+        ' Step 15: Favorites is listed even when empty (the guide shows its empty-state row).
+        t.assertEqual([none.groups[0], none.groups[1]], ["Favorites", "My Teams"])
+        t.assertEqual(Lineup.channelsIn(none, "Favorites"), [])
     end sub
 
     ' MARK: M7l 8b: live team games top Favorites
@@ -78,7 +80,7 @@ namespace LineupTests
         t.assertEqual(built.favorites, [])
         ' Hidden team channels don't count.
         hidden = Lineup.build(LineupTests.channels(), { hiddenChannels: [LineupTests.redZone()] }, [LineupTests.redZone()])
-        t.assertFalse(LineupTests.containsText(hidden.groups, "Favorites"))
+        t.assertEqual(Lineup.channelsIn(hidden, "Favorites"), [])
     end sub
 
     sub test_withoutTeamGamesFavoritesIsAsBefore(t as object)
@@ -107,7 +109,7 @@ namespace LineupTests
         all = LineupTests.channels()
         all.Append(LineupTests.antennaChannels(6))
         built = Lineup.build(all, {})
-        t.assertEqual(built.groups, ["My Teams", "Antenna", "All Channels", "Live Channels", "NBA Games"])
+        t.assertEqual(built.groups, ["Favorites", "My Teams", "Antenna", "All Channels", "Live Channels", "NBA Games"])
         antenna = Lineup.channelsIn(built, "Antenna")
         t.assertEqual(LineupTests.names(antenna), ["WSB-HD", "WAGA-HD", "WXIA-HD"])
         numbers = []
@@ -137,7 +139,7 @@ namespace LineupTests
 
     sub test_antennaOnlyHasMyTeamsAndAntenna(t as object)
         built = Lineup.build(LineupTests.antennaChannels(1), {})
-        t.assertEqual(built.groups, ["My Teams", "Antenna"])
+        t.assertEqual(built.groups, ["Favorites", "My Teams", "Antenna"])
         t.assertEqual(Lineup.channelsIn(built, "Antenna").Count(), 3)
         t.assertEqual(Lineup.channelsIn(built, "All Channels"), [])
     end sub
@@ -164,11 +166,11 @@ namespace LineupTests
         all.Push(localNews)
         all.Append(LineupTests.antennaChannels(7))
         built = Lineup.build(all, {})
-        t.assertEqual(built.groups, ["My Teams", "Antenna", "All Channels", "Live Channels", "NBA Games"])
+        t.assertEqual(built.groups, ["Favorites", "My Teams", "Antenna", "All Channels", "Live Channels", "NBA Games"])
         t.assertEqual(LineupTests.names(Lineup.channelsIn(built, "Antenna")), ["WSB-HD", "WAGA-HD", "WXIA-HD", "Local News"])
         ' A playlist with only an "Antenna" group: one group, no All Channels.
         alone = Lineup.build([localNews], {})
-        t.assertEqual(alone.groups, ["My Teams", "Antenna"])
+        t.assertEqual(alone.groups, ["Favorites", "My Teams", "Antenna"])
         t.assertEqual(LineupTests.names(Lineup.channelsIn(alone, "Antenna")), ["Local News"])
     end sub
 
@@ -201,7 +203,7 @@ namespace LineupTests
     sub test_idsAndGroupsAreCaseSensitive(t as object)
         built = Lineup.build(LineupTests.channels(), { favorites: ["ID:NBATV.US"], hiddenGroups: ["nba games"] })
         t.assertEqual(built.favorites, [])
-        t.assertEqual(built.groups, ["My Teams", "All Channels", "Live Channels", "NBA Games"])
+        t.assertEqual(built.groups, ["Favorites", "My Teams", "All Channels", "Live Channels", "NBA Games"])
     end sub
 
     sub test_aRememberedTeamsGroupReadsAsMyTeams(t as object)

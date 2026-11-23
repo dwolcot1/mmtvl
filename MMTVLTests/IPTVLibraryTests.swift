@@ -689,7 +689,7 @@ struct IPTVLibraryTests {
         // L2: numbered after the playlist's.
         #expect(library.channels.map(\.number) == Array(1...8))
         #expect(library.channels.suffix(3).allSatisfy { $0.group == "Antenna" && $0.isDirectStream })
-        #expect(library.lineup.groups == ["My Teams", "Antenna", "All Channels", "Live Channels", "NBA Games"])
+        #expect(library.lineup.groups == ["Favorites", "My Teams", "Antenna", "All Channels", "Live Channels", "NBA Games"])
         #expect(library.antenna.status == .loaded(fixture.clock.now))
         #expect(fixture.tuner?.searchCount == 1)
     }
@@ -720,7 +720,7 @@ struct IPTVLibraryTests {
         #expect(library.playlistChannels.isEmpty)
         #expect(library.channels.map(\.id) == Self.antennaIDs)
         #expect(library.channels.map(\.number) == [1, 2, 3])
-        #expect(library.lineup.groups == ["My Teams", "Antenna"])
+        #expect(library.lineup.groups == ["Favorites", "My Teams", "Antenna"])
         #expect(library.hasLiveSource)
     }
 

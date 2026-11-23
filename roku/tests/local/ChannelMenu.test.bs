@@ -159,7 +159,7 @@ namespace ChannelMenuTests
         t.assertEqual(built.movableFavorites[0].id, "id:c4")
         prefs = ChannelMenu.prefsAfter(prefs, { type: "hideChannel", channelID: "id:c4" }, [])
         built = Lineup.build(channels, prefs, [])
-        t.assertEqual(built.groups, ["My Teams", "All Channels", "Live", "NBA", "NHL"])
+        t.assertEqual(built.groups, ["Favorites", "My Teams", "All Channels", "Live", "NBA", "NHL"])
         t.assertFalse(Lineup.isVisible(built, "id:c4"))
     end sub
 

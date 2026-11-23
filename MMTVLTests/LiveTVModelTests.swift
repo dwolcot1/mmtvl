@@ -159,6 +159,27 @@ struct LiveTVModelTests {
         #expect(model.currentChannel?.name == "NBA TV")
     }
 
+    /// Favorites is always listed: a remembered but empty Favorites zaps through the channel's own group, never
+    /// onto the guide's placeholder row.
+    @Test func zapWithAnEmptyRememberedFavoritesUsesTheChannelsOwnGroup() async throws {
+        let (model, player, fixture) = try makeModel(state: IPTVState(lastChannelID: "id:nflnetwork.us",
+                                                                      lastGroup: "Favorites"))
+        defer { fixture.cleanUp() }
+        await open(model)
+        #expect(fixture.library.lineup.groups.first == "Favorites")
+        #expect(model.currentChannel?.name == "NFL Network")
+        _ = model.handle(.down)
+        #expect(model.currentChannel?.name == "NBA TV")
+        _ = model.handle(.up)
+        _ = model.handle(.up)
+        #expect(model.currentChannel?.name == "Red Zone")
+        _ = model.handle(.channelDown)
+        _ = model.handle(.channelUp)
+        #expect(model.currentChannel?.name == "Red Zone")
+        #expect(player.played.count == 6)
+        #expect(player.played.allSatisfy { [1, 2, 3].map(IPTVFixtures.streamURL).contains($0) })
+    }
+
     @Test func seeks() async throws {
         let (model, player, fixture) = try makeModel(state: Self.watching)
         defer { fixture.cleanUp() }
@@ -434,7 +455,7 @@ struct LiveTVModelTests {
         openGuide(model)
         _ = model.handle(.left)                 // the now-cell → the channel cell
         _ = model.handle(.left)                 // → groups
-        #expect(model.guide?.focus == .groups(1))
+        #expect(model.guide?.focus == .groups(2))
         #expect(model.handle(.back) == .handled)
         #expect(model.mode == .guide)
         #expect(model.guide?.focus == .grid)
@@ -457,8 +478,8 @@ struct LiveTVModelTests {
         defer { fixture.cleanUp() }
         openGuide(model)
         _ = model.handle(.left)                 // the now-cell → the channel cell
-        _ = model.handle(.left)                 // → groups (All Channels; My Teams is above it, M7l 8c)
-        #expect(model.guide?.focus == .groups(1))
+        _ = model.handle(.left)                 // → groups (All Channels; Favorites and My Teams are above it)
+        #expect(model.guide?.focus == .groups(2))
         _ = model.handle(.down)
         _ = model.handle(.down)
         _ = model.handle(.select)
@@ -466,6 +487,44 @@ struct LiveTVModelTests {
         #expect(fixture.library.state.lastGroup == "NBA Games")
         await model.pendingTask?.value
         #expect(model.guide?.channels.map(\.name) == ["Lakers @ Celtics", "Knicks @ Heat"])
+    }
+
+    /// Favorites is always listed; empty, its one row says how to add one, and Select, Menu and Play/Pause there
+    /// never tune, open the channel menu or the team picker. Up/Down stay on it; Left opens the groups.
+    @Test func theEmptyFavoritesRowDoesNothing() async throws {
+        let (model, player, fixture) = try await makeGuideModel()
+        defer { fixture.cleanUp() }
+        openGuide(model)
+        _ = model.handle(.left)                 // the now-cell → the channel cell
+        _ = model.handle(.left)                 // → groups, on All Channels
+        _ = model.handle(.up)
+        _ = model.handle(.up)
+        #expect(model.guide?.focus == .groups(0))
+        _ = model.handle(.select)
+        await model.pendingTask?.value
+        #expect(model.guide?.selectedGroup == "Favorites")
+        #expect(fixture.library.state.lastGroup == "Favorites")
+        #expect(model.guide?.rows == [.favoritesEmpty])
+        for command: RemoteCommand in [.select, .menu, .up, .down, .channelUp, .channelDown, .right] {
+            #expect(model.handle(command) == .handled)
+            #expect(model.menu == nil)
+            #expect(model.teamPicker == nil)
+            #expect(model.teamPickerMenu == nil)
+            #expect(model.mode == .guide)
+            #expect(model.guide?.focusedRow == .favoritesEmpty)
+        }
+        // Play/Pause pauses the preview, as on every guide row; it never tunes.
+        _ = model.handle(.playPause)
+        #expect(player.pauses == 1)
+        #expect(player.played == [IPTVFixtures.streamURL(2)])
+        _ = model.handle(.left)
+        #expect(model.guide?.focus == .groups(0))
+        // Back closes the list, then returns to the channel playing.
+        _ = model.handle(.back)
+        #expect(model.guide?.focus == .grid)
+        _ = model.handle(.back)
+        #expect(model.mode == .player)
+        #expect(player.played == [IPTVFixtures.streamURL(2)])
     }
 
     @Test func leaveClearsTheGuide() async throws {
@@ -782,11 +841,12 @@ struct LiveTVModelTests {
 
     // MARK: Choose Teams (M7l L12, 8c)
 
-    /// From the channel cell: Left to the groups, up to My Teams, open it; Select on its first row, Choose Teams.
+    /// From the channel cell: Left to the groups, up to My Teams (below Favorites), open it; Select on its first
+    /// row, Choose Teams.
     private func openChooseTeams(_ model: LiveTVModel) {
         _ = model.handle(.left)   // → groups
-        for _ in 0..<20 where model.guide?.focus != .groups(0) { _ = model.handle(.up) }
-        #expect(model.guide?.groups.first == "My Teams")
+        for _ in 0..<20 where model.guide?.focus != .groups(1) { _ = model.handle(.up) }
+        #expect(model.guide?.groups.prefix(2) == ["Favorites", "My Teams"])
         _ = model.handle(.select)   // My Teams
         #expect(model.guide?.focusedRow == .chooseTeams)
         #expect(model.handle(.select) == .handled)
@@ -1009,7 +1069,7 @@ struct LiveTVModelTests {
         let model = LiveTVModel(player: player, makePlayer: { FakePlayer() }, library: fixture.library)
         await open(model)
         #expect(model.mode == .guide)
-        #expect(model.guide?.groups == ["My Teams", "Antenna"])
+        #expect(model.guide?.groups == ["Favorites", "My Teams", "Antenna"])
         #expect(model.guide?.selectedGroup == "Antenna")
         #expect(model.guide?.focusedChannel?.name == "WSB-HD")
         #expect(fixture.tuner?.searchCount == 1)

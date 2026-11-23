@@ -38,7 +38,7 @@ struct GuideModelTests {
 
     @Test func initFocusesTheChannelInTheRememberedGroup() {
         let model = model(group: "Live", focused: "id:c3")
-        #expect(model.groups == ["My Teams", "All Channels", "Live", "NBA", "NHL"])
+        #expect(model.groups == ["Favorites", "My Teams", "All Channels", "Live", "NBA", "NHL"])
         #expect(model.selectedGroup == "Live")
         #expect(model.row == 2)
         #expect(model.focusedChannel?.id == "id:c3")
@@ -179,7 +179,7 @@ struct GuideModelTests {
 
         _ = model.handle(.left, now: now)   // the now-cell → the channel cell
         _ = model.handle(.left, now: now)
-        #expect(model.focus == .groups(2))
+        #expect(model.focus == .groups(3))
     }
 
     @Test func groups() {
@@ -187,9 +187,9 @@ struct GuideModelTests {
         _ = model.handle(.down, now: now)
         _ = model.handle(.left, now: now)   // the now-cell → the channel cell
         _ = model.handle(.left, now: now)
-        #expect(model.focus == .groups(2))
-        _ = model.handle(.down, now: now)
         #expect(model.focus == .groups(3))
+        _ = model.handle(.down, now: now)
+        #expect(model.focus == .groups(4))
         #expect(model.handle(.select, now: now) == .groupChanged("NBA"))
         #expect(model.focus == .grid)
         #expect(model.row == 0)
@@ -204,13 +204,15 @@ struct GuideModelTests {
         #expect(model.selectedGroup == "NBA")
 
         // Right applies too; Up from the first group is the Search row (M7f L12), Down from it the first group
-        // (M7l 8c: My Teams), then All Channels.
+        // (Favorites, listed even when empty), then My Teams (M7l 8c), then All Channels.
         _ = model.handle(.left, now: now)   // the now-cell → the channel cell
         _ = model.handle(.left, now: now)
-        for _ in 0..<4 { _ = model.handle(.up, now: now) }
+        for _ in 0..<5 { _ = model.handle(.up, now: now) }
         #expect(model.focus == .search)
         _ = model.handle(.down, now: now)
         #expect(model.focus == .groups(0))
+        _ = model.handle(.down, now: now)
+        #expect(model.focus == .groups(1))
         _ = model.handle(.down, now: now)
         #expect(model.handle(.right, now: now) == .groupChanged("All Channels"))
         #expect(model.channels.count == 10)
@@ -271,7 +273,7 @@ struct GuideModelTests {
         #expect(model.handle(.left, now: now) == .none)
         #expect(model.focus == .channel)
         _ = model.handle(.left, now: now)
-        #expect(model.focus == .groups(2))
+        #expect(model.focus == .groups(3))
     }
 
     @Test func rightFromTheChannelReturnsToTheSameCell() {
@@ -399,19 +401,19 @@ struct GuideModelTests {
         var model = model(group: "Live", focused: "id:c1")
         _ = model.handle(.left, now: now)
         _ = model.handle(.left, now: now)
-        #expect(model.focus == .groups(2))
+        #expect(model.focus == .groups(3))
         _ = model.handle(.down, now: now)
         _ = model.handle(.down, now: now)
-        #expect(model.focus == .groups(4))   // NHL, the last
+        #expect(model.focus == .groups(5))   // NHL, the last
         let wraps = model.groupWrapCount
         _ = model.handle(.down, now: now)
         #expect(model.focus == .search)
         #expect(model.groupWrapCount == wraps + 1)
         _ = model.handle(.up, now: now)
-        #expect(model.focus == .groups(4))
+        #expect(model.focus == .groups(5))
         #expect(model.groupWrapCount == wraps + 2)
         _ = model.handle(.up, now: now)   // an ordinary step isn't a loop
-        #expect(model.focus == .groups(3))
+        #expect(model.focus == .groups(4))
         #expect(model.groupWrapCount == wraps + 2)
         // Nothing is selected by moving.
         #expect(model.selectedGroup == "Live")
@@ -421,13 +423,13 @@ struct GuideModelTests {
     @Test func theGroupPanelKeepsTheFocusedRowInView() {
         let channels = (1...12).map { channel($0, group: "Group \($0)") }
         var model = GuideModel(allChannels: channels, group: "Group 1", focusedChannelID: "id:c1", now: now)
-        #expect(model.groups.count == 14)   // My Teams, All Channels, Group 1…12; with Search, 15 rows
+        #expect(model.groups.count == 15)   // Favorites, My Teams, All Channels, Group 1…12; with Search, 16 rows
         #expect(model.firstVisibleGroupRow == 0)
         _ = model.handle(.left, now: now)
         _ = model.handle(.left, now: now)
-        #expect(model.focus == .groups(2))   // row 3
+        #expect(model.focus == .groups(3))   // row 4
         #expect(model.firstVisibleGroupRow == 0)
-        for _ in 0..<4 { _ = model.handle(.down, now: now) }   // row 7, past the window's 7 rows
+        for _ in 0..<3 { _ = model.handle(.down, now: now) }   // row 7, past the window's 7 rows
         #expect(model.groupPanelRow == 7)
         #expect(model.firstVisibleGroupRow == 1)
         _ = model.handle(.up, now: now)   // still in view: the window stays
@@ -437,8 +439,8 @@ struct GuideModelTests {
         #expect(model.focus == .search)
         #expect(model.firstVisibleGroupRow == 0)
         _ = model.handle(.up, now: now)
-        #expect(model.focus == .groups(13))
-        #expect(model.firstVisibleGroupRow == 15 - GuideModel.visibleGroupRows)
+        #expect(model.focus == .groups(14))
+        #expect(model.firstVisibleGroupRow == 16 - GuideModel.visibleGroupRows)
         _ = model.handle(.down, now: now)
         #expect(model.focus == .search)
         #expect(model.firstVisibleGroupRow == 0)
@@ -447,7 +449,7 @@ struct GuideModelTests {
         #expect(model.groupPanelRow == nil)
         _ = model.handle(.left, now: now)
         _ = model.handle(.left, now: now)
-        #expect(model.focus == .groups(2))
+        #expect(model.focus == .groups(3))
         #expect(model.firstVisibleGroupRow == 0)
     }
 
@@ -463,10 +465,11 @@ struct GuideModelTests {
         var model = model(group: "NBA", focused: "id:c8")
         _ = model.handle(.left, now: now)   // the channel cell
         _ = model.handle(.left, now: now)   // groups, on NBA
-        #expect(model.focus == .groups(3))
+        #expect(model.focus == .groups(4))
         _ = model.handle(.up, now: now)
         _ = model.handle(.up, now: now)
         _ = model.handle(.up, now: now)   // My Teams (M7l 8c)
+        _ = model.handle(.up, now: now)   // Favorites, listed with no favorites
         _ = model.handle(.up, now: now)
         #expect(model.focus == .search)
         // Up loops to the last group (M7n), Down comes back.
@@ -490,9 +493,9 @@ struct GuideModelTests {
         var model = model(group: "NBA", focused: "id:c8")
         _ = model.handle(.left, now: now)   // the channel cell
         _ = model.handle(.left, now: now)   // groups, on NBA
-        for _ in 0..<3 { _ = model.handle(.up, now: now) }
+        for _ in 0..<4 { _ = model.handle(.up, now: now) }
         #expect(model.focus == .groups(0))
-        #expect(model.groups.first == "My Teams")
+        #expect(model.groups.first == "Favorites")
         #expect(model.handle(.up, now: now) == .none)
         #expect(model.focus == .search)
         #expect(model.handle(.down, now: now) == .none)
@@ -511,8 +514,8 @@ struct GuideModelTests {
 
     @Test func myTeamsShowsWithNoTeamsPickedAndIsNotTheDefault() {
         let lineup = ChannelLineup(channels: channels)
-        #expect(lineup.groups == ["My Teams", "All Channels", "Live", "NBA", "NHL"])
-        // No remembered group: All Channels, as before My Teams.
+        #expect(lineup.groups == ["Favorites", "My Teams", "All Channels", "Live", "NBA", "NHL"])
+        // No remembered group: All Channels, as before My Teams (and an empty Favorites is skipped).
         let model = GuideModel(lineup: lineup, group: nil, focusedChannelID: nil, now: now)
         #expect(model.selectedGroup == "All Channels")
         // With favorites, My Teams comes right after them.
@@ -638,22 +641,26 @@ struct GuideModelTests {
         var model = model(group: "Live", focused: "id:c1")
         _ = model.handle(.left, now: now)
         _ = model.handle(.left, now: now)
-        #expect(model.focus == .groups(2))
-        #expect(model.groups[2] == "Live")
-        // A game starts with no saved favorites: Favorites appears at the top.
+        #expect(model.focus == .groups(3))
+        #expect(model.groups[3] == "Live")
+        // A game starts with no saved favorites: Favorites is already listed, so nothing moves.
         model.setLineup(ChannelLineup(channels: channels, teamChannelIDs: ["id:c9"]))
         #expect(model.groups.prefix(2) == ["Favorites", "My Teams"])
         #expect(model.focus == .groups(3))
-        #expect(model.groups[3] == "Live")
+        // A tuner appears: Antenna comes in above Live, and Live stays focused.
+        model.setLineup(ChannelLineup(channels: channels + AntennaFixtures.liveChannels(firstNumber: 11)))
+        #expect(model.groups[2] == "Antenna")
+        #expect(model.focus == .groups(4))
+        #expect(model.groups[4] == "Live")
         // And goes again.
         model.setLineup(ChannelLineup(channels: channels))
-        #expect(model.focus == .groups(2))
+        #expect(model.focus == .groups(3))
         // A focused group that goes away: the same position, clamped.
         _ = model.handle(.down, now: now)
         _ = model.handle(.down, now: now)
-        #expect(model.focus == .groups(4))
+        #expect(model.focus == .groups(5))
         model.setLineup(ChannelLineup(channels: channels, preferences: ChannelPreferences(hiddenGroups: ["NHL"])))
-        #expect(model.focus == .groups(3))
+        #expect(model.focus == .groups(4))
     }
 
     @Test func aRememberedTeamsGroupReadsAsMyTeams() {
@@ -697,7 +704,7 @@ struct GuideModelTests {
 
     @Test func defaultGroupSkipsAntenna() {
         let lineup = ChannelLineup(channels: channels + AntennaFixtures.liveChannels(firstNumber: 11))
-        #expect(lineup.groups == ["My Teams", "Antenna", "All Channels", "Live", "NBA", "NHL"])
+        #expect(lineup.groups == ["Favorites", "My Teams", "Antenna", "All Channels", "Live", "NBA", "NHL"])
         let model = GuideModel(lineup: lineup, group: nil, focusedChannelID: nil, now: now)
         #expect(model.selectedGroup == "All Channels")
         let favorites = ChannelLineup(channels: channels + AntennaFixtures.liveChannels(firstNumber: 11),
@@ -712,8 +719,89 @@ struct GuideModelTests {
     @Test func antennaIsTheDefaultWhenItIsTheOnlyGroup() {
         let lineup = ChannelLineup(channels: AntennaFixtures.liveChannels())
         let model = GuideModel(lineup: lineup, group: nil, focusedChannelID: nil, now: now)
-        #expect(model.groups == ["My Teams", "Antenna"])
+        #expect(model.groups == ["Favorites", "My Teams", "Antenna"])
         #expect(model.selectedGroup == "Antenna")
         #expect(model.focusedChannel?.name == "WSB-HD")
+    }
+
+    // MARK: Favorites is always listed; empty, it has one row saying how to add one (2026-11-23)
+
+    @Test func anEmptyFavoritesIsSkippedByDefaultButARememberedOneOpens() {
+        let lineup = ChannelLineup(channels: channels)
+        #expect(lineup.groups.first == "Favorites")
+        // No remembered group: All Channels, as before Favorites was always listed.
+        #expect(GuideModel(lineup: lineup, group: nil, focusedChannelID: nil, now: now).selectedGroup == "All Channels")
+        // Antenna only: still Antenna.
+        let antenna = ChannelLineup(channels: AntennaFixtures.liveChannels())
+        #expect(GuideModel(lineup: antenna, group: nil, focusedChannelID: nil, now: now).selectedGroup == "Antenna")
+        // A remembered Favorites opens it, empty.
+        let remembered = GuideModel(lineup: lineup, group: "Favorites", focusedChannelID: nil, now: now)
+        #expect(remembered.selectedGroup == "Favorites")
+        #expect(remembered.rows == [.favoritesEmpty])
+        // Live team games alone fill it, and then it's the default again.
+        let games = ChannelLineup(channels: channels, teamChannelIDs: ["id:c9"])
+        #expect(GuideModel(lineup: games, group: nil, focusedChannelID: nil, now: now).selectedGroup == "Favorites")
+    }
+
+    @Test func anEmptyFavoritesHasOnePlaceholderRow() {
+        let model = GuideModel(lineup: ChannelLineup(channels: channels), group: "Favorites", focusedChannelID: nil,
+                               now: now)
+        #expect(model.rows == [.favoritesEmpty])
+        #expect(model.rows.map(\.kind) == [.favoritesEmpty])
+        #expect(model.rows.first?.id == "favoritesEmpty")
+        #expect(model.rows.first?.channel == nil)
+        #expect(model.focusedRow == .favoritesEmpty)
+        #expect(model.focusedChannel == nil)
+        #expect(model.channels.isEmpty)
+        #expect(model.cells(row: 0, now: now).isEmpty)
+        #expect(model.focusedCell(now: now) == nil)
+        // With a favorite, the rows are the channels, as before.
+        let favorites = ChannelLineup(channels: channels, preferences: ChannelPreferences(favorites: ["id:c2"]))
+        let filled = GuideModel(lineup: favorites, group: "Favorites", focusedChannelID: nil, now: now)
+        #expect(filled.rows.map(\.kind) == [.channel])
+        #expect(filled.channels.map(\.id) == ["id:c2"])
+    }
+
+    @Test func thePlaceholderRowDoesNothingButMoveAndLeft() {
+        var model = GuideModel(lineup: ChannelLineup(channels: channels), group: "Favorites", focusedChannelID: nil,
+                               now: now)
+        let start = model
+        // OK, Menu and Play do nothing: no play, no channel menu, no team picker.
+        for command: RemoteCommand in [.select, .menu, .playPause, .up, .down, .channelUp, .channelDown] {
+            #expect(model.handle(command, now: now) == .none)
+            #expect(model.focusedRow == .favoritesEmpty)
+            #expect(model.row == 0)
+        }
+        #expect(model == start)
+        // Right has no programmes to move to.
+        #expect(model.handle(.right, now: now) == .none)
+        #expect(model.focus == .grid)
+        #expect(model.handle(.select, now: now) == .none)
+        // Left opens the group list, on Favorites.
+        #expect(model.handle(.left, now: now) == .none)
+        #expect(model.focus == .groups(0))
+        #expect(model.groups[0] == "Favorites")
+        // Back closes the list, then (in the watch guide) closes the guide, as on any row.
+        #expect(model.handle(.back, now: now) == .none)
+        #expect(model.focus == .grid)
+        #expect(model.handle(.back, now: now) == .close)
+    }
+
+    @Test func thePlaceholderGoesOnceAFavoriteIsAddedAndComesBackWhenItIsRemoved() {
+        var model = GuideModel(lineup: ChannelLineup(channels: channels), group: "Favorites", focusedChannelID: nil,
+                               now: now)
+        #expect(model.rows == [.favoritesEmpty])
+        model.setLineup(ChannelLineup(channels: channels, preferences: ChannelPreferences(favorites: ["id:c4", "id:c2"])))
+        #expect(model.selectedGroup == "Favorites")
+        #expect(model.rows.map(\.kind) == [.channel, .channel])
+        #expect(model.row == 0)
+        #expect(model.focusedChannel?.id == "id:c4")
+        #expect(model.handle(.select, now: now) == .play("id:c4"))
+        // The last favorite removed: Favorites stays listed and selected, with the placeholder.
+        model.setLineup(ChannelLineup(channels: channels))
+        #expect(model.selectedGroup == "Favorites")
+        #expect(model.rows == [.favoritesEmpty])
+        #expect(model.row == 0)
+        #expect(model.focusedChannel == nil)
     }
 }

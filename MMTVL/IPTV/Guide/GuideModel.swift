@@ -18,19 +18,22 @@ nonisolated struct GuideModel: Equatable, Sendable {
         case openTeamPicker
     }
     /// One row of the selected group. M7l 8c: My Teams has Choose Teams first, then its live channels, then the
-    /// upcoming games.
+    /// upcoming games. An empty Favorites group (no favorites, no live team game) has one `favoritesEmpty` row that
+    /// says how to add one.
     enum Row: Equatable, Sendable {
         case channel(Channel)
         case chooseTeams
         case upcoming(UpcomingTeamGame)
+        case favoritesEmpty
 
-        enum Kind: Equatable, Sendable { case channel, chooseTeams, upcoming }
+        enum Kind: Equatable, Sendable { case channel, chooseTeams, upcoming, favoritesEmpty }
 
         var kind: Kind {
             switch self {
             case .channel: .channel
             case .chooseTeams: .chooseTeams
             case .upcoming: .upcoming
+            case .favoritesEmpty: .favoritesEmpty
             }
         }
 
@@ -38,7 +41,7 @@ nonisolated struct GuideModel: Equatable, Sendable {
         var channel: Channel? {
             switch self {
             case .channel(let channel): channel
-            case .chooseTeams: nil
+            case .chooseTeams, .favoritesEmpty: nil
             case .upcoming(let game): game.channel
             }
         }
@@ -48,6 +51,7 @@ nonisolated struct GuideModel: Equatable, Sendable {
             switch self {
             case .channel(let channel): "channel.\(channel.id)"
             case .chooseTeams: "chooseTeams"
+            case .favoritesEmpty: "favoritesEmpty"
             case .upcoming(let game): "upcoming.\(game.channel.id).\(game.programme.start.timeIntervalSinceReferenceDate)"
             }
         }
@@ -81,13 +85,14 @@ nonisolated struct GuideModel: Equatable, Sendable {
     private(set) var timeline: GuideTimeline
     private var lineup: ChannelLineup
 
-    /// The default group (no remembered one) is the first: Favorites when it exists (M6b L11). M7l 8c: never My Teams
-    /// (always there), unless it's the only group. M7j L3: nor Antenna, unless it's the only other group.
+    /// The default group (no remembered one) is the first: Favorites when it has channels (M6b L11; listed even when
+    /// empty, but then skipped). M7l 8c: never My Teams (always there), unless it's the only group. M7j L3: nor
+    /// Antenna, unless it's the only other group.
     init(lineup: ChannelLineup, group: String?, focusedChannelID: Channel.ID?, now: Date) {
         self.lineup = lineup
         let groups = lineup.groups
         self.groups = groups
-        groupIndex = lineup.resolvedGroup(group).flatMap { groups.firstIndex(of: $0) } ?? Self.defaultGroupIndex(groups)
+        groupIndex = lineup.resolvedGroup(group).flatMap { groups.firstIndex(of: $0) } ?? Self.defaultGroupIndex(lineup)
         rows = []
         focusTime = now
         timeline = GuideTimeline(now: now)
@@ -193,7 +198,7 @@ nonisolated struct GuideModel: Equatable, Sendable {
         }
         self.lineup = lineup
         groups = lineup.groups
-        groupIndex = group.flatMap { groups.firstIndex(of: $0) } ?? Self.defaultGroupIndex(groups)
+        groupIndex = group.flatMap { groups.firstIndex(of: $0) } ?? Self.defaultGroupIndex(lineup)
         rows = rowsOfSelectedGroup()
         row = focusedRowID.flatMap { id in rows.firstIndex { $0.id == id } }
             ?? focusedChannelID.flatMap { Self.channelRowIndex(of: $0, in: rows) }
@@ -217,10 +222,15 @@ nonisolated struct GuideModel: Equatable, Sendable {
 
     // MARK: - Private
 
-    /// M7l 8c: the first group that isn't My Teams; M7j L3: nor Antenna, else Antenna, else 0.
-    private static func defaultGroupIndex(_ groups: [String]) -> Int {
-        groups.firstIndex { $0 != ChannelLineup.teamsGroup && $0 != AntennaLineup.group }
-            ?? groups.firstIndex(of: AntennaLineup.group) ?? 0
+    /// M7l 8c: the first group that isn't My Teams; M7j L3: nor Antenna, else Antenna, else 0. Nor an empty
+    /// Favorites, so a first launch with no favorites opens where it did before Favorites was always listed.
+    private static func defaultGroupIndex(_ lineup: ChannelLineup) -> Int {
+        let groups = lineup.groups
+        let favoritesEmpty = lineup.favoritesGroupChannels.isEmpty
+        return groups.firstIndex {
+            $0 != ChannelLineup.teamsGroup && $0 != AntennaLineup.group
+                && !(favoritesEmpty && $0 == ChannelLineup.favoritesGroup)
+        } ?? groups.firstIndex(of: AntennaLineup.group) ?? 0
     }
 
     private static func channelRowIndex(of id: Channel.ID, in rows: [Row]) -> Int? {
@@ -230,6 +240,7 @@ nonisolated struct GuideModel: Equatable, Sendable {
     private func rowsOfSelectedGroup() -> [Row] {
         guard let group = selectedGroup else { return [] }
         let channels = lineup.channels(in: group).map(Row.channel)
+        if group == ChannelLineup.favoritesGroup, channels.isEmpty { return [.favoritesEmpty] }
         guard group == ChannelLineup.teamsGroup else { return channels }
         return [.chooseTeams] + channels + lineup.upcomingTeamGames.map(Row.upcoming)
     }
@@ -349,17 +360,20 @@ nonisolated struct GuideModel: Equatable, Sendable {
         }
     }
 
-    /// M7l 8c: My Teams' Choose Teams and upcoming rows, focused as a whole (no channel cell, no programmes).
-    /// Select opens the picker (focus stays, so closing it comes back here) or plays the game's channel; Left goes
-    /// to the groups; Menu does nothing.
+    /// M7l 8c: My Teams' Choose Teams and upcoming rows, and an empty Favorites' row, focused as a whole (no channel
+    /// cell, no programmes). Select opens the picker (focus stays, so closing it comes back here) or plays the game's
+    /// channel, and does nothing on the empty Favorites row; Left goes to the groups; Menu does nothing.
     private mutating func handleActionRow(_ command: RemoteCommand, _ focusedRow: Row) -> Action {
         switch command {
         case .up, .down:
             moveRow(command)
             return .none
         case .select:
-            if case .upcoming(let game) = focusedRow { return .play(game.channel.id) }
-            return .openTeamPicker
+            switch focusedRow {
+            case .upcoming(let game): return .play(game.channel.id)
+            case .chooseTeams: return .openTeamPicker
+            case .channel, .favoritesEmpty: return .none
+            }
         case .left, .rewind:
             focus = .groups(groupIndex)
             return .none

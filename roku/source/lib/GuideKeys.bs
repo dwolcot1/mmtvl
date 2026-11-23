@@ -11,7 +11,8 @@
 '     Channels if there is one, else the channel's own group. The focused channel's row, else row 0.
 '   rowsOf(lineup, group) -> the group's rows: { kind: "channel", channelID } per channel; My Teams starts with
 '     { kind: "chooseTeams", channelID: "" } and ends with its upcoming games (step 18, M7l 8c): { kind: "upcoming",
-'     channelID, start, game } per lineup.upcomingTeamGames entry (game: its index there).
+'     channelID, start, game } per lineup.upcomingTeamGames entry (game: its index there). An empty Favorites is one
+'     { kind: "favoritesEmpty", channelID: "" } row (step 15).
 '   setLineup(state, lineup) -> state after a playlist refresh or a favorites or hiding change (GuideModel.setLineup,
 '     GuideModel.swift:183-207): the same group (by name; else the default group), the focused row by its id, else
 '     the focused channel's row, else the same row index clamped; a focused group-column row keeps its group by
@@ -92,7 +93,7 @@ namespace GuideKeys
         groupIndex = -1
         resolved = Lineup.resolvedGroup(built, lastGroup)
         if GuideKeys.isText(resolved) then groupIndex = GuideKeys.textIndex(groups, resolved)
-        if groupIndex < 0 then groupIndex = GuideKeys.defaultGroupIndex(groups)
+        if groupIndex < 0 then groupIndex = GuideKeys.defaultGroupIndex(groups, built)
         rows = GuideKeys.rowsOf(built, GuideKeys.groupName(groups, groupIndex))
         hasFocus = GuideKeys.isText(focusedChannelID) and focusedChannelID <> ""
         if hasFocus and GuideKeys.channelRow(rows, focusedChannelID) < 0
@@ -142,6 +143,8 @@ namespace GuideKeys
                 rows.Push({ kind: "upcoming", channelID: games[i].channel.id, start: games[i].programme.start, game: i })
             end for
         end if
+        ' Step 15: an empty Favorites shows one row that says how to add one (OK and * do nothing on it).
+        if group = Lineup.favoritesGroup and rows.Count() = 0 then rows.Push({ kind: "favoritesEmpty", channelID: "" })
         return rows
     end function
 
@@ -222,7 +225,7 @@ namespace GuideKeys
         else if key = "OK"
             if rowHere.kind = "upcoming"
                 result.action = GuideKeys.channelAction("play", rowHere)
-            else
+            else if rowHere.kind = "chooseTeams"
                 result.action = GuideKeys.action("openTeamPicker")
             end if
         else if key = "left"
@@ -281,7 +284,7 @@ namespace GuideKeys
         current.groups = built.groups
         index = -1
         if GuideKeys.isText(group) then index = GuideKeys.textIndex(current.groups, group)
-        if index < 0 then index = GuideKeys.defaultGroupIndex(current.groups)
+        if index < 0 then index = GuideKeys.defaultGroupIndex(current.groups, built)
         current.groupIndex = index
         current.rows = GuideKeys.rowsOf(built, GuideKeys.groupName(current.groups, index))
         newRow = -1
@@ -550,9 +553,15 @@ namespace GuideKeys
     end function
 
     ' The first group that isn't My Teams nor Antenna, else Antenna, else 0.
-    function defaultGroupIndex(groups as object) as integer
+    ' Step 15: an empty Favorites isn't the default either (built: the lineup; invalid reads as empty).
+    function defaultGroupIndex(groups as object, built = invalid as dynamic) as integer
+        favoritesEmpty = true
+        if LCase(type(built)) = "roassociativearray"
+            if LCase(type(built.favoritesGroupChannels)) = "roarray" then favoritesEmpty = built.favoritesGroupChannels.Count() = 0
+        end if
         for i = 0 to groups.Count() - 1
-            if groups[i] <> Lineup.teamsGroup and groups[i] <> Lineup.antennaGroup then return i
+            name = groups[i]
+            if name <> Lineup.teamsGroup and name <> Lineup.antennaGroup and not (name = Lineup.favoritesGroup and favoritesEmpty) then return i
         end for
         antenna = GuideKeys.textIndex(groups, Lineup.antennaGroup)
         if antenna >= 0 then return antenna

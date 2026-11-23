@@ -124,7 +124,7 @@ struct MyTeamsTests {
     @Test func myTeamsIsAlwaysAfterFavoritesAndUpcomingRowsStayOutOfFavorites() throws {
         let channels = ChannelList.make(from: try M3UParser.parse(IPTVFixtures.playlist))
         let none = ChannelLineup(channels: channels)
-        #expect(none.groups == ["My Teams", "All Channels", "Live Channels", "NBA Games"])
+        #expect(none.groups == ["Favorites", "My Teams", "All Channels", "Live Channels", "NBA Games"])
         #expect(none.channels(in: "My Teams").isEmpty)
         let nfl = try #require(channels.first { $0.id == Self.nfl })
         let upcoming = [UpcomingTeamGame(channel: nfl, programme: Self.programme(hours: 3, "NFL Football", "A at B"))]
