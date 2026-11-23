@@ -56,12 +56,22 @@ export function releaseTitle(v, { stable = false } = {}) {
 // → the names to delete: all but the n highest build numbers among the names that match zipName's pattern.
 // Other names (a zip's .sha256, the build's own zips) are never returned; the caller removes each zip's .sha256.
 export function keepNewest(fileNames, n) {
-    const zips = fileNames
+    return nightlyZipsNewestFirst(fileNames).slice(Math.max(0, n));
+}
+
+// → the name with the highest build number among the names that match zipName's pattern, or null (deploy:nightly).
+export function newestZip(fileNames) {
+    return nightlyZipsNewestFirst(fileNames)[0] ?? null;
+}
+
+// The names that match zipName's pattern, highest build number first (by number, not text).
+function nightlyZipsNewestFirst(fileNames) {
+    return fileNames
         .map((name) => ({ name, match: zipPattern.exec(name) }))
         .filter(({ match }) => match)
         .map(({ name, match }) => ({ name, build: Number.parseInt(match[3], 10) }))
-        .sort((a, b) => b.build - a.build);
-    return zips.slice(Math.max(0, n)).map(({ name }) => name);
+        .sort((a, b) => b.build - a.build)
+        .map(({ name }) => name);
 }
 
 // → the release's Markdown body. Every value comes from the repo: no hosts, addresses or provider names.

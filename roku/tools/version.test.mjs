@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { keepNewest, parseVersion, releaseNotes, releaseTitle, tagName, withBuild, zipName } from './version.mjs';
+import { keepNewest, newestZip, parseVersion, releaseNotes, releaseTitle, tagName, withBuild, zipName } from './version.mjs';
 
 const manifestPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'manifest');
 const sample = [
@@ -113,6 +113,19 @@ test('keepNewest returns only the zips past the newest n, by build number', () =
     ]);
     assert.deepEqual(keepNewest(names, 4), []);
     assert.deepEqual(keepNewest(['mmtvl-live-tv.zip', 'mmtvl-live-tv-release.zip', 'notes.txt'], 0), []);
+});
+
+test('newestZip picks the highest build number, not the last name in text order', () => {
+    const names = [
+        'MMTVL-Live-TV-Roku-0.1-build9.zip',
+        'MMTVL-Live-TV-Roku-0.1-build10.zip',
+        'MMTVL-Live-TV-Roku-0.1-build10.zip.sha256',
+        'MMTVL-Live-TV-Roku-0.1-build4.zip',
+        'mmtvl-live-tv-release.zip'
+    ];
+    assert.equal(newestZip(names), 'MMTVL-Live-TV-Roku-0.1-build10.zip');
+    assert.equal(newestZip(['mmtvl-live-tv.zip', 'MMTVL-Live-TV-Roku-0.1-build2.zip.sha256', '.DS_Store']), null);
+    assert.equal(newestZip([]), null);
 });
 
 const nightlyNotes = releaseNotes({

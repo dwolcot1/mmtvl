@@ -1,14 +1,14 @@
-// The device scripts (M12 L1): `npm run deploy | test | console`, and `npm run test:local`,
+// The device scripts (M12 L1): `npm run deploy | test | console` and (M14) `npm run deploy:nightly`, and `npm run test:local`,
 // `npm run build:release` and (M14) `npm run version | nightly`, which need no device.
 // The Roku's address and developer password come only from roku/.env (gitignored).
 // Never print the password.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
-import { keepNewest, parseVersion, withBuild, zipName } from './version.mjs';
+import { keepNewest, newestZip, parseVersion, withBuild, zipName } from './version.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = (name) => join(root, 'node_modules', '.bin', name);
@@ -59,6 +59,10 @@ async function deploy() {
 }
 
 function test() {
+    // M14: Rooibos sideloads through its own roku-deploy, whose sideload() deletes the installed dev app first
+    // (deleteDevChannel defaults to true, and Rooibos passes no option), which clears the app's registry.
+    // Printed first, on stderr like loadDevice's lines, so it comes before them; no prompt (npm scripts aren't interactive).
+    console.warn('npm test installs the test app and deletes the installed MMTVL Live TV first, which erases its settings (Rooibos\'s roku-deploy deletes the dev app). Afterwards: npm run deploy:nightly, then run the migration again.');
     const { host, password } = loadDevice();
     // Rooibos builds with bsconfig.test.json, sideloads, then reads the results from port 8085.
     process.exit(run(bin('rooibos'), ['--project', 'bsconfig.test.json', '--host', host], { ROKU_PASSWORD: password }));
@@ -230,6 +234,22 @@ function git(args) {
     return { status: result.status ?? 1, stdout: (result.stdout ?? '').trimEnd() };
 }
 
+// M14: the manifest inside a zip (unzip -p, only that file): its version and whether bs_const is DEBUG=false.
+// Throws with a one-line reason; label is how the zip is named in it. Used by nightly and deploy-nightly.
+function zipManifest(zipPath, label) {
+    const unzip = spawnSync('unzip', ['-p', zipPath, 'manifest'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    if (unzip.error || unzip.status !== 0) {
+        throw new Error(`couldn't read the manifest from ${label}${unzip.error ? `: ${unzip.error.message}` : ''}.`);
+    }
+    let v;
+    try {
+        v = parseVersion(unzip.stdout);
+    } catch (error) {
+        throw new Error(`the zip's manifest: ${error.message}`);
+    }
+    return { v, debugOff: /^bs_const=DEBUG=false\r?$/m.test(unzip.stdout) };
+}
+
 // M14 (L2, L5–L9): a numbered nightly. Bumps roku/manifest's build_version (the number is spent from then on, even
 // when a gate fails), runs every gate, checks the release zip's own manifest, copies it to
 // out/nightly/<zipName> with its .sha256 and keeps the newest 3. The bump is left uncommitted.
@@ -288,23 +308,19 @@ function nightly() {
 
     // 4. The zip itself: its manifest has this build number and DEBUG off.
     const releaseZip = join(root, 'out', 'mmtvl-live-tv-release.zip');
-    const unzip = spawnSync('unzip', ['-p', releaseZip, 'manifest'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    if (unzip.error || unzip.status !== 0) {
-        console.error(`nightly: couldn't read the manifest from out/mmtvl-live-tv-release.zip${unzip.error ? `: ${unzip.error.message}` : ''}.`);
-        fail(stays);
-    }
     let zipped;
+    let debugOff;
     try {
-        zipped = parseVersion(unzip.stdout);
+        ({ v: zipped, debugOff } = zipManifest(releaseZip, 'out/mmtvl-live-tv-release.zip'));
     } catch (error) {
-        console.error(`nightly: the zip's manifest: ${error.message}`);
+        console.error(`nightly: ${error.message}`);
         fail(stays);
     }
     if (zipped.major !== v.major || zipped.minor !== v.minor || zipped.build !== v.build) {
         console.error(`nightly: the zip's manifest says ${zipped.major}.${zipped.minor} build ${zipped.build}, not ${v.major}.${v.minor} build ${v.build}.`);
         fail(stays);
     }
-    if (!/^bs_const=DEBUG=false\r?$/m.test(unzip.stdout)) {
+    if (!debugOff) {
         console.error('nightly: the zip\'s manifest doesn\'t have bs_const=DEBUG=false.');
         fail(stays);
     }
@@ -330,9 +346,84 @@ function nightly() {
     console.log(`Next: commit roku/manifest as "Roku build ${v.build}" on master.`);
 }
 
-const commands = { deploy, test, console: console8085, 'test-local': testLocal, 'build-release': buildRelease, version, nightly };
+// M14: sideloads a nightly, the given zip or the newest in out/nightly/ by build number, with roku-deploy's
+// publish(): Replace (then Install), never Delete, so the registry stays if a replace keeps it (Q33).
+// Only a zip whose own manifest says bs_const=DEBUG=false; checked before anything connects.
+async function deployNightly() {
+    const { host, password } = loadDevice();
+    // Never print the password, even inside a library's error text.
+    const redact = (text) => String(text ?? '').replaceAll(password, '<password>');
+
+    let zipPath;
+    let label;
+    const given = process.argv[3];
+    if (given) {
+        // npm runs the script in roku/; a relative path is the caller's, from where npm was run.
+        zipPath = resolve(process.env.INIT_CWD ?? process.cwd(), given);
+        label = given;
+        if (!existsSync(zipPath)) {
+            fail(`deploy:nightly: ${label} doesn't exist.`);
+        }
+    } else {
+        const nightlyDir = join(root, 'out', 'nightly');
+        const name = existsSync(nightlyDir) ? newestZip(readdirSync(nightlyDir)) : null;
+        if (!name) {
+            fail('deploy:nightly: no nightly zip in out/nightly/: run npm run nightly first, or give a zip (npm run deploy:nightly -- <zip>).');
+        }
+        zipPath = join(nightlyDir, name);
+        label = `out/nightly/${name}`;
+    }
+
+    let v;
+    let debugOff;
+    try {
+        ({ v, debugOff } = zipManifest(zipPath, label));
+    } catch (error) {
+        fail(`deploy:nightly: ${error.message} Nothing was installed.`);
+    }
+    if (!debugOff) {
+        fail(`deploy:nightly: ${label}'s manifest doesn't have bs_const=DEBUG=false: only release builds (npm run nightly) are installed this way. Nothing was installed.`);
+    }
+    const versionText = `${v.major}.${v.minor}`;
+    console.log(`Installing ${label} (MMTVL Live TV ${versionText} build ${v.build}) on ${host}.`);
+
+    const { rokuDeploy } = await import('roku-deploy');
+    try {
+        await rokuDeploy.publish({ host, password, outDir: dirname(zipPath), outFile: basename(zipPath) });
+    } catch (error) {
+        fail(`deploy:nightly: installing on ${host} failed: ${redact(error.message)}`);
+    }
+    console.log(`Installed MMTVL Live TV ${versionText} build ${v.build} on ${host}. Settings → About should say "Version ${versionText} Build ${v.build}".`);
+
+    // An optional read-back over ECP. Unverified: whether /query/apps reports the dev app's version, and in what
+    // form (step 7 settles it). Anything missing or unexpected is printed as is and never fails the deploy.
+    try {
+        const response = await fetch(`http://${host}:8060/query/apps`, { signal: AbortSignal.timeout(5000) });
+        const body = response.ok ? await response.text() : '';
+        const app = /<app\b[^>]*\bid="dev"[^>]*>/.exec(body);
+        const reported = app ? /\bversion="([^"]*)"/.exec(app[0]) : null;
+        if (!response.ok) {
+            console.log(`ECP read-back: /query/apps answered ${response.status}; About on the TV is the check.`);
+        } else if (!app) {
+            console.log('ECP read-back: no dev app in /query/apps; About on the TV is the check.');
+        } else if (!reported) {
+            console.log('ECP read-back: the dev app has no version attribute; About on the TV is the check.');
+        } else {
+            const expected = `${versionText}.${v.build}`;
+            const same = reported[1] === expected ? 'matches' : `isn't ${expected} (the form is unverified)`;
+            console.log(`ECP read-back: the dev app's version is "${reported[1]}", which ${same}.`);
+        }
+    } catch (error) {
+        console.log(`ECP read-back: couldn't ask ${host} (${redact(error.message)}); About on the TV is the check.`);
+    }
+}
+
+const commands = {
+    deploy, test, console: console8085, 'test-local': testLocal, 'build-release': buildRelease, version, nightly,
+    'deploy-nightly': deployNightly
+};
 const command = commands[process.argv[2]];
 if (!command) {
-    fail('Usage: node tools/roku.mjs deploy | test | console | test-local | build-release | version | nightly');
+    fail('Usage: node tools/roku.mjs deploy | test | console | test-local | build-release | version | nightly | deploy-nightly [<zip>]');
 }
 await command();

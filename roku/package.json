@@ -13,7 +13,8 @@
     "console": "node tools/roku.mjs console",
     "test:tools": "node --test tools/",
     "version": "node tools/roku.mjs version",
-    "nightly": "node tools/roku.mjs nightly"
+    "nightly": "node tools/roku.mjs nightly",
+    "deploy:nightly": "node tools/roku.mjs deploy-nightly"
   },
   "devDependencies": {
     "@rokucommunity/bslint": "0.8.47",
