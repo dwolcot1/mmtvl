@@ -9,7 +9,6 @@
 sub init()
     m.theme = Theme.make()
     m.reader = GuideReader.newReader()
-    m.fs = CreateObject("roFileSystem")
     m.lineup = emptyLineup()
     m.lineupUnread = false
     m.state = GuideKeys.open(m.lineup, invalid, "")
@@ -455,10 +454,7 @@ sub requestLogo(node as object, channel as dynamic)
             if waiting.isSameNode(node) then return
         end for
     end if
-    if m.fs.Exists(cached)
-        node.hdSmallIconUrl = cached
-        return
-    end if
+    ' LogoTask answers at once when the file is cached (roFileSystem is Task-only: no Exists on this thread).
     if waits = invalid
         waits = []
         m.logoWaits[cached] = waits
