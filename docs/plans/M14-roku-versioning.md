@@ -9,8 +9,9 @@
 
 ## Next session starts here
 
-- Planned 2026-11-22; nothing built yet. Start with step 1. Run `/build-plan docs/plans/M14-roku-versioning.md`.
-- Steps 1–4 and 6 need no Roku and no network. Step 5 (the first nightly) pushes to `master`, pushes a tag and publishes a GitHub prerelease on the **public** repo. The user approved step 5's push to `master` (2026-11-22); **ask before `publish:nightly`** (the tag and the prerelease). Step 7 needs a Roku and is the user's. It fits in M12 step 15's device session.
+- 2026-11-22: steps 1–4 done and committed on branch `m14-roku-versioning` (QA PASS each; step 4's security review and re-review fixed, see Deviations). Step 6's README, CLAUDE.md and master plan text is written on the branch; what's left of step 6 is M14 → Done and the archive move, after step 5.
+- Next: a milestone QA pass, then (ask) a PR for the branch and its merge to `master`, which step 5 needs: `npm run nightly` must run on a clean `master` with these tools.
+- Step 5 pushes to `master` (approved by the user 2026-11-22) and **asks before `publish:nightly`** (the tag and the prerelease on the public repo). Step 7 is the user's, folded into M12 step 15 (item 7 there).
 
 ## Goal
 
@@ -249,6 +250,7 @@ With `--stable`, the title loses "(nightly)", the WIP box is dropped, and Instal
     - D57 (already added at planning; update to as-built if anything changed);
     - §6 M14 → Done;
     - Q33's note: `npm test` deletes; `deploy:nightly` replaces.
+  - *2026-11-22: written on the branch before the PR* (README: the Sideload step, the commands table, a Versions and nightlies section; CLAUDE.md: the commands block, the gates with `test:tools`, a Versions and nightlies bullet with the release checklist, the `npm test` warning; master plan: D57 as built, Q33's note; M12 step 15 item 7 holds step 7). Left for after step 5: §6 → Done and the archive move.
   - Then `git mv` this plan to `docs/plans/archive/` and fix its link.
   - Done when `grep -n 'deploy:nightly' roku/README.md CLAUDE.md` finds both, and the master plan row links the archive.
 
