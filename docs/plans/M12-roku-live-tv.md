@@ -9,7 +9,7 @@
 
 ## Next session starts here
 
-- **2026-11-23: device testing has started** (the remote tester, a TCL Roku TV). Build 2 froze on `*` (`roFileSystem` on the render thread; see the step 15 entry in *Deviations & questions*). The fix is PR #11; **nightly build 3** is `roku-v0.1-build3` on GitHub. Next: the tester's report on build 3, plus the console checks in that entry (`DeleteFile`/`ListDir`/`ReadAsciiFile` and `roEVPDigest` on the render thread).
+- **2026-11-23: device testing has started** (the remote tester, a TCL Roku TV). Build 2 froze on `*` (render-thread `roFileSystem`, PR #11, fixed in build 3). Build 3 feedback: Settings hard to find, and the group column didn't take the keys (PR #12, build 4); see the step 15 entries in *Deviations & questions*. Next: the tester's report on build 4, plus the console checks in the first step 15 entry (`DeleteFile`/`ListDir`/`ReadAsciiFile` and `roEVPDigest` on the render thread).
 - **Phase 0 (PR #1)** and **phase 1 (PR #2, stacked on PR #1)** are done off-device. Steps 1, 4 and every device check wait for the remote tester's Roku. The probe build is `cd roku && npm run build` → `roku/out/mmtvl-live-tv.zip`. **Ask the user before sending it.**
 - **Automated run (user, 2026-11-22):** steps 18–22, 24 and 25 run without the user.
   - Every decision taken without the user is in **[M12-decisions-log.md](M12-decisions-log.md)**, with the reason and pros and cons.
@@ -996,3 +996,15 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
   - **Unverified on a device, to check before build 3 (typed in the console's debugger, which runs on the render thread):** that the global `DeleteFile`, `ListDir` and `ReadAsciiFile` work there (likely: `ParseJson` and `FormatJson` already run there without errors), and that `CreateObject("roEVPDigest")` works there. `LogoCache.path` makes one on the render thread for every logo, which the tester hasn't reached yet (no channels).
   - The launch console listed no other failed creations, so `roAppInfo`, `roDeviceInfo`, `roAppMemoryMonitor`, `roRegistry` and `roRegistrySection` are fine there.
   - Gates: "LOCAL TESTS: 742 passed, 0 failed"; `test:tools` 28 passed; "Release build: 127 files, no probe code, no DEBUG memory line".
+- **2026-11-23, step 15 (build 3 feedback from the tester): Settings was hard to find, and the group column didn't take the keys.** User decisions: **A + C**, build 4.
+  - **Settings was hard to find.** With channels, `*` on a channel is the channel menu (as designed), and Settings was only `*` in the group column. The guide's hint said "Left: groups", nothing about Settings.
+    - **A (changes step 13's design):** a **Settings** row is the column's last row: Search, the groups, Settings, looping. OK, Right and `*` open Settings, and focus stays on the row, so Back from Settings returns to it. With no channels the column is the Settings row alone (Search needs channels). `GuideKeys`: focus `"settings"`, `isColumnFocus`, `columnPosition`.
+    - **C:** the guide's hints say "Left: groups & Settings"; the column's hint is "OK: choose · Back: close".
+    - Not in `design/roku-live-tv.pen` (frame lB8XX) yet.
+  - **The column didn't take the keys (a bug).** Up/Down moved the guide under the open column, and nothing in the column could be chosen. `GuideScreen.takeFocus` called `m.top.setFocus(true)` while its child TimeGrid had focus, and on the device focus stayed on the TimeGrid. **Unverified:** whether Roku ignores focus moves to an ancestor of the focused node, or something else gave focus back to the grid.
+    - Fix: a `keys` Group, a sibling of the grid, takes focus whenever the screen handles keys itself; keys bubble from it to `onKeyEvent`.
+    - `SearchView` had the same pattern (the results vs its `DynamicMiniKeyboard`) and gets the same fix.
+    - `ProbesScreen.bs:203` (DEBUG only) still has it.
+  - **Favorites "missing":** the tester has no favorites yet. The group shows once a channel is added (`*` on a channel → Add to Favorites), as MMTVL does (`ChannelPreferences.swift:101`, `Lineup.bs:84`). Not changed.
+  - Seen in the photo, not changed: the column's glass panel lets the channel column's names and logos show through.
+  - Gates: "LOCAL TESTS: 745 passed, 0 failed" (3 new tests: the Settings row, a grid report on it, no channels); `test:tools` 28 passed; "Release build: 127 files, no probe code, no DEBUG memory line".
