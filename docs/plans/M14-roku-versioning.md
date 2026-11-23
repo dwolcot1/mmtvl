@@ -10,7 +10,7 @@
 ## Next session starts here
 
 - Planned 2026-11-22; nothing built yet. Start with step 1. Run `/build-plan docs/plans/M14-roku-versioning.md`.
-- Steps 1–4 and 6 need no Roku and no network. Step 5 (the first nightly) pushes to `master`, pushes a tag and publishes a GitHub prerelease on the **public** repo: **ask the user before each of those**. Step 7 needs a Roku and is the user's. It fits in M12 step 15's device session.
+- Steps 1–4 and 6 need no Roku and no network. Step 5 (the first nightly) pushes to `master`, pushes a tag and publishes a GitHub prerelease on the **public** repo. The user approved step 5's push to `master` (2026-11-22); **ask before `publish:nightly`** (the tag and the prerelease). Step 7 needs a Roku and is the user's. It fits in M12 step 15's device session.
 
 ## Goal
 
@@ -21,7 +21,7 @@ The Roku app gets its own version and release line, separate from MMTVL's. Every
 - **A stable (non-prerelease) Roku release.** The Roku stays at 0.x and nightly-only until M12 is Done, meaning its device steps 1, 4, 15 and 23 pass. The 1.0 path is written down (L3) but not run here.
 - **Signed `.pkg` packages** (genkey, Package/Rekey on the device). A sideload needs only the zip. A package matters only for a beta or store channel, which D54 rules out.
 - **Scheduled or CI nightlies.** The repo has no CI (`.github/` doesn't exist). "Nightly" names the channel, not a schedule. Builds are made on demand (L5).
-- **Pruning old GitHub nightlies.** Deleting public releases is outward-facing; it's Q34.
+- **Pruning old GitHub nightlies.** Q34, answered by the user on 2026-11-22: no pruning; every nightly stays on GitHub.
 - MMTVL's own versioning, `scripts/test-build.sh`, `scripts/release.sh`: unchanged.
 
 ## Research & findings
@@ -218,14 +218,14 @@ With `--stable`, the title loses "(nightly)", the WIP box is dropped, and Instal
     - the notes hold no host or address;
     - `--latest=false` is always passed.
 
-- [ ] **5. The first nightly, build 2** `[release]`, with the user's yes before each outward action
+- [ ] **5. The first nightly, build 2** `[release]`; the push to `master` is approved, and publishing needs the user's yes
   1. On a clean `master` (in this worktree: `git switch master && git pull`), run `cd roku && npm run nightly` → build 2. Quote the zip line and the SHA-256.
   2. Commit `roku/manifest` by path as `Roku build 2`.
   3. Run gitleaks over the commit:
      ```sh
      gitleaks git --config scripts/gitleaks.toml --log-opts="origin/master..master" --redact --no-banner .
      ```
-  4. **Ask, then** `git push origin master`.
+  4. `git push origin master` (approved by the user for this step, 2026-11-22).
   5. **Ask, then** `npm run publish:nightly -- 2`.
   6. Read back: `gh release view roku-v0.1-build2` (prerelease, one asset), and `gh release list -L 3`, where `v1.3.1` is still Latest. Open the release page and check its text shows no address.
   - Done when both read-backs are quoted and the user has seen the release link.
