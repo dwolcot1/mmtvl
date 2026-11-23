@@ -17,9 +17,10 @@ At runtime it depends on nothing else: no Mac, no MMTVL and no helper service. A
    cp .env.example .env     # then fill in ROKU_HOST (the Roku's address) and ROKU_DEV_PASSWORD
    ```
    `roku/.env` is gitignored. Never commit it.
-3. **Sideload**, in either of two ways:
-   - `npm run deploy` builds the development build (DEBUG, with the Probes screen) and installs it.
-   - Or `npm run build:release`, then open `http://<roku address>/` in a browser (user `rokudev`, the password from step 1) and upload `out/mmtvl-live-tv-release.zip` on the installer page.
+3. **Sideload** a numbered build, in one of these ways:
+   - **A downloaded nightly** (no tools needed): download `MMTVL-Live-TV-Roku-<version>-build<N>.zip` from the repo's Releases page (tags `roku-v…`, see [Versions and nightlies](#versions-and-nightlies)), open `http://<roku address>/` in a browser (user `rokudev`, the password from step 1) and upload the zip on the installer page.
+   - **`npm run deploy:nightly`** installs the newest nightly you built (`npm run nightly`, `out/nightly/`), or the zip you give it (`npm run deploy:nightly -- <zip>`).
+   - For development: `npm run deploy` builds the development build (DEBUG, with the Probes screen) and installs it.
 
 A Roku holds **one sideloaded app at a time**: uploading a build replaces the one there. Whether a replaced build keeps its settings isn't known yet (Q33). If they're gone, run the migration again.
 
@@ -31,8 +32,21 @@ Other commands, in `roku/`:
 | `npm run build:release` | The release build (DEBUG off, no probe code; checks itself) → `out/mmtvl-live-tv-release.zip` |
 | `npm run lint` | bslint over the app, test and local builds |
 | `npm run test:local` | The logic tests, off the device (brs-node) |
-| `npm test` | The Rooibos build, installed on the Roku; results read from port 8085 (needs `.env`) |
+| `npm test` | The Rooibos build, installed on the Roku; results read from port 8085 (needs `.env`). **It deletes the installed MMTVL Live TV first, which erases its settings** (Rooibos's roku-deploy deletes the dev app). Afterwards: `npm run deploy:nightly`, then the migration again |
 | `npm run console` | The Roku's BrightScript console (`nc <ROKU_HOST> 8085`) |
+| `npm run version` | Prints the version in `manifest`, e.g. `MMTVL Live TV 0.1 build 2` |
+| `npm run test:tools` | The build tools' own tests (`node --test tools/`) |
+| `npm run nightly` | On a clean `master`: the next build number, every gate above, then the release build zipped as `out/nightly/MMTVL-Live-TV-Roku-<version>-build<N>.zip` with its `.sha256` and `.source` (the newest 3 are kept). Off `master` or with uncommitted changes (only with `ROKU_NIGHTLY_ALLOW_BRANCH=1` / `ROKU_NIGHTLY_ALLOW_DIRTY=1`) it's a dry run into `out/nightly-dry/`, never published |
+| `npm run deploy:nightly` | Installs the newest nightly (or `-- <zip>`) on the Roku with Replace, never Delete (needs `.env`) |
+| `npm run publish:nightly -- <N>` | The maintainer's: tags and publishes build N as a GitHub prerelease (see below) |
+
+## Versions and nightlies
+
+The Roku app has its own version, separate from MMTVL's: `major_version`, `minor_version` and `build_version` in `manifest` are the only place it's kept, and **Settings → About** shows it ("Version 0.1 Build 2"). Every build handed out gets the next build number, which is never reset or reused. The version stays 0.x while the app is a work in progress, and becomes 1.0 once it has been checked on a Roku.
+
+Builds are published on the repo's **Releases** page as **prereleases** tagged `roku-v<version>-build<N>` (e.g. `roku-v0.1-build2`) and titled "(nightly, WIP)". They are never the "Latest" release, which stays MMTVL for the Mac. Each one is the release build (DEBUG off, no probe code), built from a committed `master` and scanned with gitleaks before it's published. To install one, download its zip, check it against the SHA-256 in the release notes (`shasum -a 256 MMTVL-Live-TV-Roku-*.zip`), and upload it on the installer page (step 3 above). Uploading replaces the installed build; if your settings are gone afterwards, run the migration again.
+
+Making one (the maintainer): `npm run nightly` on a clean `master` → commit `manifest` as `Roku build <N>` → push → `npm run publish:nightly -- <N>`, which refuses unless that commit is on `origin/master`, the zip was built from it, and gitleaks finds nothing in the zip or the notes.
 
 ## Moving your settings from MMTVL
 

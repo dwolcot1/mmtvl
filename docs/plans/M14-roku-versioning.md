@@ -2,15 +2,16 @@
 
 | | |
 |---|---|
-| Status | Planned |
+| Status | In progress |
 | Depends on | M12 (the Roku app and its release build) |
 | Master plan decisions used | D54; new D57 |
 | Planned | 2026-11-22 |
 
 ## Next session starts here
 
-- Planned 2026-11-22; nothing built yet. Start with step 1. Run `/build-plan docs/plans/M14-roku-versioning.md`.
-- Steps 1–4 and 6 need no Roku and no network. Step 5 (the first nightly) pushes to `master`, pushes a tag and publishes a GitHub prerelease on the **public** repo. The user approved step 5's push to `master` (2026-11-22); **ask before `publish:nightly`** (the tag and the prerelease). Step 7 needs a Roku and is the user's. It fits in M12 step 15's device session.
+- 2026-11-22: steps 1–4 done and committed on branch `m14-roku-versioning` (QA PASS each; step 4's security review and re-review fixed, see Deviations). Step 6's README, CLAUDE.md and master plan text is written on the branch; what's left of step 6 is M14 → Done and the archive move, after step 5.
+- Next: a milestone QA pass, then (ask) a PR for the branch and its merge to `master`, which step 5 needs: `npm run nightly` must run on a clean `master` with these tools.
+- Step 5 pushes to `master` (approved by the user 2026-11-22) and **asks before `publish:nightly`** (the tag and the prerelease on the public repo). Step 7 is the user's, folded into M12 step 15 (item 7 there).
 
 ## Goal
 
@@ -166,19 +167,21 @@ With `--stable`, the title loses "(nightly)", the WIP box is dropped, and Instal
 
 ## Implementation steps
 
-- [ ] **1. Version helpers and one version source** `[implementer]`, files: `roku/tools/version.mjs` (new), `roku/tools/version.test.mjs` (new), `roku/package.json`, `roku/package-lock.json`, `roku/tools/roku.mjs`
+- [x] **1. Version helpers and one version source** `[implementer]`, files: `roku/tools/version.mjs` (new), `roku/tools/version.test.mjs` (new), `roku/package.json`, `roku/package-lock.json`, `roku/tools/roku.mjs`
   - Write the helpers in Design → Files, and the tests in Tests.
   - Add `test:tools` (`node --test tools/`) and `version` (prints `MMTVL Live TV 0.1 build 1` from `parseVersion` of `roku/manifest`).
   - Remove `"version"` from `package.json`, then `npm install --package-lock-only` (offline is fine: `--prefer-offline`). Only the root `version` entries in the lock may change. If anything else changes, stop and record it.
   - Don't change `roku/manifest` yet.
+  - *Done 2026-11-22.* test:tools 14/14 (Node 26 prints `ℹ pass 14` / `ℹ fail 0`, not `#` lines); `npm run version` → `MMTVL Live TV 0.1 build 1`; lock diff only the two root `version` lines; "LOCAL TESTS: 742 passed, 0 failed", "Release build: 127 files, …". QA PASS, two minors, no action: `releaseNotes` takes `changes` already as `- subject` lines (step 4 passes `git log --format='- %s'`); `keepNewest` ranks by build number across major.minor (L2: never reset).
   - Done when:
     - `cd roku && npm run test:tools` shows all `version.test.mjs` tests passing (quote the `# pass` / `# fail 0` lines);
     - `npm run version` prints `MMTVL Live TV 0.1 build 1`;
     - `git diff roku/package-lock.json` shows only the removed root `version` lines;
     - the M12 gates pass: `npm run build && npm run lint && npm run test:local && npm run build:release` → "LOCAL TESTS: 742 passed, 0 failed", "Release build: 127 files, …".
 
-- [ ] **2. `npm run nightly`** `[implementer]`, files: `roku/tools/roku.mjs`, `roku/package.json`
+- [x] **2. `npm run nightly`** `[implementer]`, files: `roku/tools/roku.mjs`, `roku/package.json`
   - Build it as in Design → `npm run nightly`.
+  - *Done 2026-11-22.* Dry run: "All 5 gates passed.", "The zip's manifest: build_version=2, bs_const=DEBUG=false.", `shasum -a 256 -c` OK; retention kept the newest 3; the branch and dirty-tree refusals come before the bump; a forced lint failure printed "The build number stays 2; nothing was zipped." The manifest was restored by hand after each run. QA PASS, two minors, no action: the zip-manifest mismatch and unzip-failure branches are read, not executed; a build:release failure takes the same gate loop as the tested lint failure.
   - The QA run is a dry run on the step branch: `ROKU_NIGHTLY_ALLOW_BRANCH=1 ROKU_NIGHTLY_ALLOW_DIRTY=1 npm run nightly`. It bumps `roku/manifest` to build 2, and the orchestrator then **reverts the manifest** (`git checkout roku/manifest`): the real build 2 is step 5's.
   - Done when the dry run:
     - prints every gate passing, `out/nightly/MMTVL-Live-TV-Roku-0.1-build2.zip` and a SHA-256 that `shasum -a 256 -c` (run in `out/nightly/`) confirms;
@@ -189,7 +192,8 @@ With `--stable`, the title loses "(nightly)", the WIP box is dropped, and Instal
     - without the env vars on a branch, it refuses before bumping (manifest unchanged);
     - a forced lint failure (a temporary bad line, removed afterwards) stops it with "The build number stays 2; nothing was zipped."
 
-- [ ] **3. `npm run deploy:nightly` and the `npm test` warning** `[implementer]`, files: `roku/tools/roku.mjs`, `roku/package.json`
+- [x] **3. `npm run deploy:nightly` and the `npm test` warning** `[implementer]`, files: `roku/tools/roku.mjs`, `roku/package.json`
+  - *Done 2026-11-22.* No `.env` → loadDevice's line; TEST-NET `.env` → "installing on 192.0.2.1 failed: connect ETIMEDOUT 192.0.2.1:80" (host only, after ~150 s); a DEBUG=true zip refused at once, before connecting; the password in none of the outputs; `npm test` prints the warning, then loadDevice's line (both stderr). `newestZip` (version.mjs, tested) picks build 10 over 9; the zip-manifest check is shared with `nightly` (`zipManifest`); roku-deploy's error text has the password replaced before printing. QA PASS, one minor: `publish()` returns "Identical to previous version -- not replacing" as a success and the script still prints "Installed …"; fixed in step 4's brief. The ECP read-back's success branches need a Roku (step 7).
   - `deploy-nightly` as in Design.
   - In `test()` (`roku.mjs:59-63`), print before Rooibos runs: `npm test installs the test app and deletes the installed MMTVL Live TV first, which erases its settings (Rooibos's roku-deploy deletes the dev app). Afterwards: npm run deploy:nightly, then run the migration again.` No prompt, since npm scripts run non-interactively.
   - No Roku is needed for QA. With no `roku/.env`, `deploy:nightly` stops with `loadDevice`'s line. Use a temporary `.env` whose `ROKU_HOST` is a TEST-NET address (`192.0.2.1`, RFC 5737) and any password: it fails to connect and the message names only the host. Check the zip choice and the DEBUG check with a hand-made zip whose manifest says `DEBUG=true`: it refuses before connecting.
@@ -198,7 +202,8 @@ With `--stable`, the title loses "(nightly)", the WIP box is dropped, and Instal
     - the password never appears in output (`grep` the captured output for it);
     - `npm test` without `.env` still stops with `loadDevice`'s line, and the warning prints before that line.
 
-- [ ] **4. `npm run publish:nightly`** `[implementer]` `[security]`, files: `roku/tools/roku.mjs`, `roku/package.json`
+- [x] **4. `npm run publish:nightly`** `[implementer]` `[security]`, files: `roku/tools/roku.mjs`, `roku/package.json`
+  - *Done 2026-11-22.* Every listed refusal printed one line, with no tag, no remote change and no `mmtvl-roku-*` temp dir; `git tag -l 'roku-v*'` and `git ls-remote --tags origin 'roku-v*'` empty. The orchestrator ran the real-commit paths in a scratch clone (a local bare as origin, a fake `gh` first on PATH, a git wrapper faking only `remote get-url`): a real nightly on a clean master → `.source` clean; not on origin/master, HEAD differing outside `roku/manifest`, an existing tag, a remote-rejected push ("origin doesn't have it, and the local tag was removed. Nothing was published."), a failed `gh release create` (tag kept, notes kept, by-hand line) and the full path (tagger noreply, `--verify-tag --latest=false --prerelease`, both read-backs) all behaved. `npm run test:tools` 25/25; "LOCAL TESTS: 742 passed, 0 failed"; "Release build: 127 files, …". QA PASS (minor: `gh auth status` before tagging; fixed). Security review: one medium and six lows, all fixed, then a re-review (no medium or above; lows N1–N3, N5 fixed; N4 left: gitleaks' path-scoped default rules for `.php`, `.tf`, `.yaml`, `nuget.config`, `.p12` don't fire under neutral names, and the zip has none of those). See Deviations.
   - Build it as in Design → `npm run publish:nightly`. Use `gh` and `git` through `spawnSync` with argument arrays (no shell strings). Temp dirs come from `mkdtempSync(join(tmpdir(), 'mmtvl-roku-'))`, removed in `finally`.
   - **QA must not create a tag or a release.** Exercise every refusal instead:
     - no zip for N;
@@ -245,6 +250,7 @@ With `--stable`, the title loses "(nightly)", the WIP box is dropped, and Instal
     - D57 (already added at planning; update to as-built if anything changed);
     - §6 M14 → Done;
     - Q33's note: `npm test` deletes; `deploy:nightly` replaces.
+  - *2026-11-22: written on the branch before the PR* (README: the Sideload step, the commands table, a Versions and nightlies section; CLAUDE.md: the commands block, the gates with `test:tools`, a Versions and nightlies bullet with the release checklist, the `npm test` warning; master plan: D57 as built, Q33's note; M12 step 15 item 7 holds step 7). Left for after step 5: §6 → Done and the archive move.
   - Then `git mv` this plan to `docs/plans/archive/` and fix its link.
   - Done when `grep -n 'deploy:nightly' roku/README.md CLAUDE.md` finds both, and the master plan row links the archive.
 
@@ -257,7 +263,7 @@ With `--stable`, the title loses "(nightly)", the WIP box is dropped, and Instal
 ## Tests
 
 `roku/tools/version.test.mjs` (`node:test`, run by `npm run test:tools`):
-- `parseVersion` reads the real `roku/manifest` as `{0, 1, 1}`. It throws naming the key for a missing `build_version`, `build_version=abc`, `build_version=-1` and a missing `minor_version`. It accepts `build_version=00150` as 150.
+- `parseVersion` reads the real `roku/manifest` as 0.1 with a whole-number build ≥ 1 (not pinned to 1: `nightly` bumps it before the `test:tools` gate; step 2). It throws naming the key for a missing `build_version`, `build_version=abc`, `build_version=-1` and a missing `minor_version`. It accepts `build_version=00150` as 150.
 - `withBuild` changes only the `build_version` line. The rest is byte-identical, including the `bs_const` line, comments, CRLF if present, and the trailing newline. A manifest without the line throws.
 - `zipName` / `tagName` / `releaseTitle` give the exact strings in Design for `{0,1,2}` and, with `stable`, for `{1,0,9}`.
 - `keepNewest`: given names for builds 2, 10, 3, 4, a `.sha256`, and an unrelated `mmtvl-live-tv.zip`, with n = 3, it returns only build 2's zip. It orders by number, not text (10 > 4). Unrelated names are never returned.
@@ -285,3 +291,10 @@ Commands: `cd roku && npm run test:tools`, plus M12's gates (`npm run build && n
 ## Deviations & questions
 
 *(Executors append here.)*
+
+- **2026-11-22, step 1 (mechanical, noted):** `npm install --package-lock-only --prefer-offline` removed only `packages[""].version`; the top-level `"version": "0.1.0"` in `package-lock.json` was removed by hand, and npm then changed nothing more. The diff is exactly the two root lines.
+- **2026-11-22, step 1 (reading of the template):** the stable notes' Install heading is `## Install the release (sideload)`, and with no changes a stable release says "- First Roku release." (not "nightly"). Step 6 may reword both when it aligns the README.
+- **2026-11-22, step 2 (mechanical, noted):** the Tests line "`parseVersion` reads the real manifest as `{0, 1, 1}`" contradicted step 2's order (the bump comes before the `test:tools` gate), so every nightly failed it. The test now checks 0.1 and a whole-number build ≥ 1; the Tests section is updated. `build:release` runs as a gate in a child process (`npm run build:release`), not as an in-process `buildRelease()` call, so its failure still prints "The build number stays N".
+- **2026-11-22, step 4, security review medium 1 (fixed, enforces the Risks table's "the zip holds only committed files"):** a dry run wrote to the same `out/nightly/<zipName>` as a real nightly, and publish couldn't tell them apart (a stale dirty dry-run build-2 zip was sitting there). Now dry runs (off master or dirty) write to **`out/nightly-dry/`** (own keep-newest-3; never published; `deploy:nightly -- <path>` can still install one), and every nightly writes **`<zip>.source`** `{commit, clean, sha256}`. publish refuses unless the `.source` matches the zip's SHA-256, says clean, and `git diff --quiet <commit> HEAD -- . ':!roku/manifest'` holds.
+- **2026-11-22, step 4, gitleaks 8.30.1 skips files silently (found by the implementer, confirmed by QA and the security review):** any basename containing `.br` (all 75 `.brs` in the zip), `.gz`, `.xz`, `.zst`, `.bz2`, `.lz4`, `.zip`, `.tar`, `.7z`, `.rar` and similar is skipped with exit 0; only the "scanned ~N bytes" count shows it. publish copies every file flat into `scan/f<n>.txt` (real PNGs `f<n>.png`, by signature) with a map back to the zip paths, scans the release notes too, and refuses unless the bytes scanned equal the text bytes. The repo's own `gitleaks dir roku` scans are unaffected (no committed file name contains `.br`), but would be if a `.brs` were ever committed.
+- **2026-11-22, step 4, further checks added (security lows, QA minor):** the tag is pushed with `--no-follow-tags`; origin's fetch and push URLs must name the same GitHub repo, and `mmtvl-private` is refused; the committer identity must be a `users.noreply.github.com` address (the annotated tag shows it); `@mentions` in the changes are put in code spans; `gh auth status` runs before tagging; after a failed push, `ls-remote` decides whether the tag is kept; anything in the unzipped tree that isn't a regular file or folder (a link) refuses. Also: the changes come from `414eb6b..HEAD`, so on master after the PR merge they are the squash commits' subjects. "Already exists on origin" is usually reported as "already exists here", since `git fetch` pulls the tag first; both refuse.
