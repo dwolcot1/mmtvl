@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Planned |
+| Status | In progress |
 | Depends on | M12 (the Roku app and its release build) |
 | Master plan decisions used | D54; new D57 |
 | Planned | 2026-11-22 |
