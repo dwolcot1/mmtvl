@@ -2,16 +2,14 @@
 
 | | |
 |---|---|
-| Status | In progress |
+| Status | Done (2026-11-22; step 7 moved to M12 step 15) |
 | Depends on | M12 (the Roku app and its release build) |
 | Master plan decisions used | D54; new D57 |
 | Planned | 2026-11-22 |
 
 ## Next session starts here
 
-- 2026-11-22: steps 1–4 done and committed on branch `m14-roku-versioning` (QA PASS each; step 4's security review and re-review fixed, see Deviations). Step 6's README, CLAUDE.md and master plan text is written on the branch; what's left of step 6 is M14 → Done and the archive move, after step 5.
-- Next: a milestone QA pass, then (ask) a PR for the branch and its merge to `master`, which step 5 needs: `npm run nightly` must run on a clean `master` with these tools.
-- Step 5 pushes to `master` (approved by the user 2026-11-22) and **asks before `publish:nightly`** (the tag and the prerelease on the public repo). Step 7 is the user's, folded into M12 step 15 (item 7 there).
+- **Done 2026-11-22.** Steps 1–6 built and merged (PR #10, `b8a707a`); the first nightly, build 2, is `Roku build 2` (`59ffe75`) on `master`, published as the prerelease `roku-v0.1-build2`. Step 7 (on the Roku) moved to M12 step 15, item 7, with the user's OK. Nothing left here.
 
 ## Goal
 
@@ -223,7 +221,8 @@ With `--stable`, the title loses "(nightly)", the WIP box is dropped, and Instal
     - the notes hold no host or address;
     - `--latest=false` is always passed.
 
-- [ ] **5. The first nightly, build 2** `[release]`; the push to `master` is approved, and publishing needs the user's yes
+- [x] **5. The first nightly, build 2** `[release]`; the push to `master` is approved, and publishing needs the user's yes
+  - *Done 2026-11-22* (in the `release` worktree, which holds `master`): `npm run nightly` → "All 5 gates passed.", "The zip's manifest: build_version=2, bs_const=DEBUG=false.", "Built from b8a707a39."; SHA-256 `ad7a2fdea3915ed05ca04d780c73f03a5599afd52cc6c52659731f0c54f074f7`. Committed `Roku build 2` (`59ffe75`, only `roku/manifest`), gitleaks clean, pushed. After the user's yes, `publish:nightly -- 2`: gitleaks "nothing found in … 127 files or the release notes (1555917 bytes scanned, 1555917 in text files)", tag pushed, release created, both read-backs passed. Read back by hand: `gh release view roku-v0.1-build2` → prerelease true, draft false, one asset `MMTVL-Live-TV-Roku-0.1-build2.zip`; `gh release list -L 3` → the Roku prerelease, then `MMTVL 1.3.1 Latest`; the notes hold no host or address; the downloaded zip's SHA-256 matches the notes. Release: https://github.com/dwolcot1/mmtvl/releases/tag/roku-v0.1-build2
   1. On a clean `master` (in this worktree: `git switch master && git pull`), run `cd roku && npm run nightly` → build 2. Quote the zip line and the SHA-256.
   2. Commit `roku/manifest` by path as `Roku build 2`.
   3. Run gitleaks over the commit:
@@ -235,7 +234,7 @@ With `--stable`, the title loses "(nightly)", the WIP box is dropped, and Instal
   6. Read back: `gh release view roku-v0.1-build2` (prerelease, one asset), and `gh release list -L 3`, where `v1.3.1` is still Latest. Open the release page and check its text shows no address.
   - Done when both read-backs are quoted and the user has seen the release link.
 
-- [ ] **6. Docs** `[doc]`, files: `roku/README.md`, `CLAUDE.md`, `docs/plans/MASTER_PLAN.md`, this plan
+- [x] **6. Docs** `[doc]`, files: `roku/README.md`, `CLAUDE.md`, `docs/plans/MASTER_PLAN.md`, this plan
   - `roku/README.md`:
     - a **Versions and nightlies** section: the version is in `manifest`, shown in Settings → About; nightlies on the repo's Releases page tagged `roku-v…`, prereleases marked WIP; install by uploading the zip; check the SHA-256;
     - the commands table gains `nightly`, `deploy:nightly`, `publish:nightly`, `test:tools`, `version`;
@@ -257,6 +256,7 @@ With `--stable`, the title loses "(nightly)", the WIP box is dropped, and Instal
 - [ ] **7. On the Roku** `[human]`, folded into M12 step 15's device session (no extra session)
   - `npm run deploy:nightly`. Settings → About says **"Version 0.1 Build 2"**. Note what the deploy's ECP read-back printed for the dev app's version (record the form under Deviations, and drop the read-back if ECP has no version).
   - Look at the installer page (`http://<roku>/`) and Roku Settings → System → About / the app's info (`*` on the app tile) for any version display, and record it.
+  - *Moved 2026-11-22 to M12 step 15, item 7 (user's OK at close-out); record the results there.*
   - **Q33:** with settings migrated, `npm run nightly` a build 3 (a real one, committed like step 5, unpublished if the user prefers) and `deploy:nightly` it. Are the playlist, guides and favorites still there? Record the answer in M12's Q33 and the master plan.
   - Done when the three observations are recorded here and in M12 step 15.
 
@@ -298,3 +298,4 @@ Commands: `cd roku && npm run test:tools`, plus M12's gates (`npm run build && n
 - **2026-11-22, step 4, security review medium 1 (fixed, enforces the Risks table's "the zip holds only committed files"):** a dry run wrote to the same `out/nightly/<zipName>` as a real nightly, and publish couldn't tell them apart (a stale dirty dry-run build-2 zip was sitting there). Now dry runs (off master or dirty) write to **`out/nightly-dry/`** (own keep-newest-3; never published; `deploy:nightly -- <path>` can still install one), and every nightly writes **`<zip>.source`** `{commit, clean, sha256}`. publish refuses unless the `.source` matches the zip's SHA-256, says clean, and `git diff --quiet <commit> HEAD -- . ':!roku/manifest'` holds.
 - **2026-11-22, step 4, gitleaks 8.30.1 skips files silently (found by the implementer, confirmed by QA and the security review):** any basename containing `.br` (all 75 `.brs` in the zip), `.gz`, `.xz`, `.zst`, `.bz2`, `.lz4`, `.zip`, `.tar`, `.7z`, `.rar` and similar is skipped with exit 0; only the "scanned ~N bytes" count shows it. publish copies every file flat into `scan/f<n>.txt` (real PNGs `f<n>.png`, by signature) with a map back to the zip paths, scans the release notes too, and refuses unless the bytes scanned equal the text bytes. The repo's own `gitleaks dir roku` scans are unaffected (no committed file name contains `.br`), but would be if a `.brs` were ever committed.
 - **2026-11-22, step 4, further checks added (security lows, QA minor):** the tag is pushed with `--no-follow-tags`; origin's fetch and push URLs must name the same GitHub repo, and `mmtvl-private` is refused; the committer identity must be a `users.noreply.github.com` address (the annotated tag shows it); `@mentions` in the changes are put in code spans; `gh auth status` runs before tagging; after a failed push, `ls-remote` decides whether the tag is kept; anything in the unzipped tree that isn't a regular file or folder (a link) refuses. Also: the changes come from `414eb6b..HEAD`, so on master after the PR merge they are the squash commits' subjects. "Already exists on origin" is usually reported as "already exists here", since `git fetch` pulls the tag first; both refuse.
+- **2026-11-22, close-out:** M14 marked Done with step 7 open, since it needs a Roku; with the user's OK it moved to M12 step 15, item 7 (Q33 is already M12 step 15, item 6).

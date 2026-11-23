@@ -398,7 +398,7 @@ Every step runs `cd roku && npm run build` (bsc, no errors) and `npm run lint` b
   4. Leave it playing 30 minutes on the stick. No crash; record `chanperf` (`nc $ROKU_HOST 8080`, `chanperf`) memory at start and end.
   5. Reboot the Roku, open the app: guides download again, and settings are kept.
   6. Re-sideload a build: are the settings kept (Q33)? Since M14, install with `npm run deploy:nightly` (Replace) and re-sideload a newer nightly (not `npm test`, which deletes the app and its settings).
-  7. **M14 step 7** (folded in here): after `npm run deploy:nightly`, Settings → About says "Version 0.1 Build N"; note what the deploy's ECP read-back printed for the dev app's version; look for a version display on the installer page and in the app's info (`*` on its tile). Record the answers here and in `archive/M14-roku-versioning.md` step 7.
+  7. **M14 step 7** (folded in here): after `npm run deploy:nightly`, Settings → About says "Version 0.1 Build N"; note what the deploy's ECP read-back printed for the dev app's version; look for a version display on the installer page and in the app's info (`*` on its tile). Record the answers here (M14 is closed; its step 7 moved here). The first nightly is `roku-v0.1-build2` on the Releases page.
   - Done when: each check is ticked or its failure is recorded here, with the console lines (hosts only).
 
 ### Phase 4 — teams, search, Match Guide
