@@ -95,7 +95,7 @@ struct SettingsPhoneRemoteTests {
         #expect(model.accessory(for: model.page) == .qrCode(url))
         #expect(model.row(id: "pair.code")?.value == "1234")
         #expect(model.row(id: "pair.done")?.title == "Paired \"iPhone\"")
-        #expect(model.focusableRowIDs == ["pair.close"])
+        #expect(model.actionRowIDs == ["pair.close"])
     }
 
     /// Re-review L1: after too many wrong codes the page keeps the QR code and says the typed code is off.
@@ -112,7 +112,7 @@ struct SettingsPhoneRemoteTests {
         #expect(model.row(id: "pair.locked")?.detail?.contains("Scan the QR code") == true)
         #expect(model.row(id: "pair.code") == nil)
         #expect(model.row(id: "pair.ended") == nil)
-        #expect(model.focusableRowIDs == ["pair.close"])
+        #expect(model.actionRowIDs == ["pair.close"])
     }
 
     /// The pairing expired: the page says pairing ended; no code, no QR.
@@ -126,7 +126,7 @@ struct SettingsPhoneRemoteTests {
         #expect(model.row(id: "pair.ended")?.title == "Pairing Ended")
         #expect(model.row(id: "pair.code") == nil)
         #expect(model.accessory(for: model.page) == .symbol("iphone"))
-        #expect(model.focusableRowIDs == ["pair.close"])
+        #expect(model.actionRowIDs == ["pair.close"])
     }
 
     @Test func forgetAllConfirms() {

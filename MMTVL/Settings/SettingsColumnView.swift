@@ -142,8 +142,8 @@ private struct SettingsPageList: View {
     let onHoverRow: (String, SettingsPage) -> Void
     let onActivateRow: (String, SettingsPage) -> Void
 
-    /// The padded content, for scrolling to the list's top (the first focusable row) or its end (the last
-    /// focusable row).
+    /// The padded content, for scrolling to the list's top (the first row, or the first action row) or its end (the
+    /// last row, or the last action row).
     private static let topID = "settings.list.top"
 
     @Namespace private var highlightNamespace
@@ -187,14 +187,16 @@ private struct SettingsPageList: View {
         }
     }
 
-    /// Centers the marked row. On the first focusable row the list shows its top, and on the last one its end, so
-    /// headers and info rows before the first or after the last focusable row (which never take focus) can be seen.
+    /// Centers the marked row. On the first row or the first action row the list shows its top, and on the last row
+    /// or the last action row its end, so headers, info rows and footers at either end stay in view (the first
+    /// check wins on a page with one action row). Other rows, info rows included, are centered.
     private func scroll(_ proxy: ScrollViewProxy, animated: Bool) {
         guard let markedRowID else { return }
-        let focusableIDs = sections.flatMap(\.rows).filter { $0.action != nil }.map(\.id)
+        let rows = sections.flatMap(\.rows)
+        let actionIDs = rows.filter { $0.action != nil }.map(\.id)
         let target: (id: String, anchor: UnitPoint) =
-            if markedRowID == focusableIDs.first { (Self.topID, .top) }
-            else if markedRowID == focusableIDs.last { (Self.topID, .bottom) }
+            if markedRowID == rows.first?.id || markedRowID == actionIDs.first { (Self.topID, .top) }
+            else if markedRowID == rows.last?.id || markedRowID == actionIDs.last { (Self.topID, .bottom) }
             else { (markedRowID, .center) }
         if animated {
             withAnimation(Theme.focusAnimation) { proxy.scrollTo(target.id, anchor: target.anchor) }

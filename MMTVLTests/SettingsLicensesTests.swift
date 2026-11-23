@@ -27,8 +27,8 @@ struct SettingsLicensesTests {
     @Test func listShowsEveryComponentInOrder() {
         let (model, _) = makeSettingsModel()
         model.open(.licenses)
-        #expect(model.focusableRowIDs == ThirdPartyLicenses.all.map { "license.\($0.id)" })
-        #expect(model.focusableRowIDs.first == "license.mmtvl")
+        #expect(model.actionRowIDs == ThirdPartyLicenses.all.map { "license.\($0.id)" })
+        #expect(model.actionRowIDs.first == "license.mmtvl")
         for component in ThirdPartyLicenses.all {
             let row = model.row(id: "license.\(component.id)")
             #expect(row?.title == component.name)
@@ -53,7 +53,7 @@ struct SettingsLicensesTests {
         #expect(model.accessory(for: model.page) == .qrCode(ffmpeg.url))
         #expect(rowIDs(model) == ["license.version", "license.license", "license.copyright", "license.source",
                                   "license.done"])
-        #expect(model.focusableRowIDs == ["license.done"])
+        #expect(model.actionRowIDs == ["license.done"])
         #expect(model.row(id: "license.version")?.value == ffmpeg.version)
         #expect(model.row(id: "license.license")?.value == ffmpeg.license)
         #expect(model.row(id: "license.copyright")?.title == ffmpeg.copyright)

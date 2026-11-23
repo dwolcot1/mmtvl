@@ -11,7 +11,7 @@ namespace SettingsPageTests
     sub test_rootListsTheCategories(t as object)
         model = SettingsStatus.make(SettingsPageTests.fixture({}))
         list = SettingsPages.sections("root", model)
-        t.assertEqual(SettingsPages.focusableIDs(list), ["liveTV", "remoteInput", "device", "import", "about"])
+        t.assertEqual(SettingsPages.actionIDs(list), ["liveTV", "remoteInput", "device", "import", "about"])
         liveTV = SettingsPages.rowWithID(list, "liveTV")
         t.assertEqual(liveTV.value, "3 Channels")
         t.assertTrue(liveTV.disclosure)
@@ -21,7 +21,7 @@ namespace SettingsPageTests
         t.assertEqual(SettingsPages.rowWithID(list, "about").value, "1.0")
         t.assertEqual(SettingsPages.rowWithID(list, "remoteInput").value, "")
         t.assertEqual(SettingsPages.pageTitle("root", model), "Settings")
-        for each id in SettingsPages.focusableIDs(list)
+        for each id in SettingsPages.actionIDs(list)
             t.assertTrue(SettingsPages.description(list, id) <> "", id + " has a description")
         end for
     end sub
@@ -49,7 +49,7 @@ namespace SettingsPageTests
         input.channels = []
         input.antenna = { enabled: false }
         list = SettingsPages.sections("liveTV", SettingsStatus.make(input))
-        t.assertEqual(SettingsPages.focusableIDs(list), ["playlist.edit", "antenna"])
+        t.assertEqual(SettingsPages.actionIDs(list), ["playlist.edit", "antenna"])
         t.assertEqual(SettingsPages.rowWithID(list, "antenna").value, "Off")
         edit = SettingsPages.rowWithID(list, "playlist.edit")
         t.assertEqual(edit.title, "Add Playlist URL…")
@@ -67,7 +67,7 @@ namespace SettingsPageTests
         input.guideLoading = true
         model = SettingsStatus.make(input)
         list = SettingsPages.sections("liveTV", model)
-        t.assertEqual(SettingsPages.focusableIDs(list), ["playlist.edit", "guide." + ids[0], "guide." + ids[1], "guide.add", "antenna", "groups", "hiddenChannels", "teams", "refresh", "removeSource"])
+        t.assertEqual(SettingsPages.actionIDs(list), ["playlist.edit", "guide." + ids[0], "guide." + ids[1], "guide.add", "antenna", "groups", "hiddenChannels", "teams", "refresh", "removeSource"])
         t.assertEqual(SettingsPageTests.sectionTitles(list), ["Playlist", "Guides", "Channels", ""], "MMTVL's sections; Manage has no title")
         info = SettingsPages.rowWithID(list, "playlist.info")
         t.assertEqual(info.title, "iptv.example")
@@ -162,7 +162,7 @@ namespace SettingsPageTests
         input.store.guides = []
         input.playlistGuideURLs = ["https://guide.example/epg.xml"]
         list = SettingsPages.sections("liveTV", SettingsStatus.make(input))
-        t.assertEqual(SettingsPages.focusableIDs(list), ["playlist.edit", "guide.add", "antenna", "groups", "hiddenChannels", "teams", "refresh", "removeSource"])
+        t.assertEqual(SettingsPages.actionIDs(list), ["playlist.edit", "guide.add", "antenna", "groups", "hiddenChannels", "teams", "refresh", "removeSource"])
         row = SettingsPages.rowWithID(list, "guide." + GuideSources.cacheID("https://guide.example/epg.xml"))
         t.assertEqual(row.value, "From Playlist")
         t.assertEqual(row.detail, "Not loaded yet")
@@ -253,7 +253,7 @@ namespace SettingsPageTests
         model = SettingsStatus.make(input)
         list = SettingsPages.sections("groups", model)
         t.assertEqual(SettingsPages.pageTitle("groups", model), "Groups")
-        t.assertEqual(SettingsPages.focusableIDs(list), ["group.News", "group.Sports"], "playlist order")
+        t.assertEqual(SettingsPages.actionIDs(list), ["group.News", "group.Sports"], "playlist order")
         news = SettingsPages.rowWithID(list, "group.News")
         t.assertEqual([news.value, news.detail, news.dimmed], ["Shown", "2 channels", false])
         sports = SettingsPages.rowWithID(list, "group.Sports")
@@ -266,13 +266,13 @@ namespace SettingsPageTests
         input = SettingsPageTests.fixture({})
         input.store.prefs.hiddenChannels = ["id:c", "id:a"]
         list = SettingsPages.sections("hiddenChannels", SettingsStatus.make(input))
-        t.assertEqual(SettingsPages.focusableIDs(list), ["hidden.id:a", "hidden.id:c"], "playlist order")
+        t.assertEqual(SettingsPages.actionIDs(list), ["hidden.id:a", "hidden.id:c"], "playlist order")
         row = SettingsPages.rowWithID(list, "hidden.id:a")
         t.assertEqual([row.title, row.value, row.detail], ["101  Alpha", "Show", "News"])
         t.assertEqual(row.action, { type: "unhideChannel", id: "id:a" })
         input.store.prefs.hiddenChannels = []
         list = SettingsPages.sections("hiddenChannels", SettingsStatus.make(input))
-        t.assertEqual(SettingsPages.focusableIDs(list), [])
+        t.assertEqual(SettingsPages.actionIDs(list), [])
         t.assertEqual(SettingsPages.rowWithID(list, "hidden.none").title, "No hidden channels")
         t.assertEqual(list[0].footer, "Select a channel to show it again.")
     end sub
@@ -288,11 +288,11 @@ namespace SettingsPageTests
         list = SettingsPages.sections(page, model)
         t.assertEqual(SettingsPages.pageTitle(page, model), "iptv.example " + Chr(183) + " guide.xml")
         t.assertEqual(SettingsPages.rowWithID(list, "guidePage.status").detail, "Can't read .gz on this Roku")
-        t.assertEqual(SettingsPages.focusableIDs(list), ["guidePage.moveDown", "guidePage.remove"])
+        t.assertEqual(SettingsPages.actionIDs(list), ["guidePage.moveDown", "guidePage.remove"])
         t.assertEqual(SettingsPages.rowWithID(list, "guidePage.moveDown").action, { type: "moveGuide", id: ids[0], step: 1 })
         t.assertEqual(SettingsPages.rowWithID(list, "guidePage.remove").action, { type: "removeGuide", id: ids[0] })
         t.assertEqual(list[0].footer, "When two guides have the same channel, the higher one wins.")
-        t.assertEqual(SettingsPages.focusableIDs(SettingsPages.sections("guide:" + ids[1], model)), ["guidePage.moveUp", "guidePage.remove"])
+        t.assertEqual(SettingsPages.actionIDs(SettingsPages.sections("guide:" + ids[1], model)), ["guidePage.moveUp", "guidePage.remove"])
         t.assertEqual(SettingsPages.sections("guide:gone", model), [], "an id no longer listed shows nothing")
         t.assertEqual(SettingsPages.pageTitle("guide:gone", model), "Guide")
     end sub
@@ -300,7 +300,7 @@ namespace SettingsPageTests
     sub test_removeConfirmHasCancelFirst(t as object)
         model = SettingsStatus.make(SettingsPageTests.fixture({}))
         list = SettingsPages.sections("confirmRemoveSource", model)
-        t.assertEqual(SettingsPages.focusableIDs(list), ["confirm.cancel", "confirm.remove"])
+        t.assertEqual(SettingsPages.actionIDs(list), ["confirm.cancel", "confirm.remove"])
         t.assertEqual(SettingsPages.rowWithID(list, "confirm.cancel").action, { type: "pop" })
         t.assertEqual(SettingsPages.rowWithID(list, "confirm.remove").action, { type: "removeSource" })
         t.assertEqual(SettingsPages.pageTitle("confirmRemoveSource", model), "Remove Live TV Source?")
@@ -311,7 +311,7 @@ namespace SettingsPageTests
     sub test_channelUpRowTogglesTheDirection(t as object)
         input = SettingsPageTests.fixture({})
         list = SettingsPages.sections("remoteInput", SettingsStatus.make(input))
-        t.assertEqual(SettingsPages.focusableIDs(list), ["channelUp"])
+        t.assertEqual(SettingsPages.actionIDs(list), ["channelUp"])
         row = SettingsPages.rowWithID(list, "channelUp")
         t.assertEqual(row.value, "Up the List")
         t.assertEqual(row.detail, "")
@@ -338,9 +338,41 @@ namespace SettingsPageTests
         t.assertEqual(SettingsPages.rowWithID(list, "device.compressedGuides").value, "On: Up to 2 MB")
         t.assertEqual(SettingsPages.rowWithID(list, "device.mpeg2").value, "Off: No MPEG-2")
         t.assertEqual(SettingsPages.rowWithID(list, "device.ac3").value, "On")
-        t.assertEqual(SettingsPages.focusableIDs(list), ["device.channelLogos"], "only Channel Logos is a switch")
+        t.assertEqual(SettingsPages.actionIDs(list), ["device.channelLogos"], "only Channel Logos is a switch")
         t.assertEqual(list[0].footer, "")
         t.assertFalse(list[0].warning)
+    end sub
+
+    ' Tester feedback on build 5: every row takes focus, info rows included, in display order.
+    sub test_everyRowIsFocusable(t as object)
+        model = SettingsStatus.make(SettingsPageTests.fixture({}))
+        device = SettingsPages.sections("device", model)
+        t.assertEqual(SettingsPages.focusableIDs(device), ["device.model", "device.memory", "device.guideWindow", "device.channelLogos", "device.compressedGuides", "device.mpeg2", "device.ac3"])
+        liveTV = SettingsPages.sections("liveTV", model)
+        ids = SettingsPageTests.cacheIDs(SettingsPageTests.fixture({}).store.guides)
+        t.assertEqual(SettingsPages.focusableIDs(liveTV), ["playlist.info", "playlist.edit", "guide." + ids[0], "guide." + ids[1], "guide.add", "antenna", "groups", "hiddenChannels", "teams", "refresh", "removeSource"])
+        t.assertEqual(SettingsPages.focusableIDs(SettingsPages.sections("about", model)), ["about.version", "about.build"])
+        t.assertEqual(SettingsPages.focusableIDs([]), [])
+    end sub
+
+    ' A focused info row's band: its description, else the info-only line; an action row without one stays "".
+    sub test_anInfoRowsBandSaysItsInformationOnly(t as object)
+        model = SettingsStatus.make(SettingsPageTests.fixture({}))
+        device = SettingsPages.sections("device", model)
+        t.assertEqual(SettingsPages.infoOnlyDescription, "Information only: nothing to change here.")
+        for each id in ["device.model", "device.memory", "device.guideWindow", "device.compressedGuides", "device.mpeg2", "device.ac3"]
+            t.assertEqual(SettingsPages.description(device, id), "Information only: nothing to change here.", id)
+        end for
+        t.assertEqual(Left(SettingsPages.description(device, "device.channelLogos"), 26), "Shows channel logos in the", "an action row's own")
+        t.assertEqual(SettingsPages.description(SettingsPages.sections("about", model), "about.build"), SettingsPages.infoOnlyDescription)
+        ' An info row with a description of its own keeps it.
+        own = [SettingsPages.newSection("s", "", [SettingsPages.newRow({ id: "info", title: "Info", description: "Its own words." })], "")]
+        t.assertEqual(SettingsPages.description(own, "info"), "Its own words.")
+        groups = SettingsPages.sections("groups", model)
+        first = SettingsPages.actionIDs(groups)[0]
+        t.assertEqual(SettingsPages.description(groups, first), "", "an action row without a description")
+        t.assertEqual(SettingsPages.description(device, "gone"), "", "no row")
+        t.assertEqual(SettingsPages.description(device, invalid), "", "no focus")
     end sub
 
     sub test_aHighRokusFeatures(t as object)
@@ -425,12 +457,12 @@ namespace SettingsPageTests
     sub test_importAndAboutPages(t as object)
         model = SettingsStatus.make(SettingsPageTests.fixture({}))
         importList = SettingsPages.sections("import", model)
-        t.assertEqual(SettingsPages.focusableIDs(importList), [], "text only")
+        t.assertEqual(SettingsPages.actionIDs(importList), [], "text only")
         t.assertEqual(SettingsPages.rowWithID(importList, "import.run").detail, "python3 -I scripts/roku-export-settings.py")
         about = SettingsPages.sections("about", model)
         t.assertEqual(SettingsPages.rowWithID(about, "about.version").value, "1.0")
         t.assertEqual(SettingsPages.rowWithID(about, "about.build").value, "7")
-        t.assertEqual(SettingsPages.focusableIDs(about), [])
+        t.assertEqual(SettingsPages.actionIDs(about), [])
         t.assertEqual(SettingsPages.pageTitle("import", model), "Import from MMTVL")
         t.assertEqual(SettingsPages.pageTitle("about", model), "About")
         t.assertEqual(SettingsPages.sections("nowhere", model), [])
@@ -567,7 +599,7 @@ namespace SettingsPageTests
     sub test_antennaOnlyPageHasGuidesAndRefresh(t as object)
         list = SettingsPages.sections("liveTV", SettingsStatus.make(SettingsPageTests.antennaFixture()))
         t.assertEqual(SettingsPageTests.sectionIDs(list), ["playlist", "guides", "channels", "manage"])
-        t.assertEqual(SettingsPages.focusableIDs(list), ["playlist.edit", "guide.add", "antenna", "groups", "hiddenChannels", "teams", "refresh"])
+        t.assertEqual(SettingsPages.actionIDs(list), ["playlist.edit", "guide.add", "antenna", "groups", "hiddenChannels", "teams", "refresh"])
         t.assertInvalid(SettingsPages.rowWithID(list, "removeSource"))
         t.assertEqual(SettingsPageTests.section(list, "guides").footer, "A channel uses the first guide in this list that has it.", "the count is the playlist's")
         t.assertEqual(SettingsPages.rowWithID(list, "refresh").description, "Reads the tuner's channels and downloads the guides again now.")
@@ -580,7 +612,7 @@ namespace SettingsPageTests
         list = SettingsPages.sections("antenna", model)
         t.assertEqual(SettingsPages.pageTitle("antenna", model), "Antenna")
         t.assertEqual(SettingsPageTests.sectionTitles(list), ["Antenna", "Tuners", "Guide"])
-        t.assertEqual(SettingsPages.focusableIDs(list), ["antenna.enabled", "antenna.find", "antenna.address", "antenna.guide"])
+        t.assertEqual(SettingsPages.actionIDs(list), ["antenna.enabled", "antenna.find", "antenna.address", "antenna.guide"])
         use = SettingsPages.rowWithID(list, "antenna.enabled")
         t.assertEqual(use.title, "Use Antenna")
         t.assertEqual(use.value, "On")
@@ -632,7 +664,7 @@ namespace SettingsPageTests
         input.antenna.enabled = false
         list = SettingsPages.sections("antenna", SettingsStatus.make(input))
         t.assertEqual(SettingsPageTests.sectionIDs(list), ["antenna"])
-        t.assertEqual(SettingsPages.focusableIDs(list), ["antenna.enabled"])
+        t.assertEqual(SettingsPages.actionIDs(list), ["antenna.enabled"])
         t.assertEqual(SettingsPages.rowWithID(list, "antenna.enabled").value, "Off")
         t.assertEqual(SettingsPages.rowWithID(SettingsPages.sections("liveTV", SettingsStatus.make(input)), "antenna").value, "Off")
     end sub

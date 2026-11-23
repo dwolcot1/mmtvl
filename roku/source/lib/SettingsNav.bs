@@ -5,25 +5,30 @@
 '
 '   open(page) -> state: "root", or "device" (the low-memory notice's Open Settings: the root on Device, then
 '     Device, so Back walks out as if it had been opened by hand, as MMTVL's openTile).
-'   state { stack: [{ page, focus }], held, replays }: focus is the page's focused row id ("" = the first);
+'   state { stack: [{ page, focus }], held, replays }: focus is the page's focused row id ("" = the default: the
+'     first action row, else the first row);
 '     held the key pressed and not yet released (a held key's repeats), replays the About page's Replay count
 '     (DEBUG builds only: release builds carry neither the count nor the sequence).
 '   handle(key, press, state, list) -> { handled, state, action, pageChanged }
 '     list: SettingsPages.sections for the top page. handled is always true: every key is Settings' while it
 '     shows, and Back never leaves the app (D49): Back on the root asks the scene to close Settings (action
 '     "close"), which returns to the screen it came from.
-'     up / down          the focusable row above / below, clamped (no wrap, as ListFocus.move)
+'     up / down          the row above / below, clamped (no wrap, as ListFocus.move): every row, info rows
+'                        included (SettingsPages.focusableIDs), so a page of info rows can be read
 '     rewind / fastforward / channelup / channeldown   8 rows (MMTVL's Channel Up/Down, M7 L5)
-'     right              opens a push row (M7g L7); values don't cycle
+'     right              opens a push row (M7g L7); values don't cycle; nothing on an info row
 '     left               back a page, except on the root (M7g L7)
-'     OK                 the focused row's action: push and pop here; everything else is returned for the scene
+'     OK                 the focused row's action (none on an info row): push and pop here; everything else is
+'                        returned for the scene
 '                        (removeGuide and removeSource also go back a page, as MMTVL)
 '     back               back a page; on the root, action "close"
 '     replay             DEBUG builds: on the About page, the third in a row: action "probeSequence" (L8: the
 '                        screen opens the Probes screen). Release builds: nothing.
 '     A press of the key still held (no release since its last press) is a repeat: Up and Down repeat, Left
 '     and Right don't change page on one (MMTVL's isRepeat; whether a Roku repeats held keys is a device check).
-'   currentPage(state), focusedID(state, list): ListFocus.resolve over list's focusable rows (invalid: none).
+'   currentPage(state), focusedID(state, list): resolveRow over list (invalid: no rows).
+'   resolveRow(list, focus) -> focus when it's one of list's rows, else the first action row, else the first row
+'     (so a page opens where it always did, and Up reaches the info rows above), invalid with none.
 '   columns(state) -> [{ index, page, role }]: every stack page ("current" the top, "parent" the one below,
 '     "hidden" older ones), then one "empty" column (the slot a pushed page slides into).
 '   trackX(depth, layout) -> the track's x: the root list centred (settingsRootColumnLeading) at depth 1; from the
@@ -56,7 +61,19 @@ namespace SettingsNav
     end function
 
     function focusedID(state as object, list as object) as dynamic
-        return SettingsNav.resolve(SettingsPages.focusableIDs(list), state.stack[state.stack.Count() - 1].focus)
+        return SettingsNav.resolveRow(list, state.stack[state.stack.Count() - 1].focus)
+    end function
+
+    function resolveRow(list as object, focus as dynamic) as dynamic
+        ids = SettingsPages.focusableIDs(list)
+        if SettingsStatus.isText(focus)
+            for each id in ids
+                if id = focus then return focus
+            end for
+        end if
+        actions = SettingsPages.actionIDs(list)
+        if actions.Count() > 0 then return actions[0]
+        return SettingsNav.resolve(ids, invalid)
     end function
 
     function handle(key as string, press as boolean, state as object, list as object) as object
@@ -82,7 +99,7 @@ namespace SettingsNav
         #end if
         ids = SettingsPages.focusableIDs(list)
         top = current.stack[current.stack.Count() - 1]
-        focus = SettingsNav.resolve(ids, top.focus)
+        focus = SettingsNav.resolveRow(list, top.focus)
         if key = "up" or key = "down"
             stepSize = 1
             if key = "up" then stepSize = -1

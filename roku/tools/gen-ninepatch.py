@@ -16,6 +16,8 @@ Colours and sizes come from roku/components/theme/Theme.bs (which maps them to M
   settings_row      a one-line Settings row: settingsRowCapsuleFill plus the unfocused rim, radius 36 (a capsule at 72)
   settings_row_tall a two-line Settings row (title and detail): the same, radius 39 (Theme.swift settingsRowCornerRadius 40, on 3 px)
   settings_info_row a read-only Settings row: settingsInfoRowFill, no rim, radius 36; _tall: radius 39
+  settings_info_focus a focused read-only Settings row's ring, drawn over settings_info_row: a 3-px white ring,
+                    radius 36; _tall: radius 39 (an info row keeps its quiet surface and text colours when focused)
   focus_row         white, radius 12: menu rows, the group column's focus (tint with focusBitmapBlendColor)
   focus_capsule     white, radius 36: one-line Settings rows (also the parent's opened row, tinted); _tall: radius 39
   guide_cell        TimeGrid programBackgroundBitmapUri: tileFill, radius 9, a 1/2-px transparent inset (3-px gaps)
@@ -166,6 +168,9 @@ def main():
         # settingsInfoRowFill (white 0.05), no rim.
         make("settings_info_row", (76, 76), 36, (0xFF, 0xFF, 0xFF, 0x0D)),
         make("settings_info_row_tall", (84, 84), 39, (0xFF, 0xFF, 0xFF, 0x0D)),
+        # A focused info row: a 3-px white ring over settings_info_row, so it reads as focused but not actionable.
+        make("settings_info_focus", (76, 76), 36, None, ring=3),
+        make("settings_info_focus_tall", (84, 84), 39, None, ring=3),
         make("focus_row", (30, 30), 12, (0xFF, 0xFF, 0xFF, 0xFF)),
         make("focus_capsule", (76, 76), 36, (0xFF, 0xFF, 0xFF, 0xFF)),
         make("focus_capsule_tall", (84, 84), 39, (0xFF, 0xFF, 0xFF, 0xFF)),

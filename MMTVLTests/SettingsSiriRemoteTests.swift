@@ -8,7 +8,7 @@ struct SettingsSiriRemoteTests {
     @Test func remoteInputListsSiriRemoteAfterGameControllers() {
         let (model, _) = makeSettingsModel()
         model.open(.remoteInput)
-        let ids = model.focusableRowIDs
+        let ids = model.actionRowIDs
         #expect(ids == ["globalInput", "controllers", "siriRemote", "remoteButtons", "channelUp", "cursorAutoHide",
                         "phoneRemote"])
         #expect(model.row(id: "siriRemote")?.action == .push(.siriRemote))
@@ -80,7 +80,7 @@ struct SettingsSiriRemoteTests {
     @Test func swipesRowIsOffByDefaultAndToggles() {
         let (model, recorder) = makeSettingsModel()
         model.open(.siriRemote)
-        #expect(model.focusableRowIDs.prefix(2) == ["siri.enabled", "siri.swipes"])
+        #expect(model.actionRowIDs.prefix(2) == ["siri.enabled", "siri.swipes"])
         let row = model.row(id: "siri.swipes")
         #expect(row?.title == "Swipes")
         #expect(row?.value == "Off")
@@ -198,7 +198,7 @@ struct SettingsSiriRemoteTests {
         #expect(row?.value == "Off")
         #expect(row?.detail == "Letter and number keys only work in MMTVL")
         #expect(row?.action == nil)
-        #expect(!model.focusableRowIDs.contains("binding.global"))
+        #expect(!model.actionRowIDs.contains("binding.global"))
         #expect(recorder.appliedBindings.isEmpty)
     }
 

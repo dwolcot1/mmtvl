@@ -274,8 +274,13 @@ namespace Theme
             "panelSolid": "pkg:/images/panel_solid.9.png",
             "settingsRow": "pkg:/images/settings_row.9.png", ' an unfocused one-line Settings row capsule
             "settingsRowTall": "pkg:/images/settings_row_tall.9.png", ' an unfocused two-line Settings row
-            "settingsInfoRow": "pkg:/images/settings_info_row.9.png", ' a read-only row (no action, never focused)
+            ' A read-only row (no action): the same surface whether focused or not (focus adds settingsInfoFocus).
+            "settingsInfoRow": "pkg:/images/settings_info_row.9.png",
             "settingsInfoRowTall": "pkg:/images/settings_info_row_tall.9.png",
+            ' A focused read-only row: a 3-px white ring over settingsInfoRow, at the row's shape (radius 36; _tall 39),
+            ' text colours unchanged, so it reads as focused but not as something to choose (no white capsule).
+            "settingsInfoFocus": "pkg:/images/settings_info_focus.9.png",
+            "settingsInfoFocusTall": "pkg:/images/settings_info_focus_tall.9.png",
             "focusRow": "pkg:/images/focus_row.9.png", ' menu rows, the group LabelList focusBitmapUri (radius 12)
             "focusCapsule": "pkg:/images/focus_capsule.9.png", ' one-line Settings rows, buttons (radius 36)
             "focusCapsuleTall": "pkg:/images/focus_capsule_tall.9.png", ' two-line Settings rows (radius 39)

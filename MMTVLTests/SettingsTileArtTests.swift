@@ -20,7 +20,7 @@ struct SettingsTileArtTests {
     @Test func appTilesOfferBothStylesAndPictures() async {
         let (model, _) = await onArtPage()
         #expect(model.pageTitle == "Tile Art")
-        #expect(model.focusableRowIDs == ["art.designed", "art.icon", "art.file.0"])
+        #expect(model.actionRowIDs == ["art.designed", "art.icon", "art.file.0"])
         #expect(model.row(id: "art.designed")?.value == "Selected")
         #expect(model.row(id: "art.icon")?.value == nil)
         #expect(model.row(id: "art.file.0")?.title == "Poster.PNG")
@@ -34,7 +34,7 @@ struct SettingsTileArtTests {
 
     @Test func builtInTilesOnlyHaveTheDesignedStyle() async {
         let (model, _) = await onArtPage("youtube", pictures: [])
-        #expect(model.focusableRowIDs == ["art.designed"])
+        #expect(model.actionRowIDs == ["art.designed"])
         #expect(model.row(id: "art.file.none")?.title == "No pictures in Downloads, Pictures or Desktop")
     }
 

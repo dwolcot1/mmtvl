@@ -15,7 +15,7 @@
 '     warning: the footer is a warning (warningText). messages { playlist, guide }: a refused URL's message, shown
 '     as its row's detail (MMTVL's pasteMessage) until the next push or pop.
 '   row: { id, title, value, detail, disclosure, dimmed, action, description }: value, detail and description ""
-'     for none; action invalid for an info row (never focused), else one of
+'     for none; action invalid for an info row (focusable, but OK and Right do nothing on it), else one of
 '       { type: "push", page }, { type: "pop" }
 '       { type: "toggle", setting }        channelUpMovesUpList, usePlaylistGuide, channelLogos, teamMatchInitials,
 '                                          teamMatchNicknames
@@ -25,8 +25,11 @@
 '       { type: "toggleGroupHidden", name }, { type: "unhideChannel", id }
 '       { type: "refresh" }, { type: "removeSource" }
 '   pageTitle(page, model) -> the title over the columns.
-'   focusableIDs(list) -> the ids of the rows with an action, in order; rowWithID(list, id) -> the row or invalid.
-'   description(list, id) -> the band's text for a focused row ("" for none).
+'   focusableIDs(list) -> every row's id, info rows included, in display order (what Up and Down walk);
+'     actionIDs(list) -> the ids of the rows with an action, in order (a page's default focus, the parent's marked
+'     row); rowWithID(list, id) -> the row or invalid.
+'   description(list, id) -> the band's text for a focused row: its description; an info row without one says
+'     infoOnlyDescription; "" for an action row without one, or no row.
 '   guidePage(id) -> "guide:<id>"; guideIDOf(page) -> the id, or "" when page isn't a guide's.
 '
 ' Step 21: Live TV → Antenna ("antenna"): the Antenna row first in Channels (frame wjg72); with nothing set up,
@@ -61,6 +64,8 @@ namespace SettingsPages
     const lowMemoryValue = "Low Memory"
     const logosDroppedDescription = "This Roku ran low on memory, so logos are off until MMTVL Live TV opens again. This switch keeps your choice for next time."
     const guideShrunkDetail = "Shorter until MMTVL Live TV opens again"
+    ' The band on a focused info row that has no description of its own (the same words as MMTVL's Settings).
+    const infoOnlyDescription = "Information only: nothing to change here."
 
     function sections(page as string, model as object, messages = invalid as dynamic) as object
         if page = SettingsPages.rootPage then return SettingsPages.rootSections(model)
@@ -121,7 +126,19 @@ namespace SettingsPages
         return Mid(page, Len(prefix) + 1)
     end function
 
+    ' Every row, info rows included: focus walks them all.
     function focusableIDs(list as object) as object
+        ids = []
+        for each section in list
+            for each item in section.rows
+                ids.Push(item.id)
+            end for
+        end for
+        return ids
+    end function
+
+    ' The rows with an action only.
+    function actionIDs(list as object) as object
         ids = []
         for each section in list
             for each item in section.rows
@@ -144,6 +161,7 @@ namespace SettingsPages
     function description(list as object, id as dynamic) as string
         found = SettingsPages.rowWithID(list, id)
         if found = invalid then return ""
+        if found.description = "" and found.action = invalid then return SettingsPages.infoOnlyDescription
         return found.description
     end function
 

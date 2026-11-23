@@ -129,14 +129,27 @@ final class SettingsModel {
 
     var page: SettingsPage { stack[stack.count - 1].page }
 
-    /// Rows with an action, in display order.
+    /// Every row, info rows included, in display order: Up/Down and Channel Up/Down walk them all (info rows take
+    /// focus so a page of mostly info rows doesn't feel stuck; Select on one does nothing).
     var focusableRowIDs: [String] {
+        sections.flatMap(\.rows).map(\.id)
+    }
+
+    /// Rows with an action, in display order.
+    var actionRowIDs: [String] {
         sections.flatMap(\.rows).filter { $0.action != nil }.map(\.id)
     }
 
     var focusedRowID: String? {
         if isKeyboardActive { return nil }
-        return ListFocus.resolve(ids: focusableRowIDs, current: stack[stack.count - 1].focusedRowID)
+        return Self.resolveFocus(rows: sections.flatMap(\.rows), current: stack[stack.count - 1].focusedRowID)
+    }
+
+    /// `current` if it's one of `rows`, else (a page just opened, or the focused row went away) the first action
+    /// row, else the first row: a page opens where it always did, and Up reaches the info rows above it.
+    nonisolated static func resolveFocus(rows: [SettingsRow], current: String?) -> String? {
+        if let current, rows.contains(where: { $0.id == current }) { return current }
+        return rows.first { $0.action != nil }?.id ?? rows.first?.id
     }
 
     func row(id: String) -> SettingsRow? {
@@ -587,7 +600,7 @@ final class SettingsModel {
         case .down where keyboard.focus.row == keyboard.rows.count - 1:
             // Down from the bottom row: the rows below the keyboard (Save first).
             isKeyboardFocused = false
-            setFocus(focusableRowIDs.first)
+            setFocus(actionRowIDs.first)
             return true
         case .up, .down, .left, .right, .select, .playPause:
             if keyboard.handle(command) == .changed { addressMessage = nil }
