@@ -9,7 +9,7 @@
 
 ## Next session starts here
 
-- **2026-11-23: device testing has started** (the remote tester, a TCL Roku TV). Build 2 froze on `*` (render-thread `roFileSystem`, PR #11, fixed in build 3). Build 3 feedback: Settings hard to find, and the group column didn't take the keys (PR #12, build 4); see the step 15 entries in *Deviations & questions*. Next: the tester's report on build 4, plus the console checks in the first step 15 entry (`DeleteFile`/`ListDir`/`ReadAsciiFile` and `roEVPDigest` on the render thread).
+- **2026-11-23: device testing has started** (the remote tester, a TCL Roku TV). Build 2 froze on `*` (render-thread `roFileSystem`, PR #11, fixed in build 3). Build 3 feedback: Settings hard to find, and the group column didn't take the keys (PR #12, build 4); Favorites always listed, Mac and Roku (PR #13, **build 5**); see the step 15 entries in *Deviations & questions*. Next: the tester's report on build 5, the Mac's empty-Favorites row checked on the TV (no MM build with it yet), plus the console checks in the first step 15 entry (`DeleteFile`/`ListDir`/`ReadAsciiFile` and `roEVPDigest` on the render thread).
 - **Phase 0 (PR #1)** and **phase 1 (PR #2, stacked on PR #1)** are done off-device. Steps 1, 4 and every device check wait for the remote tester's Roku. The probe build is `cd roku && npm run build` → `roku/out/mmtvl-live-tv.zip`. **Ask the user before sending it.**
 - **Automated run (user, 2026-11-22):** steps 18–22, 24 and 25 run without the user.
   - Every decision taken without the user is in **[M12-decisions-log.md](M12-decisions-log.md)**, with the reason and pros and cons.
