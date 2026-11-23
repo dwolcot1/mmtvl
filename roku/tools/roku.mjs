@@ -1,13 +1,14 @@
 // The device scripts (M12 L1): `npm run deploy | test | console`, and `npm run test:local`,
-// `npm run build:release` and (M14) `npm run version`, which need no device.
+// `npm run build:release` and (M14) `npm run version | nightly`, which need no device.
 // The Roku's address and developer password come only from roku/.env (gitignored).
 // Never print the password.
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
-import { parseVersion } from './version.mjs';
+import { keepNewest, parseVersion, withBuild, zipName } from './version.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = (name) => join(root, 'node_modules', '.bin', name);
@@ -221,9 +222,117 @@ function version() {
     console.log(`MMTVL Live TV ${v.major}.${v.minor} build ${v.build}`);
 }
 
-const commands = { deploy, test, console: console8085, 'test-local': testLocal, 'build-release': buildRelease, version };
+function git(args) {
+    const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    if (result.error) {
+        fail(`Couldn't run git: ${result.error.message}`);
+    }
+    return { status: result.status ?? 1, stdout: (result.stdout ?? '').trimEnd() };
+}
+
+// M14 (L2, L5–L9): a numbered nightly. Bumps roku/manifest's build_version (the number is spent from then on, even
+// when a gate fails), runs every gate, checks the release zip's own manifest, copies it to
+// out/nightly/<zipName> with its .sha256 and keeps the newest 3. The bump is left uncommitted.
+function nightly() {
+    // 1. Only a clean master (dry runs: ROKU_NIGHTLY_ALLOW_BRANCH=1, ROKU_NIGHTLY_ALLOW_DIRTY=1, as in scripts/release.sh).
+    const head = git(['symbolic-ref', '--quiet', '--short', 'HEAD']);
+    const branch = head.status === 0 && head.stdout ? head.stdout : '(detached HEAD)';
+    if (branch !== 'master') {
+        if (process.env.ROKU_NIGHTLY_ALLOW_BRANCH === '1') {
+            console.log(`Dry run: HEAD is on ${branch}, not master (ROKU_NIGHTLY_ALLOW_BRANCH=1).`);
+        } else {
+            fail(`nightly: HEAD is on ${branch}, not master. Nightlies are made from master (dry runs: ROKU_NIGHTLY_ALLOW_BRANCH=1).`);
+        }
+    }
+    const status = git(['status', '--porcelain']);
+    if (status.status !== 0) {
+        fail('nightly: git status failed.');
+    }
+    if (status.stdout) {
+        if (process.env.ROKU_NIGHTLY_ALLOW_DIRTY === '1') {
+            console.log(`Dry run: building with uncommitted changes (ROKU_NIGHTLY_ALLOW_DIRTY=1):\n${status.stdout}`);
+        } else {
+            console.error(status.stdout);
+            fail('nightly: the working tree has uncommitted changes (listed above). Commit them first.');
+        }
+    }
+    if (!existsSync(join(root, 'node_modules'))) {
+        fail('nightly: roku/node_modules is missing: run npm ci first.');
+    }
+
+    // 2. The bump. From here the number is spent (L2).
+    const manifestPath = join(root, 'manifest');
+    const manifestText = readFileSync(manifestPath, 'utf8');
+    let v;
+    try {
+        const current = parseVersion(manifestText);
+        v = { ...current, build: current.build + 1 };
+        writeFileSync(manifestPath, withBuild(manifestText, v.build));
+    } catch (error) {
+        fail(`nightly: ${error.message}`);
+    }
+    const stays = `The build number stays ${v.build}; nothing was zipped.`;
+    console.log(`Building MMTVL Live TV ${v.major}.${v.minor} build ${v.build}`);
+
+    // 3. The gates, in order, stopping at the first failure; the last is the release build (L6).
+    const gates = ['build', 'lint', 'test:local', 'test:tools', 'build:release'];
+    for (const gate of gates) {
+        console.log(`\n== Gate: npm run ${gate}`);
+        if (run('npm', ['run', gate]) !== 0) {
+            console.error(`nightly: npm run ${gate} failed.`);
+            fail(stays);
+        }
+        console.log(`== Gate passed: npm run ${gate}`);
+    }
+    console.log(`\nAll ${gates.length} gates passed.`);
+
+    // 4. The zip itself: its manifest has this build number and DEBUG off.
+    const releaseZip = join(root, 'out', 'mmtvl-live-tv-release.zip');
+    const unzip = spawnSync('unzip', ['-p', releaseZip, 'manifest'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    if (unzip.error || unzip.status !== 0) {
+        console.error(`nightly: couldn't read the manifest from out/mmtvl-live-tv-release.zip${unzip.error ? `: ${unzip.error.message}` : ''}.`);
+        fail(stays);
+    }
+    let zipped;
+    try {
+        zipped = parseVersion(unzip.stdout);
+    } catch (error) {
+        console.error(`nightly: the zip's manifest: ${error.message}`);
+        fail(stays);
+    }
+    if (zipped.major !== v.major || zipped.minor !== v.minor || zipped.build !== v.build) {
+        console.error(`nightly: the zip's manifest says ${zipped.major}.${zipped.minor} build ${zipped.build}, not ${v.major}.${v.minor} build ${v.build}.`);
+        fail(stays);
+    }
+    if (!/^bs_const=DEBUG=false\r?$/m.test(unzip.stdout)) {
+        console.error('nightly: the zip\'s manifest doesn\'t have bs_const=DEBUG=false.');
+        fail(stays);
+    }
+    console.log(`The zip's manifest: build_version=${zipped.build}, bs_const=DEBUG=false.`);
+
+    // 5. The local copy (L8, L9) and its SHA-256 in shasum -a 256 format; only the newest 3 are kept.
+    const nightlyDir = join(root, 'out', 'nightly');
+    mkdirSync(nightlyDir, { recursive: true });
+    const name = zipName(v);
+    const zipPath = join(nightlyDir, name);
+    copyFileSync(releaseZip, zipPath);
+    const sha256 = createHash('sha256').update(readFileSync(zipPath)).digest('hex');
+    writeFileSync(`${zipPath}.sha256`, `${sha256}  ${name}\n`);
+    for (const old of keepNewest(readdirSync(nightlyDir), 3)) {
+        console.log(`Removing ${old}`);
+        rmSync(join(nightlyDir, old), { force: true });
+        rmSync(join(nightlyDir, `${old}.sha256`), { force: true });
+    }
+
+    // 6.
+    console.log(`\nNightly: out/nightly/${name}`);
+    console.log(`SHA-256: ${sha256}`);
+    console.log(`Next: commit roku/manifest as "Roku build ${v.build}" on master.`);
+}
+
+const commands = { deploy, test, console: console8085, 'test-local': testLocal, 'build-release': buildRelease, version, nightly };
 const command = commands[process.argv[2]];
 if (!command) {
-    fail('Usage: node tools/roku.mjs deploy | test | console | test-local | build-release | version');
+    fail('Usage: node tools/roku.mjs deploy | test | console | test-local | build-release | version | nightly');
 }
 await command();

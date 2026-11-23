@@ -18,8 +18,11 @@ const sample = [
     ''
 ].join('\n');
 
-test('parseVersion reads the real manifest as 0.1 build 1', () => {
-    assert.deepEqual(parseVersion(readFileSync(manifestPath, 'utf8')), { major: 0, minor: 1, build: 1 });
+// The build number isn't pinned: `npm run nightly` bumps it before this gate runs (L2).
+test('parseVersion reads the real manifest as 0.1 with a build number of at least 1', () => {
+    const { major, minor, build } = parseVersion(readFileSync(manifestPath, 'utf8'));
+    assert.deepEqual({ major, minor }, { major: 0, minor: 1 });
+    assert.ok(Number.isSafeInteger(build) && build >= 1, `build ${build}`);
 });
 
 test('parseVersion throws naming the key for a missing or bad line', () => {

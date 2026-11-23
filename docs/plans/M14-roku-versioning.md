@@ -178,8 +178,9 @@ With `--stable`, the title loses "(nightly)", the WIP box is dropped, and Instal
     - `git diff roku/package-lock.json` shows only the removed root `version` lines;
     - the M12 gates pass: `npm run build && npm run lint && npm run test:local && npm run build:release` → "LOCAL TESTS: 742 passed, 0 failed", "Release build: 127 files, …".
 
-- [ ] **2. `npm run nightly`** `[implementer]`, files: `roku/tools/roku.mjs`, `roku/package.json`
+- [x] **2. `npm run nightly`** `[implementer]`, files: `roku/tools/roku.mjs`, `roku/package.json`
   - Build it as in Design → `npm run nightly`.
+  - *Done 2026-11-22.* Dry run: "All 5 gates passed.", "The zip's manifest: build_version=2, bs_const=DEBUG=false.", `shasum -a 256 -c` OK; retention kept the newest 3; the branch and dirty-tree refusals come before the bump; a forced lint failure printed "The build number stays 2; nothing was zipped." The manifest was restored by hand after each run. QA PASS, two minors, no action: the zip-manifest mismatch and unzip-failure branches are read, not executed; a build:release failure takes the same gate loop as the tested lint failure.
   - The QA run is a dry run on the step branch: `ROKU_NIGHTLY_ALLOW_BRANCH=1 ROKU_NIGHTLY_ALLOW_DIRTY=1 npm run nightly`. It bumps `roku/manifest` to build 2, and the orchestrator then **reverts the manifest** (`git checkout roku/manifest`): the real build 2 is step 5's.
   - Done when the dry run:
     - prints every gate passing, `out/nightly/MMTVL-Live-TV-Roku-0.1-build2.zip` and a SHA-256 that `shasum -a 256 -c` (run in `out/nightly/`) confirms;
@@ -258,7 +259,7 @@ With `--stable`, the title loses "(nightly)", the WIP box is dropped, and Instal
 ## Tests
 
 `roku/tools/version.test.mjs` (`node:test`, run by `npm run test:tools`):
-- `parseVersion` reads the real `roku/manifest` as `{0, 1, 1}`. It throws naming the key for a missing `build_version`, `build_version=abc`, `build_version=-1` and a missing `minor_version`. It accepts `build_version=00150` as 150.
+- `parseVersion` reads the real `roku/manifest` as 0.1 with a whole-number build ≥ 1 (not pinned to 1: `nightly` bumps it before the `test:tools` gate; step 2). It throws naming the key for a missing `build_version`, `build_version=abc`, `build_version=-1` and a missing `minor_version`. It accepts `build_version=00150` as 150.
 - `withBuild` changes only the `build_version` line. The rest is byte-identical, including the `bs_const` line, comments, CRLF if present, and the trailing newline. A manifest without the line throws.
 - `zipName` / `tagName` / `releaseTitle` give the exact strings in Design for `{0,1,2}` and, with `stable`, for `{1,0,9}`.
 - `keepNewest`: given names for builds 2, 10, 3, 4, a `.sha256`, and an unrelated `mmtvl-live-tv.zip`, with n = 3, it returns only build 2's zip. It orders by number, not text (10 > 4). Unrelated names are never returned.
@@ -289,3 +290,4 @@ Commands: `cd roku && npm run test:tools`, plus M12's gates (`npm run build && n
 
 - **2026-11-22, step 1 (mechanical, noted):** `npm install --package-lock-only --prefer-offline` removed only `packages[""].version`; the top-level `"version": "0.1.0"` in `package-lock.json` was removed by hand, and npm then changed nothing more. The diff is exactly the two root lines.
 - **2026-11-22, step 1 (reading of the template):** the stable notes' Install heading is `## Install the release (sideload)`, and with no changes a stable release says "- First Roku release." (not "nightly"). Step 6 may reword both when it aligns the README.
+- **2026-11-22, step 2 (mechanical, noted):** the Tests line "`parseVersion` reads the real manifest as `{0, 1, 1}`" contradicted step 2's order (the bump comes before the `test:tools` gate), so every nightly failed it. The test now checks 0.1 and a whole-number build ≥ 1; the Tests section is updated. `build:release` runs as a gate in a child process (`npm run build:release`), not as an in-process `buildRelease()` call, so its failure still prints "The build number stays N".
