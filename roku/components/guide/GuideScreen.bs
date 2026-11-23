@@ -156,6 +156,7 @@ function hintText() as string
             kind = m.state.rows[m.state.row].kind
             if kind = "chooseTeams" then return "OK: choose your teams" + dot + "Left: groups & Settings"
             if kind = "upcoming" then return "OK: watch this channel" + dot + "Left: groups & Settings"
+            if kind = "favoritesEmpty" then return "Left: groups & Settings"
         end if
     end if
     return "OK: watch" + dot + "*: channel menu" + dot + "Left: groups & Settings" + dot + "Rewind/Fast Forward: page"
@@ -350,6 +351,9 @@ sub rebuildGrid()
                 node.title = textOf(channel.name)
                 node.shortDescriptionLine1 = Lineup.displayNumber(channel)
             end if
+        else if row.kind = "favoritesEmpty"
+            node.title = Lineup.favoritesEmptyChannel
+            node.shortDescriptionLine1 = ""
         else
             node.title = chooseTeamsText()
             node.shortDescriptionLine1 = ""
@@ -412,6 +416,9 @@ sub fillRow(r as integer)
         if game <> invalid then cellTitle = MyTeams.upcomingCellTitle(MyTeams.dayTime(localParts(game.programme.start)), game)
         cells = [{ index: -1, start: m.contentStart, duration: m.windowEnd - m.contentStart, title: cellTitle }]
         requestLogo(node, m.channelsByID[row.channelID])
+    else if row.kind = "favoritesEmpty"
+        ' Step 15: an empty Favorites' row: one cell across the window that says how to add one.
+        cells = [{ index: -1, start: m.contentStart, duration: m.windowEnd - m.contentStart, title: Lineup.favoritesEmptyCell }]
     else
         ' My Teams' Choose Teams row: one cell across the window (MMTVL's chooseTeamsRow).
         cells = [{ index: -1, start: m.contentStart, duration: m.windowEnd - m.contentStart, title: "Add or remove pro and college teams" }]
@@ -674,6 +681,9 @@ sub showInfo()
             if channel <> invalid then fillChannelInfo(lines, channel, row)
         else if rowData.kind = "upcoming"
             fillUpcomingInfo(lines, rowData)
+        else if rowData.kind = "favoritesEmpty"
+            lines.title = Lineup.favoritesEmptyChannel
+            lines.description = Lineup.favoritesEmptyInfo
         else
             lines.title = TeamPicker.title
             lines.description = MyTeams.chooseTeamsInfo

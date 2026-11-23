@@ -22,7 +22,7 @@ namespace GuideKeysTests
 
     sub test_initFocusesTheChannelInTheRememberedGroup(t as object)
         state = GuideKeysTests.model("Live", "id:c3")
-        t.assertEqual(state.groups, ["My Teams", "All Channels", "Live", "NBA", "NHL"])
+        t.assertEqual(state.groups, ["Favorites", "My Teams", "All Channels", "Live", "NBA", "NHL"])
         t.assertEqual(GuideKeysTests.selectedGroup(state), "Live")
         t.assertEqual(state.row, 2)
         t.assertEqual(GuideKeysTests.focusedID(state), "id:c3")
@@ -42,6 +42,34 @@ namespace GuideKeysTests
         t.assertEqual(GuideKeysTests.selectedGroup(state), "Favorites")
         t.assertEqual(GuideKeysTests.rowIDs(state), ["id:c9", "id:c2"])
         t.assertEqual(state.row, 1)
+    end sub
+
+    ' Step 15: Favorites is always listed. Empty, it isn't the default group; remembered, it opens on its one
+    ' empty-state row, where OK, * and Play do nothing and Left opens the column on Favorites.
+    sub test_anEmptyFavoritesShowsItsEmptyRow(t as object)
+        built = Lineup.build(GuideKeysTests.channels(), {})
+        t.assertEqual(built.groups[0], "Favorites")
+        t.assertEqual(GuideKeysTests.selectedGroup(GuideKeys.open(built, invalid, "")), "All Channels", "not the default")
+        state = GuideKeys.open(built, "Favorites", "")
+        t.assertEqual(GuideKeysTests.selectedGroup(state), "Favorites")
+        t.assertEqual(state.rows, [{ kind: "favoritesEmpty", channelID: "" }])
+        t.assertEqual(GuideKeys.rowID(state.rows[0]), "favoritesEmpty")
+        for each key in ["OK", "options", "right", "up", "down", "fastforward"]
+            result = GuideKeys.handle(key, true, state)
+            t.assertEqual(result.action, { type: "none" }, key)
+            t.assertEqual(result.state.rows[result.state.row].kind, "favoritesEmpty", key)
+        end for
+        t.assertEqual(GuideKeys.handle("play", true, state).action, { type: "togglePause" }, "Play still pauses what plays")
+        state = GuideKeysTests.press(state, "left")
+        t.assertEqual([state.focus, state.groupFocus], ["groups", 0])
+        ' A favorite added: the row becomes the channel.
+        after = GuideKeys.setLineup(GuideKeys.open(built, "Favorites", ""), Lineup.build(GuideKeysTests.channels(), { favorites: ["id:c4"] }))
+        t.assertEqual(GuideKeysTests.selectedGroup(after), "Favorites")
+        t.assertEqual(GuideKeysTests.rowIDs(after), ["id:c4"])
+        ' Favorites with a channel is the default again; no channels at all: no groups.
+        t.assertEqual(GuideKeysTests.selectedGroup(GuideKeys.open(Lineup.build(GuideKeysTests.channels(), { favorites: ["id:c4"] }), invalid, "")), "Favorites")
+        t.assertEqual(Lineup.build([], {}).groups, [])
+        t.assertEqual(GuideKeys.defaultGroupIndex(["Favorites", "My Teams", "Live"]), 2, "no lineup: Favorites counts as empty")
     end sub
 
     sub test_focusedChannelOutsideFavoritesOpensAllChannels(t as object)
@@ -73,7 +101,7 @@ namespace GuideKeysTests
         all = GuideKeysTests.channels()
         all.Append(LineupTests.antennaChannels(11))
         built = Lineup.build(all, {})
-        t.assertEqual(built.groups, ["My Teams", "Antenna", "All Channels", "Live", "NBA", "NHL"])
+        t.assertEqual(built.groups, ["Favorites", "My Teams", "Antenna", "All Channels", "Live", "NBA", "NHL"])
         t.assertEqual(GuideKeysTests.selectedGroup(GuideKeys.open(built, invalid, "")), "All Channels")
         favorites = Lineup.build(all, { favorites: ["antenna:5.1"] })
         t.assertEqual(GuideKeysTests.selectedGroup(GuideKeys.open(favorites, invalid, "")), "Favorites")
@@ -84,7 +112,7 @@ namespace GuideKeysTests
 
     sub test_antennaIsTheDefaultWhenItIsTheOnlyGroup(t as object)
         state = GuideKeys.open(Lineup.build(LineupTests.antennaChannels(1), {}), invalid, "")
-        t.assertEqual(state.groups, ["My Teams", "Antenna"])
+        t.assertEqual(state.groups, ["Favorites", "My Teams", "Antenna"])
         t.assertEqual(GuideKeysTests.selectedGroup(state), "Antenna")
         t.assertEqual(GuideKeysTests.focusedID(state), "antenna:2.1")
     end sub
@@ -222,7 +250,7 @@ namespace GuideKeysTests
         t.assertEqual(result.action, { type: "none" })
         t.assertEqual(result.state.focus, "channel")
         state = GuideKeysTests.press(result.state, "left")
-        t.assertEqual([state.focus, state.groupFocus], ["groups", 2])
+        t.assertEqual([state.focus, state.groupFocus], ["groups", 3])
     end sub
 
     ' Right and Left walk the cells (TimeGrid's), and Left reaches the channel cell only from the first one.
@@ -255,11 +283,11 @@ namespace GuideKeysTests
     sub test_groups(t as object)
         state = GuideKeysTests.press(GuideKeysTests.model("Live", ""), "down")
         state = GuideKeysTests.toGroups(state)
-        t.assertEqual([state.focus, state.groupFocus], ["groups", 2])
+        t.assertEqual([state.focus, state.groupFocus], ["groups", 3])
         state = GuideKeysTests.press(state, "down")
-        t.assertEqual(state.groupFocus, 3)
+        t.assertEqual(state.groupFocus, 4)
         result = GuideKeys.handle("OK", true, state)
-        t.assertEqual(result.action, { type: "groupChanged", group: "NBA", groupIndex: 3 })
+        t.assertEqual(result.action, { type: "groupChanged", group: "NBA", groupIndex: 4 })
         state = result.state
         t.assertEqual(state.focus, "grid")
         t.assertEqual(state.row, 0)
@@ -272,26 +300,26 @@ namespace GuideKeysTests
         t.assertEqual(result.state.focus, "grid")
         t.assertEqual(GuideKeysTests.selectedGroup(result.state), "NBA")
 
-        ' Right selects too; Up from the first group is Search, Down from it the first group (My Teams).
+        ' Right selects too; Up from the first group is Search, Down from it the first group (Favorites, step 15).
         state = GuideKeysTests.toGroups(result.state)
-        for i = 1 to 4
+        for i = 1 to 5
             state = GuideKeysTests.press(state, "up")
         end for
         t.assertEqual(state.focus, "search")
         state = GuideKeysTests.press(state, "down")
         t.assertEqual([state.focus, state.groupFocus], ["groups", 0])
-        state = GuideKeysTests.press(state, "down")
+        state = GuideKeysTests.press(GuideKeysTests.press(state, "down"), "down")
         result = GuideKeys.handle("right", true, state)
-        t.assertEqual(result.action, { type: "groupChanged", group: "All Channels", groupIndex: 1 })
+        t.assertEqual(result.action, { type: "groupChanged", group: "All Channels", groupIndex: 2 })
         t.assertEqual(result.state.rows.Count(), 10)
     end sub
 
     ' The group list loops: Down on the last group is Search, Up on Search the last group.
     sub test_theGroupListLoops(t as object)
         state = GuideKeysTests.toGroups(GuideKeysTests.model("Live", "id:c1"))
-        t.assertEqual(state.groupFocus, 2)
+        t.assertEqual(state.groupFocus, 3)
         state = GuideKeysTests.press(GuideKeysTests.press(state, "down"), "down")
-        t.assertEqual([state.focus, state.groupFocus], ["groups", 4])
+        t.assertEqual([state.focus, state.groupFocus], ["groups", 5])
         ' Step 15: the Settings row follows the last group, then the column loops to Search.
         result = GuideKeys.handle("down", true, state)
         t.assertEqual(result.state.focus, "settings")
@@ -303,9 +331,9 @@ namespace GuideKeysTests
         t.assertEqual(result.state.focus, "settings")
         t.assertTrue(result.wrapped)
         result = GuideKeys.handle("up", true, result.state)
-        t.assertEqual([result.state.focus, result.state.groupFocus], ["groups", 4])
+        t.assertEqual([result.state.focus, result.state.groupFocus], ["groups", 5])
         result = GuideKeys.handle("up", true, result.state)
-        t.assertEqual(result.state.groupFocus, 3)
+        t.assertEqual(result.state.groupFocus, 4)
         t.assertFalse(result.wrapped, "an ordinary step isn't a loop")
         ' Nothing is selected by moving.
         t.assertEqual(GuideKeysTests.selectedGroup(result.state), "Live")
@@ -313,8 +341,8 @@ namespace GuideKeysTests
 
     sub test_theSearchRowOpensSearchAndKeepsTheGuide(t as object)
         state = GuideKeysTests.toGroups(GuideKeysTests.model("NBA", "id:c8"))
-        t.assertEqual(state.groupFocus, 3)
-        for i = 1 to 4
+        t.assertEqual(state.groupFocus, 4)
+        for i = 1 to 5
             state = GuideKeysTests.press(state, "up")
         end for
         t.assertEqual(state.focus, "search")
@@ -337,11 +365,11 @@ namespace GuideKeysTests
 
     sub test_searchAndTheFirstGroupAreNeighbours(t as object)
         state = GuideKeysTests.toGroups(GuideKeysTests.model("NBA", "id:c8"))
-        for i = 1 to 3
+        for i = 1 to 4
             state = GuideKeysTests.press(state, "up")
         end for
         t.assertEqual([state.focus, state.groupFocus], ["groups", 0])
-        t.assertEqual(state.groups[0], "My Teams")
+        t.assertEqual(state.groups[0], "Favorites")
         state = GuideKeysTests.press(state, "up")
         t.assertEqual(state.focus, "search")
         state = GuideKeysTests.press(state, "down")
@@ -368,7 +396,7 @@ namespace GuideKeysTests
         result = GuideKeys.handle("options", true, state)
         t.assertEqual(result.action, { type: "openSettings" })
         t.assertEqual(result.state.focus, "groups")
-        state = GuideKeysTests.press(GuideKeysTests.press(GuideKeysTests.press(state, "up"), "up"), "up")
+        state = GuideKeysTests.press(GuideKeysTests.press(GuideKeysTests.press(GuideKeysTests.press(state, "up"), "up"), "up"), "up")
         t.assertEqual(state.focus, "search")
         t.assertEqual(GuideKeys.handle("options", true, state).action, { type: "openSettings" })
     end sub
@@ -438,7 +466,7 @@ namespace GuideKeysTests
         state = GuideKeysTests.press(result.state, "right")
         t.assertEqual(state.rows[state.row].kind, "chooseTeams")
         state = GuideKeysTests.press(state, "left")
-        t.assertEqual([state.focus, state.groupFocus], ["groups", 0])
+        t.assertEqual([state.focus, state.groupFocus], ["groups", 1])
     end sub
 
     ' MMTVL's Play/Pause in the guide pauses the playing channel, whatever has focus.
@@ -531,7 +559,7 @@ namespace GuideKeysTests
         hidden = GuideKeys.setLineup(after, Lineup.build(GuideKeysTests.channels(), { hiddenChannels: ["id:c1"] }))
         t.assertEqual(GuideKeysTests.focusedID(hidden), "id:c4", "by id when rows above go")
         t.assertEqual(hidden.row, 2)
-        t.assertEqual(state.groups.Count(), 5, "the old state doesn't change")
+        t.assertEqual(state.groups.Count(), 6, "the old state doesn't change")
     end sub
 
     sub test_setLineupThatDropsTheFocusedChannelKeepsTheRow(t as object)
@@ -562,17 +590,17 @@ namespace GuideKeysTests
     sub test_setLineupKeepsTheFocusedGroupInTheColumn(t as object)
         state = GuideKeysTests.toGroups(GuideKeysTests.model("Live", "id:c1"))
         t.assertEqual(state.focus, "groups")
-        t.assertEqual(state.groupFocus, 2)
+        t.assertEqual(state.groupFocus, 3)
         state = GuideKeys.setLineup(state, Lineup.build(GuideKeysTests.channels(), {}, ["id:c9"]))
         t.assertEqual(state.groups[0], "Favorites")
         t.assertEqual(state.groupFocus, 3)
         t.assertEqual(state.groups[state.groupFocus], "Live")
         state = GuideKeys.setLineup(state, Lineup.build(GuideKeysTests.channels(), {}))
-        t.assertEqual(state.groupFocus, 2)
+        t.assertEqual(state.groupFocus, 3)
         state = GuideKeysTests.press(GuideKeysTests.press(state, "down"), "down")
-        t.assertEqual(state.groupFocus, 4)
+        t.assertEqual(state.groupFocus, 5)
         state = GuideKeys.setLineup(state, Lineup.build(GuideKeysTests.channels(), { hiddenGroups: ["NHL"] }))
-        t.assertEqual(state.groupFocus, 3, "a focused group that went: the same position, clamped")
+        t.assertEqual(state.groupFocus, 4, "a focused group that went: the same position, clamped")
     end sub
 
     sub test_setLineupKeepsChooseTeams(t as object)
