@@ -9,6 +9,7 @@
 
 ## Next session starts here
 
+- **2026-11-23: device testing has started** (the remote tester, a TCL Roku TV). Build 2 froze on `*` (`roFileSystem` on the render thread; see the step 15 entry in *Deviations & questions*). The fix is PR #11; **nightly build 3** is `roku-v0.1-build3` on GitHub. Next: the tester's report on build 3, plus the console checks in that entry (`DeleteFile`/`ListDir`/`ReadAsciiFile` and `roEVPDigest` on the render thread).
 - **Phase 0 (PR #1)** and **phase 1 (PR #2, stacked on PR #1)** are done off-device. Steps 1, 4 and every device check wait for the remote tester's Roku. The probe build is `cd roku && npm run build` → `roku/out/mmtvl-live-tv.zip`. **Ask the user before sending it.**
 - **Automated run (user, 2026-11-22):** steps 18–22, 24 and 25 run without the user.
   - Every decision taken without the user is in **[M12-decisions-log.md](M12-decisions-log.md)**, with the reason and pros and cons.
