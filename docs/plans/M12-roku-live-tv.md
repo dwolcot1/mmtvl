@@ -1008,3 +1008,14 @@ Executors append here when the plan is wrong or ambiguous: the date, the step, w
   - **Favorites "missing":** the tester has no favorites yet. The group shows once a channel is added (`*` on a channel → Add to Favorites), as MMTVL does (`ChannelPreferences.swift:101`, `Lineup.bs:84`). Not changed.
   - Seen in the photo, not changed: the column's glass panel lets the channel column's names and logos show through.
   - Gates: "LOCAL TESTS: 745 passed, 0 failed" (3 new tests: the Settings row, a grid report on it, no channels); `test:tools` 28 passed; "Release build: 127 files, no probe code, no DEBUG memory line".
+- **2026-11-23, step 15 (user decision): Favorites is always listed, in the Roku port and in MMTVL on the Mac.** A tester missed it because, as in MMTVL, the group only showed once it had a channel.
+  - **Groups:** Favorites is listed whenever a channel is visible: Roku `Lineup.build`, Mac `ChannelLineup.groups` (`ChannelPreferences.swift:102`).
+  - **The empty-state row:** an empty Favorites shows one row, kind `favoritesEmpty`.
+    - Its text: "No favorites yet", one cell across the grid ("Press * on a channel, then choose Add to Favorites"; on the Mac "Press Menu…"), and the info area's "Press * (Menu) on any channel and choose Add to Favorites. Your teams' live games show here too."
+    - Keys: OK, `*`/Menu and Right do nothing on it; Left opens the column on Favorites; Play/Pause still pauses what's playing.
+  - **Default group:** an empty Favorites is skipped like My Teams and Antenna, so a first launch opens where it did. A remembered "Favorites" opens on the row, unless a playing channel isn't in it: then All Channels, as for every group.
+  - **The last favorite removed** while viewing Favorites leaves the guide on the row (the group used to vanish).
+  - **Zapping** never lands on the row: it uses `channelsIn` / `channels(in:)`, which return channels only.
+  - **Parity:** the behaviour is the same on both. `RokuParityTests` doesn't cover the group list, and no golden changed.
+  - **Tests:** Roku "LOCAL TESTS: 746 passed, 0 failed" (group lists and indices shifted by one; new `anEmptyFavoritesShowsItsEmptyRow`). Mac: "Test run with 2104 tests in 186 suites passed" (expectations shifted; new tests in `ChannelLineupTests`, `GuideModelTests`, `GuideViewHintTests`, `LiveTVModelTests`).
+  - **For eyes (TV/MM):** the Mac row (a star symbol, "No favorites yet" in the channel column, the one-line cell, focus colours, the info text wrapping) and the Roku row on the tester's TV.
