@@ -19,7 +19,6 @@ sub init()
     ' m.playlistCount entries) then the antenna's, merged by PlaylistTask (off the render thread).
     m.playlistCount = 0
     m.teamFields = []
-    m.fs = CreateObject("roFileSystem")
     m.player = m.top.findNode("player")
     m.player.observeField("action", "onPlayerAction")
     m.player.observeField("failed", "updatePlayback")
@@ -431,8 +430,8 @@ sub forgetGuideTimes(sources as object)
     failures = m.guideState.failures
     for each source in sources
         paths = GuideSources.cachePaths(source.url)
-        m.fs.Delete(paths.time)
-        m.fs.Delete(paths.fail)
+        DeleteFile(paths.time)
+        DeleteFile(paths.fail)
         if type(times) = "roAssociativeArray" then times.Delete(paths.id)
         if type(failures) = "roAssociativeArray" then failures.Delete(paths.id)
     end for
@@ -657,7 +656,7 @@ function playerLogo(channel as object) as string
     if url = "" then return ""
     cached = LogoCache.path(url)
     m.playerLogoPath = cached
-    if m.fs.Exists(cached) then return cached
+    ' LogoTask answers at once when the file is cached (roFileSystem is Task-only: no Exists here).
     m.logoTask.request = { url: url, path: cached }
     return ""
 end function
@@ -1360,11 +1359,9 @@ end sub
 sub deleteGuideFiles()
     Log.info("Guide", "Deleting the downloaded guides")
     directory = GuideSources.cacheDirectory
-    if m.fs.Exists(directory)
-        for each name in m.fs.GetDirectoryListing(directory)
-            m.fs.Delete(directory + "/" + name)
-        end for
-    end if
+    for each name in ListDir(directory)
+        DeleteFile(directory + "/" + name)
+    end for
     m.guideStatusByID = {}
     m.antennaGuideRow = invalid
     m.guideAntennaIndex = invalid
@@ -2291,7 +2288,7 @@ sub antennaSettingsChanged()
     settings = m.store.settings
     m.antennaGuideOutcome = invalid
     if not settings.antennaGuide or not settings.antennaEnabled
-        m.fs.Delete(AntennaConfig.guideDuePath)
+        DeleteFile(AntennaConfig.guideDuePath)
         m.antennaGuidePending = { wanted: false, manual: false }
     end if
     if not settings.antennaEnabled
@@ -2351,8 +2348,8 @@ end sub
 function antennaSettingsInput() as object
     settings = m.store.settings
     updated = ""
-    times = invalid
-    if m.fs.Exists(AntennaConfig.guideTimePath) then times = ReadAsciiFile(AntennaConfig.guideTimePath)
+    ' "" when the file is missing.
+    times = ReadAsciiFile(AntennaConfig.guideTimePath)
     if PlayerSession.isText(times)
         seconds = Val(times.Trim(), 10)
         if seconds > 0 then updated = clockText(Int(seconds))
