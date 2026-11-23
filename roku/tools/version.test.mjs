@@ -4,7 +4,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { keepNewest, newestZip, parseVersion, releaseNotes, releaseTitle, tagName, withBuild, zipName } from './version.mjs';
+import {
+    buildSourceRefusal, githubRepo, identEmail, isPNG, keepNewest, neutralMentions, newestZip, parseSourceRecord, parseVersion, releaseNotes,
+    releaseTitle, sourceRecord, tagName, withBuild, zipName
+} from './version.mjs';
 
 const manifestPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'manifest');
 const sample = [
@@ -175,4 +178,101 @@ test('releaseNotes has no http:// but the placeholder address', () => {
         assert.ok(notes.includes("http://<your Roku's address>/"));
         assert.doesNotMatch(notes, /https:\/\//);
     }
+});
+
+// Security L5: a commit subject can't notify anyone from the release notes.
+test('neutralMentions puts @mentions outside code spans in code spans, and leaves emails and code alone', () => {
+    assert.equal(neutralMentions('- Fix for @someone and @org/team'), '- Fix for `@someone` and `@org/team`');
+    assert.equal(neutralMentions('@lead: thanks'), '`@lead`: thanks');
+    assert.equal(neutralMentions('- Bump `@types/node`, mail a@b.example'), '- Bump `@types/node`, mail a@b.example');
+    assert.equal(neutralMentions('- `npm i @x` then (@y)'), '- `npm i @x` then (`@y`)');
+    assert.equal(neutralMentions('- One @a\n- Two @b'), '- One `@a`\n- Two `@b`');
+    assert.equal(neutralMentions('- No mention @ all'), '- No mention @ all');
+});
+
+test('releaseNotes neutralises mentions in the changes', () => {
+    const notes = releaseNotes({ v: { major: 0, minor: 1, build: 3 }, sha256: 'd', zip: 'z.zip', changes: '- Thanks @helper' });
+    assert.match(notes, /^- Thanks `@helper`$/m);
+    assert.doesNotMatch(notes, /(^|[^`])@helper/m);
+});
+
+// Security 1: the .source sidecar ties a zip to the commit it was built from (and, N2, to the zip itself).
+const commitX = 'a'.repeat(40);
+const zipSha = 'c'.repeat(64);
+const record = (clean) => sourceRecord({ commit: commitX, clean, sha256: zipSha });
+test('sourceRecord and parseSourceRecord round-trip, and parseSourceRecord rejects anything else', () => {
+    assert.deepEqual(parseSourceRecord(record(true)), { commit: commitX, clean: true, sha256: zipSha });
+    assert.deepEqual(parseSourceRecord(record(false)), { commit: commitX, clean: false, sha256: zipSha });
+    const bad = ['', 'not json', '{}', 'null', '{"commit":"abc","clean":true}', `{"commit":"${commitX}","clean":"yes","sha256":"${zipSha}"}`,
+        `{"commit":"${commitX}","clean":true}`, `{"commit":"${commitX}","clean":true,"sha256":"abc"}`];
+    for (const text of bad) {
+        assert.throws(() => parseSourceRecord(text), undefined, text);
+    }
+});
+
+test('buildSourceRefusal refuses a dry run built from a dirty tree, before comparing anything', () => {
+    let compared = false;
+    const refusal = buildSourceRefusal(record(false), () => {
+        compared = true;
+        return 0;
+    }, zipSha);
+    assert.match(refusal, /uncommitted changes \(a dry run\) at aaaaaaaaa/);
+    assert.equal(compared, false);
+});
+
+test('buildSourceRefusal refuses a zip built at commit X when HEAD differs from X outside roku/manifest', () => {
+    const asked = [];
+    const refusal = buildSourceRefusal(record(true), (commit) => {
+        asked.push(commit);
+        return 1;
+    }, zipSha);
+    assert.match(refusal, /built from aaaaaaaaa, and HEAD differs from it outside roku\/manifest/);
+    assert.deepEqual(asked, [commitX]);
+    assert.match(buildSourceRefusal(record(true), () => 128, zipSha), /couldn't be compared/);
+});
+
+test('buildSourceRefusal passes a clean build of HEAD, and refuses a missing or bad .source', () => {
+    assert.equal(buildSourceRefusal(record(true), () => 0, zipSha), null);
+    assert.equal(buildSourceRefusal(record(true), () => 0, zipSha.toUpperCase()), null);
+    assert.match(buildSourceRefusal(null, () => 0, zipSha), /has no \.source file/);
+    assert.match(buildSourceRefusal('{"clean":true}', () => 0, zipSha), /has a \.source file that/);
+});
+
+// Security N2: a .source is bound to its zip.
+test('buildSourceRefusal refuses a .source made for another zip, before comparing anything', () => {
+    let compared = false;
+    const refusal = buildSourceRefusal(record(true), () => {
+        compared = true;
+        return 0;
+    }, 'd'.repeat(64));
+    assert.match(refusal, /made for another zip/);
+    assert.equal(compared, false);
+    assert.match(buildSourceRefusal(record(true), () => 0, undefined), /made for another zip/);
+});
+
+// Security N5: an image by its bytes, not its name.
+test('isPNG checks the PNG signature', () => {
+    assert.equal(isPNG(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00])), true);
+    assert.equal(isPNG(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a])), false);
+    assert.equal(isPNG(Buffer.from('url = "http://leak-test.invalid/"')), false);
+    assert.equal(isPNG(Buffer.alloc(0)), false);
+    assert.equal(isPNG(null), false);
+});
+
+// Security L3.
+test('githubRepo reads owner/repo from GitHub URLs only', () => {
+    assert.equal(githubRepo('https://github.com/owner/repo.git'), 'owner/repo');
+    assert.equal(githubRepo('https://github.com/owner/repo'), 'owner/repo');
+    assert.equal(githubRepo('git@github.com:owner/my.repo.git'), 'owner/my.repo');
+    assert.equal(githubRepo('ssh://git@github.com/owner/repo.git'), 'owner/repo');
+    for (const other of ['/tmp/origin.git', 'https://github.com.evil.example/owner/repo', 'https://example.com/github.com/owner/repo',
+        'https://github.com/owner', '']) {
+        assert.equal(githubRepo(other), null, other);
+    }
+});
+
+// Security L4.
+test('identEmail reads the email of a committer ident', () => {
+    assert.equal(identEmail('A Name <1+name@users.noreply.github.com> 1700000000 +0000'), '1+name@users.noreply.github.com');
+    assert.equal(identEmail('no email here'), null);
 });

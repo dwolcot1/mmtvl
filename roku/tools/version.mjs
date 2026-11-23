@@ -74,11 +74,95 @@ function nightlyZipsNewestFirst(fileNames) {
         .map(({ name }) => name);
 }
 
+// → text with every @mention outside a `code span` put in one, so a commit subject in the release notes can't notify
+// anyone (security L5). An @ after a letter or digit (an email address) is left alone.
+export function neutralMentions(text) {
+    return String(text ?? '').split('\n').map((line) => line
+        .split(/(`[^`\n]*`)/)
+        .map((part, index) => (index % 2 === 1
+            ? part
+            : part.replace(/(^|[^\w`])@([A-Za-z0-9][\w-]*(?:\/[\w.-]+)?)/g, '$1`@$2`')))
+        .join(''))
+        .join('\n');
+}
+
+// The `<zipName>.source` sidecar (security 1): the commit a nightly was built from (HEAD before the bump) and whether
+// the tree was clean then, and (security N2) the SHA-256 of the zip it describes, so it can't be paired with another
+// zip. publish:nightly publishes a zip only from a clean build of HEAD's tree.
+export function sourceRecord({ commit, clean, sha256 }) {
+    return `${JSON.stringify({ commit, clean: clean === true, sha256 })}\n`;
+}
+
+// → { commit, clean, sha256 }; throws with a one-line reason for anything else.
+export function parseSourceRecord(text) {
+    let record;
+    try {
+        record = JSON.parse(text);
+    } catch {
+        throw new Error('isn\'t JSON');
+    }
+    if (!record || typeof record !== 'object' || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(record.commit ?? '')
+        || typeof record.clean !== 'boolean' || !/^[0-9a-f]{64}$/.test(record.sha256 ?? '')) {
+        throw new Error('doesn\'t hold a commit, clean: true or false, and the zip\'s SHA-256');
+    }
+    return { commit: record.commit, clean: record.clean, sha256: record.sha256 };
+}
+
+// → why the zip described by recordText can't be published, or null. zipSha256 is the zip's own SHA-256 (N2);
+// diffStatus(commit) is the exit status of `git diff --quiet <commit> HEAD -- . ':!roku/manifest'` (0: HEAD differs
+// from it only in roku/manifest, 1: elsewhere too).
+export function buildSourceRefusal(recordText, diffStatus, zipSha256) {
+    if (recordText === null || recordText === undefined) {
+        return 'has no .source file, so it can\'t be tied to a commit: run npm run nightly on a clean master';
+    }
+    let record;
+    try {
+        record = parseSourceRecord(recordText);
+    } catch (error) {
+        return `has a .source file that ${error.message}`;
+    }
+    if (record.sha256 !== String(zipSha256 ?? '').toLowerCase()) {
+        return 'has a .source file made for another zip (its SHA-256 differs)';
+    }
+    if (!record.clean) {
+        return `was built from a tree with uncommitted changes (a dry run) at ${record.commit.slice(0, 9)}`;
+    }
+    const status = diffStatus(record.commit);
+    if (status === 1) {
+        return `was built from ${record.commit.slice(0, 9)}, and HEAD differs from it outside roku/manifest`;
+    }
+    if (status !== 0) {
+        return `was built from ${record.commit.slice(0, 9)}, which couldn't be compared with HEAD (is it in this repo?)`;
+    }
+    return null;
+}
+
+// → whether bytes (a Buffer or Uint8Array) start with the PNG signature (security N5: a file is an image by its
+// content, not its name).
+const pngSignature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+export function isPNG(bytes) {
+    return Boolean(bytes) && bytes.length >= pngSignature.length && pngSignature.every((byte, index) => bytes[index] === byte);
+}
+
+// → "owner/repo" for a GitHub remote URL (https, ssh or scp form), or null (security L3).
+export function githubRepo(url) {
+    const match = /^(?:https:\/\/(?:[^@/]+@)?github\.com\/|ssh:\/\/git@github\.com\/|git@github\.com:)([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/i
+        .exec(String(url ?? '').trim());
+    return match ? `${match[1]}/${match[2]}` : null;
+}
+
+// → the email of a `git var GIT_COMMITTER_IDENT` line ("Name <email> 1700000000 +0000"), or null (security L4).
+export function identEmail(ident) {
+    const match = /<([^<>\s]+)>/.exec(String(ident ?? ''));
+    return match ? match[1] : null;
+}
+
 // → the release's Markdown body. Every value comes from the repo: no hosts, addresses or provider names.
 // changes: the `git log --format='- %s'` lines (a string or an array of lines); empty means the first build.
+// Mentions in them are put in code spans (neutralMentions).
 export function releaseNotes({ v, sha256, zip, changes, stable = false }) {
     const version = versionText(v);
-    const changeLines = (Array.isArray(changes) ? changes.join('\n') : (changes ?? '')).trim();
+    const changeLines = neutralMentions(Array.isArray(changes) ? changes.join('\n') : (changes ?? '')).trim();
     const lines = [`# MMTVL Live TV for Roku ${version} build ${v.build}${stable ? '' : ' (nightly)'}`, ''];
     if (!stable) {
         lines.push(
