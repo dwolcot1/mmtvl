@@ -70,10 +70,10 @@ namespace SettingsNavTests
         result = SettingsNavTests.handle(state, "right")
         t.assertEqual(SettingsNav.currentPage(result.state), "remoteInput", "a toggle doesn't open")
         t.assertEqual(result.action, { type: "none" }, "nor change")
-        ' A page of info rows only: Right does nothing.
+        ' A page of info rows only: focus on its first row, and Right does nothing.
         state = SettingsNavTests.press(SettingsNav.open(), ["down", "down", "down", "down", "OK"])
         t.assertEqual(SettingsNav.currentPage(state), "about")
-        t.assertInvalid(SettingsNav.focusedID(state, SettingsNavTests.list(state)))
+        t.assertEqual(SettingsNavTests.focus(state), "about.version")
         t.assertEqual(SettingsNav.currentPage(SettingsNavTests.handle(state, "right").state), "about")
         t.assertEqual(SettingsNavTests.handle(state, "OK").action, { type: "none" })
     end sub
@@ -121,13 +121,16 @@ namespace SettingsNavTests
     sub test_trickPlayKeysPageByEightRows(t as object)
         state = SettingsNavTests.press(SettingsNav.open(), ["OK"])
         ids = SettingsPages.focusableIDs(SettingsNavTests.list(state))
-        ' Step 18 added My Teams and step 21 the Antenna row: 10 rows, so a page of 8 from the first lands on the
-        ' ninth, and another on the last.
-        t.assertEqual(ids.Count(), 10)
-        state = SettingsNavTests.press(state, ["fastforward"])
-        t.assertEqual(SettingsNavTests.focus(state), ids[8])
+        ' Step 18 added My Teams and step 21 the Antenna row: 11 rows with the playlist's info row, which focus
+        ' walks too. The page opens on the second (the first action row), so a page of 8 lands on the tenth, and
+        ' another on the last; back up, the info row is the first.
+        t.assertEqual(ids.Count(), 11)
+        t.assertEqual([ids[0], ids[1]], ["playlist.info", "playlist.edit"])
+        t.assertEqual(SettingsNavTests.focus(state), ids[1])
         state = SettingsNavTests.press(state, ["fastforward"])
         t.assertEqual(SettingsNavTests.focus(state), ids[9])
+        state = SettingsNavTests.press(state, ["fastforward"])
+        t.assertEqual(SettingsNavTests.focus(state), ids[10])
         state = SettingsNavTests.press(state, ["rewind", "rewind"])
         t.assertEqual(SettingsNavTests.focus(state), ids[0])
         state = SettingsNavTests.press(state, ["channeldown", "channelup"])
@@ -176,6 +179,67 @@ namespace SettingsNavTests
         t.assertEqual(SettingsNav.currentPage(state), "root")
         t.assertEqual(SettingsNavTests.focus(state), "device")
         t.assertEqual(SettingsNavTests.handle(state, "back").action, { type: "close" })
+    end sub
+
+    ' Tester feedback on build 5: Device opens on Channel Logos (its first action row), Up and Down walk every row,
+    ' info rows included, clamped, and OK and Right do nothing on an info row.
+    sub test_upDownWalksTheDevicePagesInfoRows(t as object)
+        state = SettingsNavTests.press(SettingsNav.open(), ["down", "down", "OK"])
+        t.assertEqual(SettingsNav.currentPage(state), "device")
+        t.assertEqual(SettingsNavTests.focus(state), "device.channelLogos", "the first action row")
+        walked = []
+        for i = 1 to 4
+            state = SettingsNavTests.press(state, ["up"])
+            walked.Push(SettingsNavTests.focus(state))
+        end for
+        t.assertEqual(walked, ["device.guideWindow", "device.memory", "device.model", "device.model"], "up to Model, clamped")
+        walked = []
+        for i = 1 to 7
+            state = SettingsNavTests.press(state, ["down"])
+            walked.Push(SettingsNavTests.focus(state))
+        end for
+        t.assertEqual(walked, ["device.memory", "device.guideWindow", "device.channelLogos", "device.compressedGuides", "device.mpeg2", "device.ac3", "device.ac3"], "down to Dolby Digital, clamped")
+        for each key in ["OK", "right"]
+            result = SettingsNavTests.handle(state, key)
+            t.assertEqual(result.action, { type: "none" }, key + " on an info row")
+            t.assertFalse(result.pageChanged, key)
+            t.assertEqual(SettingsNav.currentPage(result.state), "device", key)
+        end for
+        state = SettingsNavTests.press(state, ["rewind"])
+        t.assertEqual(SettingsNavTests.focus(state), "device.model", "8 rows up, clamped")
+    end sub
+
+    ' A page without action rows opens on its first row; one with them, on the first action row, even when an info
+    ' row comes first; a focus id no longer on the page falls back the same way.
+    sub test_theDefaultFocusIsTheFirstActionRow(t as object)
+        state = SettingsNavTests.press(SettingsNav.open(), ["down", "down", "down", "OK"])
+        t.assertEqual(SettingsNav.currentPage(state), "import")
+        t.assertEqual(SettingsNavTests.focus(state), "import.run")
+        state = SettingsNavTests.press(state, ["down"])
+        t.assertEqual(SettingsNavTests.focus(state), "import.choose")
+        liveTV = SettingsNavTests.press(SettingsNav.open(), ["OK"])
+        t.assertEqual(SettingsNavTests.focus(liveTV), "playlist.edit", "not the playlist's info row above it")
+        t.assertEqual(SettingsNavTests.focus(SettingsNavTests.press(liveTV, ["up"])), "playlist.info")
+        rows = SettingsNavTests.list(liveTV)
+        t.assertEqual(SettingsNav.resolveRow(rows, "gone"), "playlist.edit")
+        t.assertEqual(SettingsNav.resolveRow(rows, "playlist.info"), "playlist.info")
+        infoOnly = [SettingsPages.newSection("s", "", [SettingsPages.newRow({ id: "a" }), SettingsPages.newRow({ id: "b" })], "")]
+        t.assertEqual(SettingsNav.resolveRow(infoOnly, "gone"), "a")
+        t.assertInvalid(SettingsNav.resolveRow([], ""))
+    end sub
+
+    ' The parent column still marks the opening row (an action row), resolved over action rows only: an info row
+    ' above it on the parent page never takes the mark.
+    sub test_theParentMarkIsResolvedOverActionRows(t as object)
+        state = SettingsNavTests.press(SettingsNav.open(), ["down", "down", "OK"])
+        rootRows = SettingsPages.sections("root", SettingsNavTests.model())
+        t.assertEqual(SettingsNav.resolve(SettingsPages.actionIDs(rootRows), state.stack[0].focus), "device")
+        state = SettingsNavTests.press(SettingsNav.open(), ["OK", "down", "OK"])
+        liveRows = SettingsPages.sections("liveTV", SettingsNavTests.model())
+        opening = "guide." + SettingsNavTests.guideIDs()[0]
+        t.assertEqual(state.stack[1].focus, opening)
+        t.assertEqual(SettingsNav.resolve(SettingsPages.actionIDs(liveRows), state.stack[1].focus), opening)
+        t.assertEqual(SettingsNav.resolve(SettingsPages.actionIDs(liveRows), ""), "playlist.edit", "never the info row")
     end sub
 
     ' L8: three Replays in a row on About; not elsewhere, and another key starts the count again.

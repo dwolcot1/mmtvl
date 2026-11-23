@@ -2,9 +2,10 @@
 ' (once per change); m.messages the top page's refused-address and refused-save texts ({ playlist, guide, band });
 ' m.columns one record per stack page, in stack order:
 '   { node (the column, clipped to the track's height), content (scrolled), page, list (its sections as last
-'     drawn), signature (what was drawn), rows ({ id: row record }), focusable (ids), contentHeight, role }
-' A row record: { node, background, titleLabel, detailLabel, valueLabel, chevron, top, height, isInfo, dimmed,
-' twoLine, style }. A column is drawn again only when its sections change (signature); a focus move restyles two
+'     drawn), signature (what was drawn), rows ({ id: row record }), focusable (every row's id, info rows
+'     included), contentHeight, role }
+' A row record: { node, background, ring (info rows: the focus ring, else invalid), titleLabel, detailLabel,
+' valueLabel, chevron, top, height, isInfo, dimmed, twoLine, style }. A column is drawn again only when its sections change (signature); a focus move restyles two
 ' rows and scrolls.
 
 sub init()
@@ -196,14 +197,16 @@ sub render(animate as boolean)
     moveTrack(SettingsNav.trackX(stack.Count(), layout), animate)
 end sub
 
-' The current page's focused row, the parent's opening row; nothing in a hidden column (MMTVL's markedRowID).
+' The current page's focused row (an info row too), the parent's opening row (always an action row, so resolved
+' over action rows only); nothing in a hidden column (MMTVL's markedRowID).
 function markedRow(index as integer, role as string, list as object) as dynamic
     if role = "current" then return SettingsNav.focusedID(m.nav, list)
-    if role = "parent" then return SettingsNav.resolve(SettingsPages.focusableIDs(list), m.nav.stack[index].focus)
+    if role = "parent" then return SettingsNav.resolve(SettingsPages.actionIDs(list), m.nav.stack[index].focus)
     return invalid
 end function
 
-' A refused save's message (warningText), else the focused row's description.
+' A refused save's message (warningText), else the focused row's description (an info row without one: the
+' info-only line, SettingsPages.infoOnlyDescription).
 sub showBand(list as object)
     band = m.top.findNode("band")
     if m.messages.band <> ""
@@ -322,6 +325,17 @@ function makeRow(content as object, item as object, x as integer, y as integer, 
     background = node.createChild("Poster")
     background.width = width
     background.height = height
+    isInfo = item.action = invalid
+    ' An info row's focus: a white ring over its own surface, shown only while it's focused (styleRow).
+    ring = invalid
+    if isInfo
+        ring = node.createChild("Poster")
+        ring.width = width
+        ring.height = height
+        ring.uri = m.theme.images.settingsInfoFocus
+        if twoLine then ring.uri = m.theme.images.settingsInfoFocusTall
+        ring.visible = false
+    end if
     inset = layout.settingsRowTextInset
     lineHeight = Theme.lineHeight(specs.settingsRow)
     centreY = Int((height - lineHeight) / 6) * 3
@@ -366,14 +380,14 @@ function makeRow(content as object, item as object, x as integer, y as integer, 
         detailLabel.text = item.detail
         detailLabel.translation = [inset, titleY + lineHeight + layout.settingsRowLineSpacing]
     end if
-    made = { node: node, background: background, titleLabel: titleLabel, detailLabel: detailLabel, valueLabel: valueLabel, chevron: chevron, top: y, height: height, isInfo: item.action = invalid, dimmed: item.dimmed, twoLine: twoLine, style: "" }
+    made = { node: node, background: background, ring: ring, titleLabel: titleLabel, detailLabel: detailLabel, valueLabel: valueLabel, chevron: chevron, top: y, height: height, isInfo: isInfo, dimmed: item.dimmed, twoLine: twoLine, style: "" }
     styleRow(made, "normal")
     return made
 end function
 
 ' The marked row's style (focused in the current column, selected in the parent), every other row's normal; then
-' the column scrolls to the marked row (the list's top on its first focusable row, its end on the last, else the
-' row centred: MMTVL's SettingsPageList.scroll).
+' the column scrolls to the marked row (the list's top on its first row or first action row, its end on the last
+' row or last action row, else the row centred: MMTVL's SettingsPageList.scroll).
 sub markColumn(record as object, marked as dynamic, role as string)
     record.role = role
     markedStyle = "normal"
@@ -390,11 +404,15 @@ sub markColumn(record as object, marked as dynamic, role as string)
     if markedID = "" then return
     found = record.rows[markedID]
     if found = invalid then return
+    ' The first row or the first action row shows the list's top, the last row or the last action row its end (the
+    ' first check wins on a page with one action row), as MMTVL's SettingsPageList.scroll.
     position = "middle"
+    actions = []
+    if type(record.list) = "roArray" then actions = SettingsPages.actionIDs(record.list)
     if record.focusable.Count() > 0
-        if record.focusable[0] = markedID
+        if record.focusable[0] = markedID or (actions.Count() > 0 and actions[0] = markedID)
             position = "first"
-        else if record.focusable[record.focusable.Count() - 1] = markedID
+        else if record.focusable[record.focusable.Count() - 1] = markedID or (actions.Count() > 0 and actions[actions.Count() - 1] = markedID)
             position = "last"
         end if
     end if
@@ -402,11 +420,13 @@ sub markColumn(record as object, marked as dynamic, role as string)
     record.content.translation = [0, -offset]
 end sub
 
-' normal: settings_row (an action row) or settings_info_row; focused: the white focus capsule with black text;
-' selected (the parent's opening row): the focus capsule tinted settingsSelectedRowFill. Info rows are never marked.
-' A dimmed row (a hidden group, a guide not in use) is at unavailableOpacity unless focused.
+' normal: settings_row (an action row) or settings_info_row; focused: the white focus capsule with black text, or
+' on an info row its own settings_info_row with the settings_info_focus ring over it and its text colours unchanged
+' (no capsule, no chevron: it reads as focused but not as something to choose); selected (the parent's opening row,
+' always an action row): the focus capsule tinted settingsSelectedRowFill. A dimmed row (a hidden group, a guide not
+' in use) is at unavailableOpacity unless focused.
 sub styleRow(made as object, rowStyle as string)
-    if made.isInfo then rowStyle = "normal"
+    if made.isInfo and rowStyle = "selected" then rowStyle = "normal"
     if made.style = rowStyle then return
     made.style = rowStyle
     images = m.theme.images
@@ -414,7 +434,11 @@ sub styleRow(made as object, rowStyle as string)
     blend = "0xFFFFFFFF"
     primary = colors.primaryText
     secondary = colors.secondaryText
-    if rowStyle = "focused" or rowStyle = "selected"
+    if made.isInfo
+        ' Focused or not: the ring (below) is the only change.
+        uri = images.settingsInfoRow
+        if made.twoLine then uri = images.settingsInfoRowTall
+    else if rowStyle = "focused" or rowStyle = "selected"
         uri = images.focusCapsule
         if made.twoLine then uri = images.focusCapsuleTall
         if rowStyle = "focused"
@@ -424,15 +448,13 @@ sub styleRow(made as object, rowStyle as string)
         else
             blend = colors.settingsSelectedRowFill
         end if
-    else if made.isInfo
-        uri = images.settingsInfoRow
-        if made.twoLine then uri = images.settingsInfoRowTall
     else
         uri = images.settingsRow
         if made.twoLine then uri = images.settingsRowTall
     end if
     made.background.uri = uri
     made.background.blendColor = blend
+    if made.ring <> invalid then made.ring.visible = rowStyle = "focused"
     made.titleLabel.color = primary
     for each label in [made.detailLabel, made.valueLabel, made.chevron]
         if label <> invalid then label.color = secondary

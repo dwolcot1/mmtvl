@@ -28,7 +28,7 @@ struct SettingsRemoteButtonsTests {
         let (model, _) = makeSettingsModel()
         model.open(.remoteInput)
         #expect(model.row(id: "remoteButtons")?.action == .push(.remoteButtons))
-        let ids = model.focusableRowIDs
+        let ids = model.actionRowIDs
         // M7h: Siri Remote comes between Game Controllers and Remote Buttons (Receiver & TV is on Audio & TV, 13c).
         #expect(ids.firstIndex(of: "remoteButtons") == ids.firstIndex(of: "siriRemote")! + 1)
         #expect(ids.firstIndex(of: "channelUp") == ids.firstIndex(of: "remoteButtons")! + 1)
@@ -40,7 +40,7 @@ struct SettingsRemoteButtonsTests {
         #expect(model.pageTitle == "Remote Buttons")
         // M7h U2: every command, Power and Power Menu included.
         let commandRowIDs = RemoteCommand.allCases.map { "command.\($0.rawValue)" }
-        #expect(Array(model.focusableRowIDs.prefix(commandRowIDs.count)) == commandRowIDs)
+        #expect(Array(model.actionRowIDs.prefix(commandRowIDs.count)) == commandRowIDs)
         #expect(model.row(id: "command.select")?.value == "Return · Keypad Enter +2")   // M7h: + Siri Remote Select
         #expect(model.row(id: "command.channelUp")?.value == "Page Up · Controller Right Trigger")
         #expect(model.row(id: "command.menu")?.title == "Menu")
@@ -209,7 +209,7 @@ struct SettingsRemoteButtonsTests {
         model.perform(.push(.remoteBinding(.select, returnKey)))
         #expect(model.row(id: "binding.remove") == nil)
         #expect(model.row(id: "binding.cantRemove")?.title == "The last button for Select can't be removed")
-        #expect(model.focusableRowIDs.isEmpty)
+        #expect(model.actionRowIDs.isEmpty)
         model.perform(.removeBinding(returnKey))
         #expect(recorder.appliedBindings.isEmpty)
     }

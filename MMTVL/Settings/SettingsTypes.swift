@@ -437,7 +437,7 @@ nonisolated struct SettingsRow: Identifiable, Hashable, Sendable {
     var isLifted = false
     /// D19 "Relaunch needed" badge; no M2b row sets it (L3).
     var needsRelaunch = false
-    /// nil = info row: shown, never focused.
+    /// nil = info row: it takes focus (a ring, not the white highlight), but Select does nothing.
     var action: SettingsAction? = nil
     /// M7g L3, L8: the band's text when focused; an explanation, while `detail` holds status and messages.
     var description: String? = nil

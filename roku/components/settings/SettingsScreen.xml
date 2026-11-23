@@ -9,7 +9,8 @@
      opens the keyboard for an address (so a typed URL never passes through this node), and sends back a new model,
      and a message when something was refused. Every key is handled here (D49): Back on the root asks the scene to
      close Settings. Sizes from Theme.bs (the 3-px grid), images: settings_row, settings_info_row, focus_capsule
-     (and their _tall versions for two-line rows). -->
+     and settings_info_focus (the ring on a focused info row, which keeps its own surface and text colours), and their
+     _tall versions for two-line rows. Every row takes focus, info rows included. -->
 <component name="SettingsScreen" extends="Group">
     <interface>
         <!-- In: SettingsStatus.make's model. A change redraws the pages; the stack and focus stay (by row id). -->

@@ -326,6 +326,9 @@ enum Theme {
     static let settingsRowCapsuleFill = Color.white.opacity(0.075)
     /// M7g L4: info rows (no action) on a quiet fill instead of glass.
     static let settingsInfoRowFill = Color.white.opacity(0.05)
+    /// A focused info row keeps its quiet fill and its colours and gets this white ring (`focusedRowFill`), never
+    /// the action rows' white highlight, so it reads as information, not something to select.
+    static let settingsInfoRowFocusRingWidth: CGFloat = 3
     /// M7g L2: a symbol accessory in the parent column (the learn prompt, or while a QR code loads).
     static let settingsAccessorySymbolSize: CGFloat = 240
     /// M7g L1: the track's slide when going deeper or back. Critically damped: it settles without overshoot.

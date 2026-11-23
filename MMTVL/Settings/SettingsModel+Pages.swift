@@ -136,7 +136,11 @@ extension SettingsModel {
         }
     }
 
-    /// M7g L3: the description band: the mode hint, else the focused row's description, else nothing.
+    /// The band for a focused info row that has no description of its own.
+    static let infoRowBandText = "Information only: nothing to change here."
+
+    /// M7g L3: the description band: the mode hint, else the focused row's description (an info row without one:
+    /// `infoRowBandText`), else nothing.
     var bandText: String? {
         if movingTileID != nil { return "Up/Down: move · Select or Back: done" }
         if case .learnButton = page { return "Waiting for a button…" }
@@ -145,7 +149,9 @@ extension SettingsModel {
             let modeKey = keyboard.mode == .letters ? "123 switches to numbers" : "abc switches to letters"
             return "Type an address like \(example). \(modeKey), Play/Pause deletes, Down goes to Save."
         }
-        return focusedRowID.flatMap { row(id: $0)?.description }
+        guard let id = focusedRowID, let focused = row(id: id) else { return nil }
+        if let description = focused.description { return description }
+        return focused.action == nil ? Self.infoRowBandText : nil
     }
 
     private static func onOff(_ value: Bool) -> String { value ? "On" : "Off" }

@@ -47,7 +47,7 @@ struct SettingsReceiverTests {
 
     @Test func rootOpensAudioTVAfterCasting() {
         let (model, _) = makeSettingsModel()
-        let ids = model.focusableRowIDs
+        let ids = model.actionRowIDs
         #expect(ids.firstIndex(of: "audioTV") == ids.firstIndex(of: "casting")! + 1)
         #expect(ids.firstIndex(of: "remoteInput") == ids.firstIndex(of: "audioTV")! + 1)
         let row = model.row(id: "audioTV")
@@ -68,7 +68,7 @@ struct SettingsReceiverTests {
         model.open(.audioTV)
         #expect(model.sections.map(\.id) == ["devices", "volume"])
         #expect(model.sections.map(\.title) == [nil, "Volume"])
-        #expect(model.focusableRowIDs == ["audioTV.receiver", "audioTV.tv", "receiver.showVolume"])
+        #expect(model.actionRowIDs == ["audioTV.receiver", "audioTV.tv", "receiver.showVolume"])
         let receiver = model.row(id: "audioTV.receiver")
         #expect(receiver?.title == "Receiver")
         #expect(receiver?.value == "Not Set Up")
@@ -127,7 +127,7 @@ struct SettingsReceiverTests {
         let (model, _) = onReceiverPage()
         #expect(model.pageTitle == "Receiver")
         #expect(model.sections.map(\.id) == ["receiver"])
-        #expect(model.focusableRowIDs == ["receiver.brand", "receiver.connection", "receiver.port", "receiver.find"])
+        #expect(model.actionRowIDs == ["receiver.brand", "receiver.connection", "receiver.port", "receiver.find"])
         #expect(model.row(id: "receiver.brand")?.value == "None")
         #expect(model.row(id: "receiver.brand")?.action == .push(.receiverBrand))
         #expect(model.row(id: "receiver.connection")?.value == "Serial")
@@ -147,7 +147,7 @@ struct SettingsReceiverTests {
         model.open(.audioTV)
         model.open(.receiver)
         #expect(model.sections.map(\.id) == ["receiver"])
-        #expect(model.focusableRowIDs == ["receiver.brand", "receiver.connection", "receiver.port", "receiver.test",
+        #expect(model.actionRowIDs == ["receiver.brand", "receiver.connection", "receiver.port", "receiver.test",
                                           "receiver.find", "receiver.maxVolume"])
         #expect(model.sections.first?.rows.last?.id == "receiver.status")
         #expect(model.row(id: "receiver.brand")?.value == "Pioneer")
@@ -181,7 +181,7 @@ struct SettingsReceiverTests {
         model.activate(rowID: "receiver.connection")
         #expect(model.page == .receiverConnection)
         #expect(model.pageTitle == "Connection")
-        #expect(model.focusableRowIDs == ["connection.serial", "connection.network", "connection.cec"])
+        #expect(model.actionRowIDs == ["connection.serial", "connection.network", "connection.cec"])
         #expect(model.row(id: "connection.serial")?.value == "Selected")
         #expect(model.row(id: "connection.cec")?.title == "HDMI-CEC")
         #expect(model.row(id: "connection.cec")?.detail == "Through the Mac's HDMI; no volume in dB")
@@ -218,7 +218,7 @@ struct SettingsReceiverTests {
         #expect(model.page == .receiverBrand)
         // Step 13c: a page takes the title of the row that opened it.
         #expect(model.pageTitle == "Brand")
-        #expect(model.focusableRowIDs == ReceiverBrand.allCases.map { "brand.\($0.rawValue)" })
+        #expect(model.actionRowIDs == ReceiverBrand.allCases.map { "brand.\($0.rawValue)" })
         #expect(model.row(id: "brand.none")?.value == "Selected")
         #expect(model.row(id: "brand.pioneer")?.title == "Pioneer")
         #expect(model.row(id: "brand.pioneer")?.detail == "Before 2016")
@@ -253,7 +253,7 @@ struct SettingsReceiverTests {
         model.activate(rowID: "receiver.port")
         #expect(recorder.serialPortReads == 1)
         #expect(model.page == .receiverPort)
-        #expect(model.focusableRowIDs == ["port.automatic", "port./dev/cu.usbserial-TEST2", "port./dev/cu.debug-console",
+        #expect(model.actionRowIDs == ["port.automatic", "port./dev/cu.usbserial-TEST2", "port./dev/cu.debug-console",
                                           "port./dev/cu.usbserial-TEST1"])
         #expect(model.row(id: "port.automatic")?.value == nil)
         #expect(model.row(id: "port./dev/cu.usbserial-TEST2")?.title == "cu.usbserial-TEST2")
@@ -276,7 +276,7 @@ struct SettingsReceiverTests {
         model.open(.receiverPort)
         #expect(model.row(id: "port.automatic")?.value == "Selected")
         #expect(model.row(id: "port.none")?.title == "No serial ports found")
-        #expect(model.focusableRowIDs == ["port.automatic"])
+        #expect(model.actionRowIDs == ["port.automatic"])
     }
 
     // MARK: Test Connection (L12)
@@ -381,7 +381,7 @@ struct SettingsReceiverTests {
         #expect(recorder.networkFinds == [8102])
         #expect(model.page == .receiverFound)
         #expect(model.pageTitle == "Receivers Found")
-        #expect(model.focusableRowIDs == ["found.10.254.0.21:23", "found.10.254.0.22:60129"])
+        #expect(model.actionRowIDs == ["found.10.254.0.21:23", "found.10.254.0.22:60129"])
         #expect(model.row(id: "found.10.254.0.21:23")?.title == "Living Room")
         #expect(model.row(id: "found.10.254.0.21:23")?.detail == "Pioneer · 10.254.0.21")
         #expect(model.row(id: "found.10.254.0.22:60129")?.title == "TX-NR686")
@@ -424,7 +424,7 @@ struct SettingsReceiverTests {
         #expect(model.row(id: "receiver.maxVolume")?.action == .push(.receiverMaxVolume))
         model.activate(rowID: "receiver.maxVolume")
         #expect(model.page == .receiverMaxVolume)
-        #expect(model.focusableRowIDs.count == 9)
+        #expect(model.actionRowIDs.count == 9)
         #expect(model.row(id: "maxVolume.-30.0")?.title == "\u{2212}30 dB")
         #expect(model.row(id: "maxVolume.10.0")?.title == "+10 dB")
         #expect(model.row(id: "maxVolume.0.0")?.value == "Selected")
@@ -439,9 +439,9 @@ struct SettingsReceiverTests {
         settings.receiverMaxDB = -12.5
         let (model, _) = onReceiverPage(settings)
         model.open(.receiverMaxVolume)
-        #expect(model.focusableRowIDs.count == 10)
+        #expect(model.actionRowIDs.count == 10)
         #expect(model.row(id: "maxVolume.-12.5")?.value == "Selected")
-        #expect(model.focusableRowIDs.firstIndex(of: "maxVolume.-12.5") == model.focusableRowIDs.firstIndex(of: "maxVolume.-15.0")! + 1)
+        #expect(model.actionRowIDs.firstIndex(of: "maxVolume.-12.5") == model.actionRowIDs.firstIndex(of: "maxVolume.-15.0")! + 1)
     }
 
     @Test func onkyoCantBeCapped() {
@@ -476,7 +476,7 @@ struct SettingsReceiverTests {
         settings.volumeToast = false
         let (model, recorder) = makeSettingsModel(settings: settings)
         model.open(.audioTV)
-        #expect(model.focusableRowIDs == ["audioTV.receiver", "audioTV.tv", "receiver.showVolume"])
+        #expect(model.actionRowIDs == ["audioTV.receiver", "audioTV.tv", "receiver.showVolume"])
         #expect(model.row(id: "receiver.showVolume")?.value == "Off")
         model.activate(rowID: "receiver.showVolume")
         #expect(recorder.appliedSettings.last?.volumeToast == true)
@@ -519,7 +519,7 @@ struct SettingsReceiverTests {
         model.activate(rowID: "tv.brand")
         #expect(model.page == .tvBrand)
         #expect(model.pageTitle == "Brand")
-        #expect(model.focusableRowIDs == ["tvBrand.none", "tvBrand.panasonic", "tvBrand.cec"])
+        #expect(model.actionRowIDs == ["tvBrand.none", "tvBrand.panasonic", "tvBrand.cec"])
         #expect(model.row(id: "tvBrand.cec")?.title == "HDMI-CEC")
         #expect(model.row(id: "tvBrand.cec")?.detail == "Any TV, through the Mac's HDMI. Also turns a CEC receiver off and on.")
         #expect(model.row(id: "tvBrand.panasonic")?.title == "Panasonic VIERA")
@@ -539,7 +539,7 @@ struct SettingsReceiverTests {
         })
         #expect(recorder.cecRefreshes == 1)   // opening the page checks the tunnel (read-only)
         #expect(model.sections.last?.rows.map(\.id) == ["tv.brand", "tv.test", "tv.status", "tv.volume"])
-        #expect(model.focusableRowIDs == ["tv.brand", "tv.test", "tv.volume"])
+        #expect(model.actionRowIDs == ["tv.brand", "tv.test", "tv.volume"])
         #expect(model.row(id: "tv.brand")?.value == "HDMI-CEC")
         #expect(model.row(id: "tv.status")?.value == "Checking…")
         #expect(model.row(id: "tv.status")?.action == nil)
@@ -659,6 +659,13 @@ struct SettingsReceiverTests {
         #expect(model.focusedRowID == "address.save")
         model.press(.up)
         #expect(model.isKeyboardActive)
+        // Down from the keyboard again lands on Save, the first action row; the rows below still walk.
+        model.press(.down)
+        #expect(model.focusedRowID == "address.save")
+        model.press(.down)
+        #expect(model.focusedRowID == "address.clear")
+        model.press(.up, .up)
+        #expect(model.isKeyboardActive)
         model.press(.down, .select)
         #expect(recorder.appliedSettings.last?.receiverHost == "10.254.0.5")
         #expect(model.page == .receiver)
@@ -726,7 +733,7 @@ struct SettingsReceiverTests {
         #expect(model.row(id: "receiver.found")?.action == .push(.receiverFound))
         model.activate(rowID: "receiver.found")
         #expect(model.page == .receiverFound)
-        #expect(model.focusableRowIDs == ["found.10.254.0.24:23", "found.10.254.0.25:23"])
+        #expect(model.actionRowIDs == ["found.10.254.0.24:23", "found.10.254.0.25:23"])
         // Choosing one is a settings change: the list goes with the old results.
         model.activate(rowID: "found.10.254.0.25:23")
         #expect(model.page == .receiver)
@@ -805,7 +812,7 @@ struct SettingsReceiverTests {
         #expect(model.sections.map(\.id) == ["receiver"])
         #expect(model.sections.last?.rows.map(\.id) == ["receiver.connection", "receiver.test", "receiver.find",
                                                         "receiver.maxVolume", "receiver.status"])
-        #expect(model.focusableRowIDs == ["receiver.connection", "receiver.test", "receiver.find"])
+        #expect(model.actionRowIDs == ["receiver.connection", "receiver.test", "receiver.find"])
         #expect(model.row(id: "receiver.brand") == nil)
         #expect(model.row(id: "receiver.port") == nil)
         #expect(model.row(id: "receiver.address") == nil)

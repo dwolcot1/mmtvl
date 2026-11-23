@@ -6,7 +6,7 @@ struct SettingsCastingTests {
     @Test func rootRowPushesCastingAndRefreshes() {
         let (model, recorder) = makeSettingsModel()
         #expect(model.row(id: "casting")?.action == .push(.casting))
-        let ids = model.focusableRowIDs
+        let ids = model.actionRowIDs
         #expect(ids.firstIndex(of: "casting") == ids.firstIndex(of: "youtube")! + 1)
         model.perform(.push(.casting))
         #expect(model.page == .casting)
@@ -68,7 +68,7 @@ struct SettingsCastingTests {
         recorder.casting.plexHTPC = .running
         model.refreshStatus()
         #expect(model.row(id: "cast.plex.htpc")?.value == "Running")
-        #expect(!model.focusableRowIDs.contains("cast.plex.htpc"))
+        #expect(!model.actionRowIDs.contains("cast.plex.htpc"))
     }
 
     // MARK: Android (step 8)

@@ -10,7 +10,7 @@ struct SettingsPlexTests {
         recorder.plex.isSignedIn = true
         model.refreshStatus()
         #expect(model.row(id: "plex")?.value == "Signed In")
-        let ids = model.focusableRowIDs
+        let ids = model.actionRowIDs
         // M7g L6: Plex follows Live TV.
         #expect(ids.firstIndex(of: "plex") == ids.firstIndex(of: "liveTV")! + 1)
     }
@@ -19,7 +19,7 @@ struct SettingsPlexTests {
         let (model, recorder) = makeSettingsModel()
         model.perform(.push(.plex))
         #expect(recorder.plexRefreshes == 1)
-        #expect(model.focusableRowIDs == ["plex.signIn"])
+        #expect(model.actionRowIDs == ["plex.signIn"])
         #expect(model.row(id: "plex.signIn")?.action == .push(.plexLink))
     }
 
@@ -33,7 +33,7 @@ struct SettingsPlexTests {
         #expect(model.row(id: "plex.server")?.value == "Living Room")
         #expect(model.row(id: "plex.server")?.action == nil)
         #expect(model.row(id: "plex.status")?.value == "Connected · 7 items")
-        #expect(model.focusableRowIDs == ["plex.signOut"])
+        #expect(model.actionRowIDs == ["plex.signOut"])
 
         recorder.plex.servers.append(.init(id: "srv2", name: "Attic", detail: "Shared with you"))
         model.refreshStatus()
@@ -51,7 +51,7 @@ struct SettingsPlexTests {
         model.refreshStatus()
         #expect(model.row(id: "plexLink.code")?.value == "AB12")
         #expect(model.accessory(for: model.page) == .qrCode("https://plex.tv/link/?pin=AB12"))
-        #expect(model.focusableRowIDs == ["plexLink.cancel"])
+        #expect(model.actionRowIDs == ["plexLink.cancel"])
         model.press(.back)
         #expect(recorder.plexLinkingCalls == [true, false])
     }
@@ -85,7 +85,7 @@ struct SettingsPlexTests {
         model.refreshStatus()
         #expect(model.page == .plexServers)
         #expect(model.stack.count == 3)
-        #expect(model.focusableRowIDs == ["plexServer.srv1", "plexServer.srv2"])
+        #expect(model.actionRowIDs == ["plexServer.srv1", "plexServer.srv2"])
         model.press(.down, .select)
         #expect(recorder.chosenPlexServers == ["srv2"])
         #expect(model.page == .plex)

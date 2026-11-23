@@ -21,7 +21,9 @@ nonisolated struct SettingsRowShape: InsettableShape {
 }
 
 /// One Settings row (M7g L4), its own glass capsule. The focused (or lifted) row turns white with dark text, as on
-/// tvOS; with a highlight namespace (L5) the white fill slides between the column's rows instead of fading.
+/// tvOS; with a highlight namespace (L5) the white fill slides between the column's rows instead of fading. A focused
+/// info row only gets a white ring: the white fill isn't drawn on it, so it fades out (and back in on the next action
+/// row) rather than sliding onto it.
 struct SettingsRowView: View {
     enum Style {
         /// The current column's focused row.
@@ -40,10 +42,12 @@ struct SettingsRowView: View {
     let onHover: () -> Void
     let onActivate: () -> Void
 
-    /// Info rows never look focused.
+    /// Info rows never get the white highlight: a focused one gets a ring instead (`isInfoFocused`).
     private var isHighlighted: Bool { (style == .focused || row.isLifted) && row.action != nil }
     private var isMarkedSelected: Bool { style == .selected && !isHighlighted }
     private var isInfo: Bool { row.action == nil }
+    /// A focused info row: its quiet fill and colours, plus a white ring; no scale, no shadow.
+    private var isInfoFocused: Bool { style == .focused && isInfo }
     private var primary: Color { isHighlighted ? Theme.focusedRowText : Theme.primaryText }
     private var secondary: Color { isHighlighted ? Theme.focusedRowSecondaryText : Theme.secondaryText }
     private var shape: SettingsRowShape {
@@ -67,11 +71,17 @@ struct SettingsRowView: View {
         .animation(nil, value: style == .selected)
         .frame(maxWidth: .infinity, minHeight: Theme.settingsRowMinHeight)
         .modifier(SettingsRowSurface(shape: shape, isInfo: isInfo))
+        .overlay {
+            if isInfoFocused {
+                shape.strokeBorder(Theme.focusedRowFill, lineWidth: Theme.settingsInfoRowFocusRingWidth)
+            }
+        }
         .contentShape(shape)
         .opacity(row.isDimmed && !isHighlighted ? Theme.unavailableOpacity : 1)
         // No `zIndex` for the focused row: changing it makes the glass container rebuild the row's glass, which
         // shrinks and regrows it.
         .animation(Theme.focusAnimation, value: isHighlighted)
+        .animation(Theme.focusAnimation, value: isInfoFocused)
         .onHover { hovering in
             if hovering { onHover() }
         }

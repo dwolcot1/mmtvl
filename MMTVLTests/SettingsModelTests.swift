@@ -19,7 +19,7 @@ struct SettingsModelTests {
             ("casting", .casting), ("audioTV", .audioTV), ("remoteInput", .remoteInput), ("restrictions", .restrictions),
             ("system", .system), ("about", .about), ("licenses", .licenses),   // MR step 4
         ]
-        #expect(model.focusableRowIDs == expected.map(\.0))
+        #expect(model.actionRowIDs == expected.map(\.0))
         for (id, page) in expected {
             #expect(model.row(id: id)?.action == .push(page))
         }
@@ -161,7 +161,7 @@ struct SettingsModelTests {
         model.activate(rowID: "glass")
         #expect(model.page == .glassStyle)
         #expect(model.title(for: .glassStyle) == "Glass")
-        #expect(model.focusableRowIDs == GlassStyle.allCases.map { "glass.\($0.rawValue)" })
+        #expect(model.actionRowIDs == GlassStyle.allCases.map { "glass.\($0.rawValue)" })
         #expect(model.row(id: "glass.frosted")?.title == "Frosted")
         #expect(model.row(id: "glass.clear")?.value == "Selected")
         #expect(model.row(id: "glass.frosted")?.value == nil)
@@ -295,7 +295,7 @@ struct SettingsHomeScreenTests {
         let (model, recorder) = modelOnHomeScreen()
         model.perform(.push(.tile(id: "settings")))
         // Start Here (M7c L32), Tile Art (M7 L25) and Move; never hide or remove.
-        #expect(model.focusableRowIDs == ["tile.start", "tile.art", "tile.move"])
+        #expect(model.actionRowIDs == ["tile.start", "tile.art", "tile.move"])
         model.perform(.toggleTileVisible(id: "settings"))
         model.perform(.removeTile(id: "settings"))
         #expect(recorder.appliedItems.isEmpty)
@@ -356,7 +356,7 @@ struct SettingsAddTileTests {
         let (model, _) = modelOnAddTile(apps: [plex])
         await model.loadInstalledApps()
         #expect(model.row(id: "apps.none") != nil)
-        #expect(!model.focusableRowIDs.contains("apps.none"))
+        #expect(!model.actionRowIDs.contains("apps.none"))
     }
 }
 
@@ -530,7 +530,7 @@ struct SettingsLiveTVTests {
     @Test func pageWithoutPlaylistOnlyPastes() {
         let (model, recorder) = makeSettingsModel(settings: Self.antennaOff)
         model.perform(.push(.liveTV))
-        #expect(model.focusableRowIDs == ["iptv.playlist.paste", "iptv.antenna"])
+        #expect(model.actionRowIDs == ["iptv.playlist.paste", "iptv.antenna"])
         #expect(model.row(id: "iptv.playlist.paste")?.title == "Paste Playlist URL")
         #expect(model.row(id: "iptv.guide.add") == nil)
         model.press(.select)
@@ -611,7 +611,7 @@ struct SettingsLiveTVTests {
         recorder.iptv.channelCount = 5
         model.refreshStatus()
         model.perform(.push(.liveTV))
-        #expect(model.focusableRowIDs == ["iptv.playlist.paste", "iptv.guide.g1", "iptv.guide.g2", "iptv.guide.add",
+        #expect(model.actionRowIDs == ["iptv.playlist.paste", "iptv.guide.g1", "iptv.guide.g2", "iptv.guide.add",
                                           "iptv.antenna", "iptv.groups", "iptv.hiddenChannels", "iptv.teams", "iptv.homePreview", "iptv.refresh",
                                           "iptv.remove"])
         let info = model.row(id: "iptv.playlist.info")
@@ -642,7 +642,7 @@ struct SettingsLiveTVTests {
         recorder.iptv.customGuideCount = 0
         model.refreshStatus()
         model.perform(.push(.liveTV))
-        #expect(model.focusableRowIDs == ["iptv.playlist.paste", "iptv.guide.add", "iptv.antenna", "iptv.groups", "iptv.hiddenChannels", "iptv.teams",
+        #expect(model.actionRowIDs == ["iptv.playlist.paste", "iptv.guide.add", "iptv.antenna", "iptv.groups", "iptv.hiddenChannels", "iptv.teams",
                                           "iptv.homePreview", "iptv.refresh", "iptv.remove"])
         #expect(model.row(id: "iptv.guide.p")?.value == "From Playlist")
         #expect(model.row(id: "iptv.guide.p")?.action == nil)
@@ -711,7 +711,7 @@ struct SettingsLiveTVTests {
         model.perform(.push(.liveTV))
         model.perform(.push(.iptvGroups))
         #expect(model.pageTitle == "Groups")
-        #expect(model.focusableRowIDs == ["group.Live Channels", "group.NHL Games"])
+        #expect(model.actionRowIDs == ["group.Live Channels", "group.NHL Games"])
         let nhl = model.row(id: "group.NHL Games")
         #expect(nhl?.value == "Hidden")
         #expect(nhl?.detail == "8 channels")
@@ -735,7 +735,7 @@ struct SettingsLiveTVTests {
 
         model.perform(.push(.iptvTeams))
         #expect(model.pageTitle == "My Teams")
-        #expect(model.focusableRowIDs == ["league.nfl", "league.nba", "league.nhl", "league.mlb",
+        #expect(model.actionRowIDs == ["league.nfl", "league.nba", "league.nhl", "league.mlb",
                                           "league.ncaaf", "league.ncaam", "league.ncaaw", "league.ncaabase",
                                           "teams.matchInitials", "teams.matchNicknames"])
         #expect(model.sections.map(\.title) == ["Pro", "College", "Matching"])
@@ -745,7 +745,7 @@ struct SettingsLiveTVTests {
         model.press(.down, .select)
         #expect(model.page == .iptvLeague(.nba))
         #expect(model.pageTitle == "NBA")
-        #expect(model.focusableRowIDs.count == 30)
+        #expect(model.actionRowIDs.count == 30)
         #expect(model.row(id: "team.nba.lal")?.value == "On")
         #expect(model.row(id: "team.nba.atl")?.value == nil)
         // The first team (Atlanta Hawks) is added; the Lakers removed.
@@ -806,7 +806,7 @@ struct SettingsLiveTVTests {
         model.perform(.push(.iptvLeague(.ncaaf)))
         #expect(model.pageTitle == "College Football")
         let conferences = TeamCatalog.conferences(in: .ncaaf)
-        #expect(model.focusableRowIDs == conferences.map { "conference.ncaaf.\($0)" })
+        #expect(model.actionRowIDs == conferences.map { "conference.ncaaf.\($0)" })
         #expect(model.row(id: "conference.ncaaf.ACC")?.value == nil)
         // FBS conferences come before FCS ones.
         #expect(!TeamCatalog.isFCS(conferences[0]))
@@ -816,7 +816,7 @@ struct SettingsLiveTVTests {
         #expect(model.pageTitle == "ACC")
         let acc = TeamCatalog.teams(in: .ncaaf, conference: "ACC")
         #expect(!acc.isEmpty)
-        #expect(model.focusableRowIDs == acc.map { "team.\($0.id)" })
+        #expect(model.actionRowIDs == acc.map { "team.\($0.id)" })
         let first = acc[0]
         #expect(first.id.hasPrefix("ncaaf."))
         #expect(model.row(id: "team.\(first.id)")?.value == nil)
@@ -922,7 +922,7 @@ struct SettingsLiveTVTests {
         model.refreshStatus()
         model.perform(.push(.liveTV))
         #expect(model.sections.map(\.id) == ["playlist", "guides", "channels", "homePreview", "manage"])
-        #expect(model.focusableRowIDs == ["iptv.playlist.paste", "iptv.guide.add", "iptv.antenna", "iptv.groups",
+        #expect(model.actionRowIDs == ["iptv.playlist.paste", "iptv.guide.add", "iptv.antenna", "iptv.groups",
                                           "iptv.hiddenChannels", "iptv.teams", "iptv.homePreview", "iptv.refresh"])
         #expect(model.row(id: "iptv.remove") == nil)
         #expect(model.row(id: "iptv.playlist.info") == nil)
@@ -950,7 +950,7 @@ struct SettingsLiveTVTests {
         let (model, _) = onAntennaPage(status)
         #expect(model.pageTitle == "Antenna")
         #expect(model.sections.map(\.title) == ["Antenna", "Tuners", "Guide", "Channels"])
-        #expect(model.focusableRowIDs == ["antenna.enabled", "antenna.find", "antenna.scan", "antenna.guide",
+        #expect(model.actionRowIDs == ["antenna.enabled", "antenna.find", "antenna.scan", "antenna.guide",
                                           "antenna.channels"])
 
         let use = model.row(id: "antenna.enabled")
@@ -1125,7 +1125,7 @@ struct SettingsLiveTVTests {
         model.activate(rowID: "antenna.channels")
         #expect(model.page == .antennaChannels)
         #expect(model.pageTitle == "Channels")
-        #expect(model.focusableRowIDs == ["antennaChannel.antenna:2.1", "antennaChannel.antenna:2.2",
+        #expect(model.actionRowIDs == ["antennaChannel.antenna:2.1", "antennaChannel.antenna:2.2",
                                           "antennaChannel.antenna:5.1"])
         let first = model.row(id: "antennaChannel.antenna:2.1")
         #expect(first?.title == "2.1  WSB-HD")
@@ -1150,7 +1150,7 @@ struct SettingsLiveTVTests {
         // No channels: only an info row.
         recorder.iptv.antennaChannels = []
         model.refreshStatus()
-        #expect(model.focusableRowIDs.isEmpty)
+        #expect(model.actionRowIDs.isEmpty)
         #expect(model.row(id: "antennaChannel.none")?.title == "No antenna channels")
     }
 
@@ -1161,7 +1161,7 @@ struct SettingsLiveTVTests {
         status.antennaChannels = []
         let (model, _) = onAntennaPage(status, settings: Self.antennaOff)
         #expect(model.sections.map(\.id) == ["antenna"])
-        #expect(model.focusableRowIDs == ["antenna.enabled"])
+        #expect(model.actionRowIDs == ["antenna.enabled"])
         #expect(model.row(id: "antenna.enabled")?.value == "Off")
         #expect(model.row(id: "antenna.tuner.0") == nil)
         #expect(model.sections(for: .liveTV).flatMap(\.rows).first { $0.id == "iptv.antenna" }?.value == "Off")
@@ -1193,7 +1193,7 @@ struct SettingsLiveTVTests {
         model.press(.select)
         #expect(recorder.unhiddenChannels == ["id:a"])
         // Empty: only the info row.
-        #expect(model.focusableRowIDs.isEmpty)
+        #expect(model.actionRowIDs.isEmpty)
         #expect(model.sections.flatMap(\.rows).map(\.id) == ["hidden.none"])
     }
 
@@ -1205,13 +1205,13 @@ struct SettingsLiveTVTests {
         model.perform(.push(.guideSource(id: "g1")))
         #expect(model.pageTitle == "guide-source.online · guide-source_US2.xml.gz")
         #expect(model.row(id: "guideSource.status")?.detail == "1,234 programmes · 50 channels · Updated 10:43 PM")
-        #expect(model.focusableRowIDs == ["guideSource.moveDown", "guideSource.remove"])
+        #expect(model.actionRowIDs == ["guideSource.moveDown", "guideSource.remove"])
         model.press(.select)
         #expect(recorder.guideMoves == [GuideMove(id: "g1", step: 1)])
         #expect(model.page == .guideSource(id: "g1"))
 
         model.perform(.push(.guideSource(id: "g2")))
-        #expect(model.focusableRowIDs == ["guideSource.moveUp", "guideSource.remove"])
+        #expect(model.actionRowIDs == ["guideSource.moveUp", "guideSource.remove"])
         model.press(.down, .select)
         #expect(recorder.guideRemovals == ["g2"])
         #expect(model.page == .guideSource(id: "g1"))
@@ -1239,7 +1239,7 @@ struct SettingsLiveTVTests {
         model.activate(rowID: "antenna.scan")
         #expect(model.page == .confirmAntennaScan)
         #expect(model.pageTitle == "Scan for Channels?")
-        #expect(model.focusableRowIDs == ["confirm.cancel", "confirm.scan"])
+        #expect(model.actionRowIDs == ["confirm.cancel", "confirm.scan"])
         #expect(model.focusedRowID == "confirm.cancel")
         #expect(model.row(id: "confirm.scan")?.title == "Scan")
         #expect(model.sections.first?.footer == "The tuner looks for channels for a few minutes. Antenna channels can't play meanwhile, here or on other devices. Channels it doesn't find are removed from the tuner's lineup.")
@@ -1296,7 +1296,7 @@ struct SettingsLiveTVTests {
         // Security L2: an info row; Select on it does nothing.
         #expect(row?.action == nil)
         #expect(row?.showsDisclosure == false)
-        #expect(!model.focusableRowIDs.contains("antenna.scan"))
+        #expect(!model.actionRowIDs.contains("antenna.scan"))
         model.activate(rowID: "antenna.scan")
         #expect(model.page == .antenna)
         // "Can't scan" wins over the last scan's line.
@@ -1439,14 +1439,97 @@ struct SettingsColumnsTests {
         #expect(model.page == .system)
         #expect(recorder.relaunches == 0)
         #expect(recorder.exits == 0)
-        // Info rows never take focus: on a page of info rows only (Add Tile while apps load, every default tile
-        // already there), Right does nothing.
+        // On a page of info rows only (Add Tile while apps load, every default tile already there), focus is on
+        // the first info row, and Right and Select do nothing.
         model.reset()
         model.open(.addTile)
         #expect(model.row(id: "apps.loading")?.action == nil)
-        #expect(model.focusedRowID == nil)
+        #expect(model.actionRowIDs.isEmpty)
+        #expect(model.focusedRowID == model.focusableRowIDs.first)
         #expect(model.handle(.right))
+        #expect(model.handle(.select))
         #expect(model.page == .addTile)
+    }
+
+    // MARK: Info rows take focus (Settings → Device on the Roku felt stuck; same change on the Mac)
+
+    /// About: Version and Build (info rows) above Show Version on Home.
+    @Test func upDownReachesInfoRows() {
+        let (model, recorder) = makeSettingsModel()
+        model.open(.about)
+        #expect(model.focusableRowIDs == ["about.version", "about.build", "about.showOnHome"])
+        #expect(model.actionRowIDs == ["about.showOnHome"])
+        // Opening the page lands on the first action row, as before.
+        #expect(model.focusedRowID == "about.showOnHome")
+        model.press(.up)
+        #expect(model.focusedRowID == "about.build")
+        model.press(.up, .up)
+        #expect(model.focusedRowID == "about.version")
+        // Select and Right on an info row do nothing.
+        model.press(.select, .right)
+        #expect(model.page == .about)
+        #expect(recorder.appliedSettings.isEmpty)
+        model.press(.down)
+        #expect(model.focusedRowID == "about.build")
+        model.press(.down, .down)
+        #expect(model.focusedRowID == "about.showOnHome")
+        // Channel Up/Down page over info rows too, clamped.
+        model.press(.channelUp)
+        #expect(model.focusedRowID == "about.version")
+        model.press(.channelDown)
+        #expect(model.focusedRowID == "about.showOnHome")
+    }
+
+    @Test func hoverFocusesAnInfoRow() {
+        let (model, _) = makeSettingsModel()
+        model.open(.about)
+        model.focus(rowID: "about.build")
+        #expect(model.focusedRowID == "about.build")
+        // A row of another page still doesn't take focus.
+        model.focus(rowID: "about.version", on: .root)
+        #expect(model.focusedRowID == "about.build")
+    }
+
+    @Test func openingAPageLandsOnItsFirstActionRow() {
+        let (model, recorder) = makeSettingsModel()
+        recorder.iptv = IPTVSettingsStatus(hasPlaylist: true, playlistHost: "iptv.example", channelCount: 5)
+        model.refreshStatus()
+        model.open(.liveTV)
+        #expect(model.focusableRowIDs.first == "iptv.playlist.info")
+        #expect(model.focusedRowID == "iptv.playlist.paste")
+        model.press(.up)
+        #expect(model.focusedRowID == "iptv.playlist.info")
+        // Back and in again: the page opens on its first action row, not the info row it was left on.
+        model.press(.back)
+        model.open(.liveTV)
+        #expect(model.focusedRowID == "iptv.playlist.paste")
+    }
+
+    @Test func infoRowBandText() {
+        let (model, _) = makeSettingsModel()
+        model.open(.about)
+        #expect(model.bandText == "Shows the version and build under the clock, for testing builds.")
+        model.press(.up)
+        #expect(model.row(id: "about.build")?.description == nil)
+        #expect(model.bandText == "Information only: nothing to change here.")
+        #expect(SettingsModel.infoRowBandText == "Information only: nothing to change here.")
+    }
+
+    /// The parent column marks the row that opened the page, resolved over action rows only.
+    @Test func parentSelectionIgnoresInfoRows() {
+        let (model, recorder) = makeSettingsModel()
+        recorder.iptv = IPTVSettingsStatus(hasPlaylist: true, playlistHost: "iptv.example", channelCount: 5)
+        model.refreshStatus()
+        model.open(.liveTV)
+        model.press(.up)
+        #expect(model.focusedRowID == "iptv.playlist.info")
+        model.perform(.push(.confirmRemoveIPTV))
+        #expect(model.parentSelectionRowID == "iptv.playlist.paste")
+        model.press(.back)
+        model.focus(rowID: "iptv.remove")
+        model.press(.select)
+        #expect(model.page == .confirmRemoveIPTV)
+        #expect(model.parentSelectionRowID == "iptv.remove")
     }
 
     @Test func leftPopsExceptRootAndLearn() {
@@ -1688,7 +1771,7 @@ struct SettingsWebAppStartPageTests {
 
     @Test func onlyWebAppsHaveTheRows() {
         let (model, _) = onMeetPage()
-        let ids = model.focusableRowIDs
+        let ids = model.actionRowIDs
         #expect(ids.firstIndex(of: "tile.startURL") == ids.firstIndex(of: "tile.fullScreen")! + 1)
         #expect(model.row(id: "tile.startURL")?.value == "App's Own")
         #expect(model.row(id: "tile.startURL")?.detail == "Copy a page address on this Mac or your iPhone, then select")
