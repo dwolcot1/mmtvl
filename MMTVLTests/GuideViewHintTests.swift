@@ -42,4 +42,15 @@ struct GuideViewHintTests {
         #expect(GuideView.hint(focus: .grid, isPicking: true, hasChannel: true)
                 == "Select: show in window · Left at now: channel · Back: cancel")
     }
+
+    /// An empty Favorites' placeholder row: Select does nothing there, so the hint offers only Left (and Back).
+    @Test func emptyFavoritesHints() {
+        #expect(GuideView.hint(focus: .grid, isPicking: false, row: .favoritesEmpty, hasChannel: true)
+                == "Left: groups · Back: back to the channel")
+        #expect(GuideView.hint(focus: .channel, isPicking: false, row: .favoritesEmpty, hasChannel: false)
+                == "Left: groups")
+        #expect(GuideView.hint(focus: .grid, isPicking: true, row: .favoritesEmpty) == "Left: groups · Back: cancel")
+        #expect(GuideView.hint(focus: .groups(0), isPicking: false, row: .favoritesEmpty, hasChannel: true)
+                == "Select: show group · Back: close list")
+    }
 }

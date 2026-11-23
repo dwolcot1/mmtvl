@@ -96,7 +96,8 @@ struct GuideView: View {
     /// M7n L5: the focus fill and text colours fade to the newly focused cell; with Reduce Motion they change at once.
     private var focusAnimation: Animation? { reduceMotion ? nil : Theme.focusAnimation }
 
-    /// The bottom hint per focus and purpose (M6), and (M7l 8c) My Teams' Choose Teams and upcoming rows.
+    /// The bottom hint per focus and purpose (M6), (M7l 8c) My Teams' Choose Teams and upcoming rows, and an empty
+    /// Favorites' row (nothing to select there).
     /// M7m L4: in the watch guide Back goes back to the channel (`hasChannel`); with no channel it does nothing.
     nonisolated static func hint(focus: GuideModel.Focus, isPicking: Bool, row: GuideModel.Row.Kind = .channel,
                                  hasChannel: Bool = false) -> String {
@@ -110,6 +111,10 @@ struct GuideView: View {
             return "Select: watch this channel · Left: groups" + back
         case (.grid, .upcoming, true), (.channel, .upcoming, true):
             return "Select: show this channel in window · Left: groups · Back: cancel"
+        case (.grid, .favoritesEmpty, false), (.channel, .favoritesEmpty, false):
+            return "Left: groups" + back
+        case (.grid, .favoritesEmpty, true), (.channel, .favoritesEmpty, true):
+            return "Left: groups · Back: cancel"
         default:
             break
         }
@@ -130,9 +135,25 @@ struct GuideView: View {
         switch model.focusedRow {
         case .chooseTeams?: chooseTeamsInfo
         case .upcoming(let game)?: upcomingInfo(game)
+        case .favoritesEmpty?: favoritesEmptyInfo
         case .channel?, nil: channelInfo(now: now)
         }
     }
+
+    /// An empty Favorites group's only row.
+    private var favoritesEmptyInfo: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(Self.favoritesEmptyTitle)
+                .font(Theme.guideInfoTitleFont)
+                .foregroundStyle(Theme.primaryText)
+            Text("Press Menu on any channel and choose Add to Favorites. Your teams' live games show here too.")
+                .font(Theme.guideInfoDetailFont)
+                .foregroundStyle(Theme.secondaryText)
+                .lineLimit(4)
+        }
+    }
+
+    private static let favoritesEmptyTitle = "No favorites yet"
 
     /// M7l 8c: My Teams' Choose Teams row.
     private var chooseTeamsInfo: some View {
@@ -287,6 +308,7 @@ struct GuideView: View {
         case .channel(let channel): channelRow(row, channel, now: now)
         case .chooseTeams: chooseTeamsRow(row)
         case .upcoming(let game): upcomingRow(row, game)
+        case .favoritesEmpty: favoritesEmptyRow(row)
         }
     }
 
@@ -371,6 +393,40 @@ struct GuideView: View {
                 .focusFill(isFocused ? Theme.focusedRowFill : Color.clear, focusAnimation)
                 .frame(height: Theme.guideRowHeight, alignment: .top)
             upcomingCell(game, isFocused: isFocused)
+                .focusForeground(isFocused ? Theme.focusedRowText : Theme.primaryText, focusAnimation)
+                .padding(.horizontal, 16)
+                .frame(width: Theme.guideGridWidth - Theme.guideCellSpacing,
+                       height: Theme.guideRowHeight - Theme.guideCellSpacing, alignment: .leading)
+                .focusFill(isFocused ? Theme.focusedRowFill : Theme.tileFill, focusAnimation)
+                .frame(width: Theme.guideGridWidth, height: Theme.guideRowHeight, alignment: .topLeading)
+        }
+    }
+
+    /// An empty Favorites group's only row, laid out like a channel row: "No favorites yet" in the channel column (a
+    /// star where channel logos sit, its text in line with the channel names), then one cell across the grid saying
+    /// how to add one. It isn't on the timeline, so the now line skips it; it's focused as a whole.
+    private func favoritesEmptyRow(_ row: Int) -> some View {
+        let isFocused = isActionRowFocused(row)
+        return HStack(spacing: Theme.guideGridLeading - Theme.sideMargin - Theme.guideChannelColumnWidth) {
+            HStack(spacing: 12) {
+                Color.clear.frame(width: Theme.guideChannelNumberWidth, height: 1)
+                Image(systemName: "star")
+                    .font(.system(size: Theme.guideRowSymbolSize, weight: .medium))
+                    .focusForeground(isFocused ? Theme.focusedRowSecondaryText : Theme.secondaryText, focusAnimation)
+                    .frame(width: Theme.guideLogoSize, height: Theme.guideLogoSize)
+                Text(Self.favoritesEmptyTitle)
+                    .font(Theme.guideChannelFont)
+                    .focusForeground(isFocused ? Theme.focusedRowText : Theme.primaryText, focusAnimation)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 8)
+            .frame(width: Theme.guideChannelColumnWidth, height: Theme.guideRowHeight - Theme.guideCellSpacing,
+                   alignment: .leading)
+            .focusFill(isFocused ? Theme.focusedRowFill : Color.clear, focusAnimation)
+            .frame(height: Theme.guideRowHeight, alignment: .top)
+            Text("Press Menu on a channel, then choose Add to Favorites")
+                .font(Theme.guideCellFont)
+                .lineLimit(1)
                 .focusForeground(isFocused ? Theme.focusedRowText : Theme.primaryText, focusAnimation)
                 .padding(.horizontal, 16)
                 .frame(width: Theme.guideGridWidth - Theme.guideCellSpacing,

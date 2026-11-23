@@ -61,8 +61,9 @@ nonisolated struct ChannelLineup: Equatable, Sendable {
     /// M7l 8c: at most this many upcoming games in My Teams.
     static let maxUpcomingTeamGames = 30
 
-    /// ["Favorites"] when there are visible favorites or a picked team is on (M7l 8b), ["My Teams"] whenever a channel
-    /// is visible (M7l 8c), then `ChannelList.guideGroups(of: visibleChannels)` (M7j L3: Antenna, All Channels, the
+    /// ["Favorites"] whenever a channel is visible, even with no favorites (the guide then shows one row saying how to
+    /// add one; with any, they and the picked teams' live games, M7l 8b), ["My Teams"] whenever a channel is visible
+    /// (M7l 8c), then `ChannelList.guideGroups(of: visibleChannels)` (M7j L3: Antenna, All Channels, the
     /// playlist's groups).
     private(set) var groups: [String]
     /// Playlist order, without hidden channels and hidden groups.
@@ -98,7 +99,7 @@ nonisolated struct ChannelLineup: Equatable, Sendable {
         self.upcomingTeamGames = Array(upcomingTeamGames.compactMap { game in
             byID[game.channel.id].map { UpcomingTeamGame(channel: $0, programme: game.programme) }
         }.prefix(Self.maxUpcomingTeamGames))
-        groups = (favoritesGroupChannels.isEmpty ? [] : [Self.favoritesGroup])
+        groups = (visibleChannels.isEmpty && favoritesGroupChannels.isEmpty ? [] : [Self.favoritesGroup])
             + (visibleChannels.isEmpty ? [] : [Self.teamsGroup])
             + ChannelList.guideGroups(of: visibleChannels)
     }
