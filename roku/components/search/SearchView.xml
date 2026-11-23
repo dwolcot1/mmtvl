@@ -50,5 +50,8 @@
         <Label id="message" />
         <Label id="hint" />
         <Timer id="debounce" repeat="false" />
+        <!-- Step 15: the results' focus. Roku won't move focus to an ancestor of the focused keyboard
+             (m.top.setFocus left it there, as in the guide's column, build 3); keys bubble from here to onKeyEvent. -->
+        <Group id="keys" />
     </children>
 </component>

@@ -82,5 +82,9 @@
             <Poster id="columnPanel" />
             <MenuListView id="columnList" />
         </Group>
+        <!-- Step 15: takes focus whenever this screen handles the keys itself (the column, a guide with no rows).
+             Roku won't move focus to an ancestor of the focused TimeGrid: m.top.setFocus left it on the grid, and
+             Up/Down moved the guide under the open column (build 3). Keys bubble from here to onKeyEvent. -->
+        <Group id="keys" />
     </children>
 </component>

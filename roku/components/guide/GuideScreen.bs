@@ -31,6 +31,7 @@ sub init()
     m.grid = m.top.findNode("grid")
     m.column = m.top.findNode("column")
     m.columnList = m.top.findNode("columnList")
+    m.keys = m.top.findNode("keys")
     style()
     m.grid.observeField("programFocusedDetails", "onProgramFocused")
     m.grid.observeField("channelInfoFocused", "onChannelInfoFocused")
@@ -147,17 +148,17 @@ end sub
 function hintText() as string
     dot = " " + Chr(183) + " "
     if m.column <> invalid
-        if m.column.visible then return "OK: choose" + dot + "*: Settings" + dot + "Back: close"
+        if m.column.visible then return "OK: choose" + dot + "Back: close"
     end if
     if m.state <> invalid
         if m.state.rows.Count() = 0 then return "*: Settings"
         if m.state.row >= 0 and m.state.row < m.state.rows.Count()
             kind = m.state.rows[m.state.row].kind
-            if kind = "chooseTeams" then return "OK: choose your teams" + dot + "Left: groups"
-            if kind = "upcoming" then return "OK: watch this channel" + dot + "Left: groups"
+            if kind = "chooseTeams" then return "OK: choose your teams" + dot + "Left: groups & Settings"
+            if kind = "upcoming" then return "OK: watch this channel" + dot + "Left: groups & Settings"
         end if
     end if
-    return "OK: watch" + dot + "*: channel menu" + dot + "Left: groups" + dot + "Rewind/Fast Forward: page"
+    return "OK: watch" + dot + "*: channel menu" + dot + "Left: groups & Settings" + dot + "Rewind/Fast Forward: page"
 end function
 
 sub showHint()
@@ -203,7 +204,7 @@ end function
 
 function takeFocus() as boolean
     if m.column.visible or m.state.rows.Count() = 0
-        m.top.setFocus(true)
+        m.keys.setFocus(true)
     else
         m.grid.setFocus(true)
     end if
@@ -600,7 +601,7 @@ sub report(chosen as object)
 end sub
 
 function isColumnFocus(focus as string) as boolean
-    return focus = "groups" or focus = "search"
+    return GuideKeys.isColumnFocus(focus)
 end function
 
 function selectedGroup() as string
@@ -615,8 +616,13 @@ sub renderColumn()
     layout = m.theme.layout
     titles = [searchText()]
     titles.Append(m.state.groups)
-    position = 0
-    if m.state.focus = "groups" then position = m.state.groupFocus + 1
+    titles.Push(settingsText())
+    position = GuideKeys.columnPosition(m.state)
+    ' Step 15: no channels, no groups: Settings alone (Search needs channels; GuideKeys.focusGroups).
+    if m.state.groups.Count() = 0
+        titles = [settingsText()]
+        position = 0
+    end if
     visible = layout.guideGroupVisibleRows
     m.groupFirst = GuideKeys.visibleStart(m.groupFirst, position, titles.Count(), visible)
     shown = titles.Count()
@@ -629,6 +635,11 @@ end sub
 
 function searchText() as string
     return "Search"
+end function
+
+' Step 15: the column's last row (OK, Right or * opens Settings).
+function settingsText() as string
+    return "Settings"
 end function
 
 ' --- the info area ---------------------------------------------------------------------------------------------
