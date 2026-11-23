@@ -166,11 +166,12 @@ With `--stable`, the title loses "(nightly)", the WIP box is dropped, and Instal
 
 ## Implementation steps
 
-- [ ] **1. Version helpers and one version source** `[implementer]`, files: `roku/tools/version.mjs` (new), `roku/tools/version.test.mjs` (new), `roku/package.json`, `roku/package-lock.json`, `roku/tools/roku.mjs`
+- [x] **1. Version helpers and one version source** `[implementer]`, files: `roku/tools/version.mjs` (new), `roku/tools/version.test.mjs` (new), `roku/package.json`, `roku/package-lock.json`, `roku/tools/roku.mjs`
   - Write the helpers in Design → Files, and the tests in Tests.
   - Add `test:tools` (`node --test tools/`) and `version` (prints `MMTVL Live TV 0.1 build 1` from `parseVersion` of `roku/manifest`).
   - Remove `"version"` from `package.json`, then `npm install --package-lock-only` (offline is fine: `--prefer-offline`). Only the root `version` entries in the lock may change. If anything else changes, stop and record it.
   - Don't change `roku/manifest` yet.
+  - *Done 2026-11-22.* test:tools 14/14 (Node 26 prints `ℹ pass 14` / `ℹ fail 0`, not `#` lines); `npm run version` → `MMTVL Live TV 0.1 build 1`; lock diff only the two root `version` lines; "LOCAL TESTS: 742 passed, 0 failed", "Release build: 127 files, …". QA PASS, two minors, no action: `releaseNotes` takes `changes` already as `- subject` lines (step 4 passes `git log --format='- %s'`); `keepNewest` ranks by build number across major.minor (L2: never reset).
   - Done when:
     - `cd roku && npm run test:tools` shows all `version.test.mjs` tests passing (quote the `# pass` / `# fail 0` lines);
     - `npm run version` prints `MMTVL Live TV 0.1 build 1`;
@@ -285,3 +286,6 @@ Commands: `cd roku && npm run test:tools`, plus M12's gates (`npm run build && n
 ## Deviations & questions
 
 *(Executors append here.)*
+
+- **2026-11-22, step 1 (mechanical, noted):** `npm install --package-lock-only --prefer-offline` removed only `packages[""].version`; the top-level `"version": "0.1.0"` in `package-lock.json` was removed by hand, and npm then changed nothing more. The diff is exactly the two root lines.
+- **2026-11-22, step 1 (reading of the template):** the stable notes' Install heading is `## Install the release (sideload)`, and with no changes a stable release says "- First Roku release." (not "nightly"). Step 6 may reword both when it aligns the README.

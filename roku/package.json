@@ -1,6 +1,5 @@
 {
   "name": "mmtvl-roku",
-  "version": "0.1.0",
   "private": true,
   "description": "MMTVL Live TV for Roku (sideloaded in developer mode)",
   "license": "MIT",
@@ -11,7 +10,9 @@
     "test:local": "node tools/roku.mjs test-local",
     "deploy": "node tools/roku.mjs deploy",
     "test": "node tools/roku.mjs test",
-    "console": "node tools/roku.mjs console"
+    "console": "node tools/roku.mjs console",
+    "test:tools": "node --test tools/",
+    "version": "node tools/roku.mjs version"
   },
   "devDependencies": {
     "@rokucommunity/bslint": "0.8.47",

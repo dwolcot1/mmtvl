@@ -1,5 +1,5 @@
-// The device scripts (M12 L1): `npm run deploy | test | console`, and `npm run test:local` and
-// `npm run build:release`, which need no device.
+// The device scripts (M12 L1): `npm run deploy | test | console`, and `npm run test:local`,
+// `npm run build:release` and (M14) `npm run version`, which need no device.
 // The Roku's address and developer password come only from roku/.env (gitignored).
 // Never print the password.
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
+import { parseVersion } from './version.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = (name) => join(root, 'node_modules', '.bin', name);
@@ -209,9 +210,20 @@ async function buildRelease() {
     console.log(`Release build: ${files.length} files, no probe code, no DEBUG memory line; out/mmtvl-live-tv-release.zip`);
 }
 
-const commands = { deploy, test, console: console8085, 'test-local': testLocal, 'build-release': buildRelease };
+// M14 (L1): roku/manifest is the only version source.
+function version() {
+    let v;
+    try {
+        v = parseVersion(readFileSync(join(root, 'manifest'), 'utf8'));
+    } catch (error) {
+        fail(`version: ${error.message}`);
+    }
+    console.log(`MMTVL Live TV ${v.major}.${v.minor} build ${v.build}`);
+}
+
+const commands = { deploy, test, console: console8085, 'test-local': testLocal, 'build-release': buildRelease, version };
 const command = commands[process.argv[2]];
 if (!command) {
-    fail('Usage: node tools/roku.mjs deploy | test | console | test-local | build-release');
+    fail('Usage: node tools/roku.mjs deploy | test | console | test-local | build-release | version');
 }
 await command();
