@@ -9,7 +9,8 @@
 
 ## Next session starts here
 
-- **Planned 2026-11-23, nothing built.** Start with step 1 (Restart in Settings) and step 2 (Power-off goes home): small, independent, no new package. Step 3 adds Sparkle; step 4 needs the user at this Mac (EdDSA keys) before step 5.
+- **In progress on branch `m15-software-updates`** (from 2026-11-23). Step 1 done (`945a77a`). Next: step 2 (Power-off goes home), then step 3 (Sparkle); step 4 needs the user at this Mac (EdDSA keys) before step 5.
+- Human checks gathered so far (on this Mac, `-windowed YES`): Settings → System → Restart Mac mini sits between Relaunch and Exit, its band says "Restarts the Mac mini. Asks first.", and its page shows Cancel first (**press only Back there**). Neither the implementer nor QA drove the running app to that page.
 - Read: this plan's *Design*, then the files each step names. Build: `/build-plan docs/plans/M15-software-updates.md`.
 - The TV session (step 14) needs two notarized builds (A and B, step 13); both releases need the user's yes.
 
@@ -543,7 +544,7 @@ Also `StatusParts.updates`, `SettingKey.updateChecks`, and actions `.restartMac`
 
 ## Implementation steps
 
-- [ ] **1. Restart Mac mini in Settings → System** `[implementer]`, files: `MMTVL/Settings/SettingsTypes.swift`, `MMTVL/Settings/SettingsModel+Pages.swift`, `MMTVL/Settings/SettingsModel.swift`, `MMTVL/Settings/SettingsEnvironment.swift`, `MMTVL/App/AppDelegate.swift` (`makeSettingsEnvironment`, `:1455`), `MMTVLTests/SettingsTestSupport.swift`, `MMTVLTests/SettingsModelTests.swift`
+- [x] **1. Restart Mac mini in Settings → System** `[implementer]`, files: `MMTVL/Settings/SettingsTypes.swift`, `MMTVL/Settings/SettingsModel+Pages.swift`, `MMTVL/Settings/SettingsModel.swift`, `MMTVL/Settings/SettingsEnvironment.swift`, `MMTVL/App/AppDelegate.swift` (`makeSettingsEnvironment`, `:1455`), `MMTVLTests/SettingsTestSupport.swift`, `MMTVLTests/SettingsModelTests.swift`
   - Add the page `.confirmRestartMac` with the title "Restart Mac mini?", the action `.restartMac`, and the environment closure `restartMac: () -> Void`. AppDelegate passes `{ [weak self] in self?.power?.restartMac() }`.
   - Add the row between Relaunch and Exit to Desktop (`SettingsModel+Pages.swift:291-294`). Build the confirm page and its handler exactly as *Design → Settings*, copying `confirmAntennaScanSections` and `SettingsModel.swift:475-479`.
   - Update the System description (`:188-189`) to the text in *Design*, minus "software updates" until step 8.
@@ -553,6 +554,7 @@ Also `StatusParts.updates`, `SettingKey.updateChecks`, and actions `.restartMac`
     - `restartConfirmCancelPops`: Cancel returns to System with no restart.
     - `restartConfirmRestarts`: Restart calls `restartMac` once and pops.
   - Done when: `xcodebuild -project MMTVL.xcodeproj -scheme MMTVL -derivedDataPath build test` passes (quote the result line). In `open build/Build/Products/Debug/MMTVL.app --args -windowed YES`, Settings → System shows Restart Mac mini, and its page shows Cancel first. **Don't select Restart on the dev Mac.**
+  - **Done 2026-11-23** (`945a77a`). Full suite: "✔ Test run with 2112 tests in 186 suites passed after 14.654 seconds." QA PASS: the model tests check the row order, the disclosure, the page with Cancel focused first, and the footer; nobody looked at the running app (driving it near Restart was judged unsafe), so that look is a human check. The QA minor (no description) was fixed by the user's choice: the row's description is "Restarts the Mac mini. Asks first." (see *Deviations*).
 
 - [ ] **2. Power-off stops playback and goes home** `[implementer]`, files: `MMTVL/AVControl/PowerController.swift`, `MMTVL/App/AppDelegate.swift` (`setUpPower`, `:670-700`), `MMTVL/Launcher/AppRouter.swift`, `MMTVLTests/PowerControllerTests.swift` (or the suite that tests `PowerController` today), `MMTVLTests/AppRouter…Tests.swift` (the suite that tests `goHome`)
   - Add `var onPowerOff: () -> Void = {}` to `PowerController` and call it at the top of `runOff` (`:300`), before the TV/receiver commands.
@@ -810,3 +812,5 @@ Also `StatusParts.updates`, `SettingKey.updateChecks`, and actions `.restartMac`
 ## Deviations & questions
 
 Executors append here when the plan is wrong or ambiguous: the date, the step, what happened, and what they need. Do not silently diverge.
+
+- **2026-11-23, step 1:** the Design gave the Restart Mac mini row no description, so the bottom band would be empty (Relaunch and Exit have one). The user chose to add "Restarts the Mac mini. Asks first."; `systemHasRestartRow` asserts it.
