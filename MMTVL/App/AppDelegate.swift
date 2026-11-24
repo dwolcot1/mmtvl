@@ -55,6 +55,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cecReceiver: CECAudioSystem?
     /// M7h L14, L15 (D45): the power button and the power menu's actions.
     private var power: PowerController?
+    /// M15 step 6b: the set-up receiver's power (serial, network or HDMI-CEC), fed by both receivers' changes.
+    private let receiverPowerWatch = ReceiverPowerWatch()
     /// M7h L15, U1: Power and Power Menu from any app; Cancel hands the screen back.
     private var powerMenuPresenter: PowerMenuPresenter?
     /// M15: Sparkle updates (off in Debug and `-windowed`, L4).
@@ -416,7 +418,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    /// M15: what the idle loop sees (the one place that builds it; step 6b adds the receiver and input since Power-off).
+    /// M15: what the idle loop sees (the one place that builds it; step 6b: the receiver and input since Power-off).
     private func updateIdleSnapshot() -> UpdateIdleSnapshot {
         let screen = router?.screen
         return UpdateIdleSnapshot(
@@ -427,6 +429,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             screenSaverOurs: screenSaver.isRunning && screenSaver.startedByMMTVL,
             stillPhase: router?.idlePhase ?? .awake,
             videoPlaying: screen == .youtube || (screen == .liveTV && liveTV?.isShowingVideo == true),
+            receiverOn: receiverPowerWatch.isOn,
+            inputSincePowerOff: router?.inputSincePowerOff == true,
             hour: Calendar.current.component(.hour, from: Date())
         )
     }
@@ -607,11 +611,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Step 11: Settings → Audio & TV → Receiver → Status follows it (QA major: the link too).
         receiver.onStatusChange = { [weak self] in self?.scheduleSettingsRefresh(.receiver) }
         receiver.onLinkChange = { [weak self] in self?.scheduleSettingsRefresh(.receiver) }
+        // M15 step 6b: the receiver's own power lines (no query of its own).
+        receiver.onPowerChange = { [weak self] in self?.updateReceiverPower() }
         // Step 9c: the receiver over HDMI-CEC, on the tunnel the TV uses.
         let cecReceiver = CECAudioSystem(link: cecLink)
-        cecReceiver.onStatusChange = { [weak self] in self?.scheduleSettingsRefresh(.cec) }
+        cecReceiver.onStatusChange = { [weak self] in
+            self?.scheduleSettingsRefresh(.cec)
+            // M15 step 6b: the power status the CEC path already reads.
+            self?.updateReceiverPower()
+        }
         self.cecReceiver = cecReceiver
         configureReceiver()
+    }
+
+    /// M15 step 6b: the power of the receiver that is set up (HDMI-CEC, else serial or network; `unknown` without one).
+    private func updateReceiverPower() {
+        let power: ReceiverPower = if settings.receiverConnection == .cec {
+            cecReceiver?.isEnabled == true ? ReceiverPower(cec: cecReceiver?.power) : .unknown
+        } else {
+            receiver?.power ?? .unknown
+        }
+        receiverPowerWatch.update(power)
     }
 
     /// From `settings.json`, at launch and (step 11) whenever Settings changes a receiver setting.
@@ -701,7 +721,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             canPostEvents: { SyntheticInput.canPost },
             postExternal: Self.postExternal,
             // M7m L19, L20: a press while the screen saver shows only ends it.
-            endsScreenSaver: { [weak self] in self?.router?.endScreenSaverIfShowing(by: "Siri Remote \($0.rawValue)") ?? false }
+            endsScreenSaver: { [weak self] in
+                self?.router?.endScreenSaverIfShowing(by: "Siri Remote \($0.rawValue)", command: $0) ?? false
+            }
         )
     }
 
@@ -738,7 +760,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         self.volume = volume
         // QA minor 2: each time the receiver's transport comes up, it's asked once, so it's ready before a press.
-        receiver?.onLinkUp = { [weak volume] in volume?.receiverLinkUp() }
+        // M15 step 6b (user, 2026-11-24): and once for its power, after the volume query.
+        receiver?.onLinkUp = { [weak volume, weak receiver] in
+            volume?.receiverLinkUp()
+            receiver?.queryPowerOnLinkUp()
+        }
         volume.probeReceiverIfNeeded()
     }
 
@@ -760,10 +786,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // M15 L16: Power-off stops MMTVL's own playback and goes home before the TV is told to turn off (both the
         // short press and the power menu's Turn Off TV & Receiver run `runOff`).
         power.onPowerOff = { [weak self] in
+            // M15 step 6b: the receiver's "off" that follows is this Power-off's; input from now on counts.
+            self?.receiverPowerWatch.noteOwnPowerOff()
+            self?.router?.notePowerOff()
             self?.router?.stopPlaybackForPowerOff()
             self?.goHomeFromAnywhere(reason: "powerOff")
             PowerController.logger.notice("Power: stopped playback, home")
         }
+        // M15 step 6b (D45 amended): the receiver turned off without MMTVL's Power (the TV's own remote, the receiver
+        // following over HDMI-CEC; or the receiver's remote): the same first half, nothing sent, Power unchanged.
+        let receiverTurnedOff = ReceiverPowerWatch.turnedOffHandler(
+            stopPlayback: { [weak self] in self?.router?.stopPlaybackForPowerOff() },
+            goHome: { [weak self] in self?.goHomeFromAnywhere(reason: "receiverOff") }
+        )
+        // On the next main-actor turn, never inside the transport's or the CEC check's callback (like
+        // `scheduleSettingsRefresh`).
+        receiverPowerWatch.onTurnedOff = { Task { receiverTurnedOff() } }
         self.power = power
         // M15 L8: an update installed during Power-off left "the TV is off" behind; read once, deleted.
         if UpdateRelaunchMarker.take(from: LaunchItemStore.defaultDirectory, now: Date()) != nil {
@@ -863,7 +901,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pointer: { [weak self] action, edgeInset in self?.phonePointer.perform(action, edgeInset: edgeInset) },
             repairForeground: { [weak self] in self?.repairForeground() ?? false },
             // M7m L19, L20: phone input while the screen saver shows only ends it.
-            endsScreenSaver: { [weak router] in router?.endScreenSaverIfShowing(by: $0) ?? false },
+            endsScreenSaver: { [weak router] in router?.endScreenSaverIfShowing(by: $0, command: $1) ?? false },
             // Security (pre-release review, medium): the Siri Remote's kiosk gate and edge inset.
             inputGate: { [weak self] in self?.remoteInputGate() ?? .allowed },
             pointerEdgeInset: { [weak self] in PointerMath.remoteEdgeInset(isLockEffective: self?.isLockEffective ?? false) }

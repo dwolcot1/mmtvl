@@ -11,6 +11,10 @@ nonisolated struct UpdateIdleSnapshot: Equatable, Sendable {
     var stillPhase: StillScreenIdle.Phase
     /// YouTube is open, or Live TV is showing video.
     var videoPlaying: Bool
+    /// M15 step 6b: the receiver reports on (`ReceiverPowerWatch.isOn`; unknown isn't on), so the TV likely is too.
+    var receiverOn: Bool
+    /// M15 step 6b: a remote command reached MMTVL since the last Power-off (`AppRouter.inputSincePowerOff`).
+    var inputSincePowerOff: Bool
     /// The local hour, 0…23.
     var hour: Int
 }
@@ -22,7 +26,8 @@ nonisolated enum UpdateIdlePolicy {
 
     static func mayInstall(_ mode: AutomaticUpdates, _ s: UpdateIdleSnapshot) -> Bool {
         guard mode != .off, !s.exitedToDesktop, !s.mirroring else { return false }
-        let tvOff = s.poweredOffByMMTVL && s.mmtvlFrontmost
+        // Step 6b: the TV turned back on with its own remote shows as the receiver on, or as someone pressing buttons.
+        let tvOff = s.poweredOffByMMTVL && s.mmtvlFrontmost && !s.videoPlaying && !s.receiverOn && !s.inputSincePowerOff
         switch mode {
         case .off: return false
         case .whenIdle: return tvOff || s.screenSaverOurs

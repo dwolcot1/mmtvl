@@ -8,10 +8,12 @@ struct UpdateIdlePolicyTests {
     private func snapshot(mmtvlFrontmost: Bool = true, exitedToDesktop: Bool = false, mirroring: Bool = false,
                           poweredOffByMMTVL: Bool = false, screenSaverOurs: Bool = false,
                           stillPhase: StillScreenIdle.Phase = .awake, videoPlaying: Bool = false,
+                          receiverOn: Bool = false, inputSincePowerOff: Bool = false,
                           hour: Int = 12) -> UpdateIdleSnapshot {
         UpdateIdleSnapshot(mmtvlFrontmost: mmtvlFrontmost, exitedToDesktop: exitedToDesktop, mirroring: mirroring,
                            poweredOffByMMTVL: poweredOffByMMTVL, screenSaverOurs: screenSaverOurs,
-                           stillPhase: stillPhase, videoPlaying: videoPlaying, hour: hour)
+                           stillPhase: stillPhase, videoPlaying: videoPlaying, receiverOn: receiverOn,
+                           inputSincePowerOff: inputSincePowerOff, hour: hour)
     }
 
     @Test func offNeverInstalls() {
@@ -101,10 +103,35 @@ struct UpdateIdlePolicyTests {
     }
 
     @Test func atNightAfterPowerOffEvenAt4() {
-        // TV off by Power, MMTVL in front: installs at 4 a.m. even with the screen awake and video reported.
+        // TV off by Power, MMTVL in front: installs at 4 a.m. even with the screen awake.
         #expect(UpdateIdlePolicy.mayInstall(.atNight, snapshot(poweredOffByMMTVL: true, hour: 4)))
-        #expect(UpdateIdlePolicy.mayInstall(.atNight, snapshot(poweredOffByMMTVL: true, videoPlaying: true, hour: 4)))
+        // Step 6b: video playing after the Power-off (the TV turned back on by its own remote) isn't "off".
+        #expect(!UpdateIdlePolicy.mayInstall(.atNight, snapshot(poweredOffByMMTVL: true, videoPlaying: true, hour: 4)))
         #expect(!UpdateIdlePolicy.mayInstall(.atNight, snapshot(mmtvlFrontmost: false, poweredOffByMMTVL: true,
                                                                  hour: 4)))
+    }
+
+    /// Step 6b: the receiver reports on after MMTVL's Power-off: the TV was turned back on (by its own remote).
+    @Test func whenIdleNotWhenReceiverOn() {
+        #expect(!UpdateIdlePolicy.mayInstall(.whenIdle, snapshot(poweredOffByMMTVL: true, receiverOn: true)))
+        #expect(!UpdateIdlePolicy.mayInstall(.atNight, snapshot(poweredOffByMMTVL: true, receiverOn: true, hour: 4)))
+        // Not known (no receiver, or no power line yet) doesn't block.
+        #expect(UpdateIdlePolicy.mayInstall(.whenIdle, snapshot(poweredOffByMMTVL: true, receiverOn: false)))
+        // The screen saver is still idle with the receiver on (as planned in step 6).
+        #expect(UpdateIdlePolicy.mayInstall(.whenIdle, snapshot(screenSaverOurs: true, receiverOn: true)))
+    }
+
+    /// Step 6b: a button pressed in MMTVL after the Power-off (the TV on, the receiver left off): someone is there.
+    @Test func whenIdleNotAfterInputSincePowerOff() {
+        #expect(!UpdateIdlePolicy.mayInstall(.whenIdle, snapshot(poweredOffByMMTVL: true, inputSincePowerOff: true)))
+        #expect(!UpdateIdlePolicy.mayInstall(.atNight, snapshot(poweredOffByMMTVL: true, inputSincePowerOff: true,
+                                                                 hour: 4)))
+        #expect(UpdateIdlePolicy.mayInstall(.whenIdle, snapshot(poweredOffByMMTVL: true, inputSincePowerOff: false)))
+    }
+
+    /// Step 6b: video playing never counts as the TV off, even after MMTVL's Power-off.
+    @Test func whenIdleNotWhileVideoPlays() {
+        #expect(!UpdateIdlePolicy.mayInstall(.whenIdle, snapshot(poweredOffByMMTVL: true, videoPlaying: true)))
+        #expect(UpdateIdlePolicy.mayInstall(.whenIdle, snapshot(poweredOffByMMTVL: true, videoPlaying: false)))
     }
 }

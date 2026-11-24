@@ -29,9 +29,20 @@ final class PhoneRemoteRecorder {
     var generator = SeededGenerator(seed: 0x4D4D_5456_4C21)
     var repairs = false
     var repairCalls = 0
-    /// M7m L20: the screen saver shows; each input it swallows is recorded.
+    /// M7m L20: the screen saver shows; each input it swallows is recorded, with its command (M15 step 6b; nil for
+    /// text and Return).
     var screenSaverShowing = false
-    var screenSaverInputs: [String] = []
+    var screenSaverInputs: [ScreenSaverInput] = []
+
+    struct ScreenSaverInput: Equatable {
+        var name: String
+        var command: RemoteCommand?
+
+        init(_ name: String, _ command: RemoteCommand?) {
+            self.name = name
+            self.command = command
+        }
+    }
 
     var environment: PhoneRemoteEnvironment {
         PhoneRemoteEnvironment(
@@ -63,9 +74,9 @@ final class PhoneRemoteRecorder {
                 self.repairCalls += 1
                 return self.repairs
             },
-            endsScreenSaver: { input in
+            endsScreenSaver: { input, command in
                 guard self.screenSaverShowing else { return false }
-                self.screenSaverInputs.append(input)
+                self.screenSaverInputs.append(ScreenSaverInput(input, command))
                 return true
             },
             inputGate: { self.gate },
@@ -118,6 +129,8 @@ struct PhoneRemoteTests {
     }
 
     @Test func unauthenticatedMessagesAreIgnored() {
+        // Security L-3: nor do they end the screen saver.
+        recorder.screenSaverShowing = true
         send(#"{"type":"command","command":"up"}"#)
         send(#"{"type":"text","value":"abc"}"#)
         send(#"{"type":"volume","action":"up"}"#)
@@ -128,6 +141,7 @@ struct PhoneRemoteTests {
         #expect(recorder.edits.isEmpty)
         #expect(recorder.returns == 0)
         #expect(recorder.volumeActions.isEmpty)
+        #expect(recorder.screenSaverInputs.isEmpty)
         #expect(transport.sent.isEmpty)
     }
 
@@ -326,7 +340,8 @@ struct PhoneRemoteTests {
         send(#"{"type":"command","command":"home"}"#)
         send(#"{"type":"text","value":"a"}"#)
         send(#"{"type":"submit"}"#)
-        #expect(recorder.screenSaverInputs == ["phone down", "phone home", "phone text", "phone return"])
+        #expect(recorder.screenSaverInputs == [.init("phone down", .down), .init("phone home", .home),
+                                               .init("phone text", nil), .init("phone return", nil)])
         #expect(recorder.dispatched.isEmpty)
         #expect(recorder.posted.isEmpty)
         #expect(recorder.edits.isEmpty)

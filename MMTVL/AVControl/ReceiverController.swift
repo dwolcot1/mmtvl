@@ -75,6 +75,25 @@ nonisolated struct ReceiverState: Equatable, Sendable {
     }
 }
 
+/// M15 step 6b: the receiver's power as it last reported it. `unknown` until a power line arrives on the open
+/// connection, and again once the connection closes.
+nonisolated enum ReceiverPower: String, Equatable, Sendable {
+    case unknown, on, off
+
+    init(_ on: Bool?) {
+        switch on {
+        case .some(true): self = .on
+        case .some(false): self = .off
+        case nil: self = .unknown
+        }
+    }
+
+    /// A receiver over HDMI-CEC: its last Report Power Status (`CECAudioSystem.power`; nil: none, or no answer).
+    init(cec status: CECPowerStatus?) {
+        self.init(status.map(\.isOn))
+    }
+}
+
 /// M7h step 10 (security): what a `request` is. Only commands keep a network connection from its idle close (L17).
 nonisolated enum ReceiverRequestKind: Sendable {
     /// A button press: counts as activity, and reopens a connection closed for being idle.
@@ -137,6 +156,12 @@ final class ReceiverController {
         return transport != nil || closedForIdle
     }
     var onStatusChange: (() -> Void)?
+    /// M15 step 6b: from every parsed power line (replies and unsolicited ones, step 6a); `unknown` until the first on
+    /// the open connection and again once it closes. Asked for once per connection (`queryPowerOnLinkUp`), never on
+    /// a timer.
+    var power: ReceiverPower { ReceiverPower(state.power) }
+    /// M15 step 6b: `power` changed (a power line, or the connection closed).
+    var onPowerChange: (() -> Void)?
     /// M7h step 11: why the link isn't up, for Test Connection ("Connection refused", "No serial port found"); nil
     /// once it's up or a reply came. Never an address or a device path.
     private(set) var lastConnectError: String?
@@ -286,6 +311,24 @@ final class ReceiverController {
         let config = configGeneration
         lastActivityAt = clock.now
         return await enqueue { await self.runTest(config: config) }
+    }
+
+    /// M15 step 6b (user, 2026-11-24): asks for the receiver's power once when its link comes up, so `power` is known
+    /// from the start (AppDelegate calls it from `onLinkUp`, after the volume probe, which then goes first). Once per
+    /// connection, never on a timer. Passive like that probe: not activity (the idle close still comes), it reopens
+    /// nothing, and a missing reply changes nothing (`isAnswering` stays as it was).
+    func queryPowerOnLinkUp() {
+        guard codec != nil, let transport, transport.isReady else { return }
+        let config = configGeneration
+        let current = generation
+        Task { [weak self] in
+            guard let self else { return }
+            _ = await enqueue { () async -> Bool in
+                // Only on the connection that came up.
+                guard self.generation == current else { return false }
+                return await self.write(.queryPower, config: config, reopensIfIdle: false)
+            }
+        }
     }
 
     /// L12: each brand's read-only queries at its own serial settings on `path` (nil = the first USB serial port),
@@ -526,6 +569,12 @@ final class ReceiverController {
         transport.close()
         self.transport = nil
         readyAt = nil
+        // M15 step 6b: nothing is known about the power once the connection is gone.
+        if state.power != nil {
+            state.power = nil
+            onStatusChange?()
+            onPowerChange?()
+        }
     }
 
     private func portGone() {
@@ -652,6 +701,65 @@ final class ReceiverController {
         if state != old {
             Self.logger.debug("Receiver status: \(String(describing: status), privacy: .public)")
             onStatusChange?()
+            if state.power != old.power { onPowerChange?() }
+        }
+    }
+}
+
+/// M15 step 6b (D45 amended): the set-up receiver's power (serial, network or HDMI-CEC; never the TV's network), fed by
+/// AppDelegate on every change. When it turns off without MMTVL's Power (`on` → `off`, not within
+/// `ownPowerOffWindow` of MMTVL's own Power-off, never from `unknown`), `onTurnedOff` runs: the TV was turned off with
+/// its own remote (the receiver following over HDMI-CEC), or the receiver with its own. Main actor.
+final class ReceiverPowerWatch {
+    private static let logger = Logger(subsystem: "dev.mmtvl.launcher", category: "Receiver")
+
+    /// An "off" this soon after MMTVL's own Power-off is that Power-off's (the receiver's reply, a CEC TV's Standby).
+    static let ownPowerOffWindow: TimeInterval = 30
+    /// Security L-1: `onTurnedOff` runs at most this often, so a host posing as the network receiver (or a CEC device)
+    /// flipping on and off can't keep pulling the screen home.
+    static let turnedOffInterval: TimeInterval = 60
+
+    private(set) var power: ReceiverPower = .unknown
+    /// The receiver reports on (`unknown` isn't on).
+    var isOn: Bool { power == .on }
+    var onTurnedOff: () -> Void = {}
+
+    private var ownPowerOffAt: TimeInterval?
+    private var lastTurnedOffAt: TimeInterval?
+    private let now: () -> TimeInterval
+
+    init(now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.now = now
+    }
+
+    /// MMTVL's Power-off started (`PowerController.onPowerOff`).
+    func noteOwnPowerOff() {
+        ownPowerOffAt = now()
+    }
+
+    func update(_ new: ReceiverPower) {
+        let old = power
+        guard new != old else { return }
+        power = new
+        Self.logger.debug("Receiver power: \(old.rawValue, privacy: .public) → \(new.rawValue, privacy: .public)")
+        guard old == .on, new == .off else { return }
+        let time = now()
+        if let ownPowerOffAt, time - ownPowerOffAt < Self.ownPowerOffWindow { return }
+        if let lastTurnedOffAt, time - lastTurnedOffAt < Self.turnedOffInterval {
+            Self.logger.debug("Receiver power: off again within 60 s; not going home again")
+            return
+        }
+        lastTurnedOffAt = time
+        onTurnedOff()
+    }
+
+    /// What AppDelegate runs when the receiver turned off without MMTVL's Power: the first half of Power-off (no
+    /// `poweredOffByMMTVL`, nothing sent, the displays stay as they are).
+    static func turnedOffHandler(stopPlayback: @escaping () -> Void, goHome: @escaping () -> Void) -> () -> Void {
+        {
+            stopPlayback()
+            goHome()
+            PowerController.logger.notice("Power: the receiver turned off; stopped playback, home")
         }
     }
 }

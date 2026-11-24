@@ -121,6 +121,10 @@ final class AppRouter {
     @ObservationIgnored private var stillIdle = StillScreenIdle(dimAfter: Theme.stillScreenDimAfter,
                                                                 saverAfterDim: Theme.screenSaverAfterDim)
     private(set) var idlePhase: StillScreenIdle.Phase = .awake
+    /// M15 step 6b: a remote command reached MMTVL (`handle`) since the last Power-off (`notePowerOff`), so someone is
+    /// using it: no idle install. Power and volume don't count (Power-on clears "off" anyway; a volume press in the
+    /// dark isn't someone watching). False at launch.
+    @ObservationIgnored private(set) var inputSincePowerOff = false
     /// Injectable clock for the dimmer (tests advance it and call `idleTick()`).
     @ObservationIgnored var idleNow: () -> ContinuousClock.Instant = { ContinuousClock.now }
     /// M7m L20: the dimmer asks for the screen saver (AppDelegate: `ScreenSaver.start()`).
@@ -443,6 +447,29 @@ final class AppRouter {
         stopPreviewUntilInput()
     }
 
+    /// M15 step 6b: MMTVL's Power-off started (`PowerController.onPowerOff`): input counts from now on. Not for the
+    /// receiver turning off by itself.
+    func notePowerOff() {
+        inputSincePowerOff = false
+    }
+
+    /// M15 step 6b (QA major): a command reached MMTVL, also one only a wake or the screen saver took (`handle`,
+    /// `endScreenSaverIfShowing`); Power and volume don't count.
+    func noteInputSincePowerOff(_ command: RemoteCommand) {
+        if Self.countsAsInputSincePowerOff(command) { inputSincePowerOff = true }
+    }
+
+    /// M15 step 6b: whether `command` counts as someone using MMTVL after a Power-off. Pure.
+    static func countsAsInputSincePowerOff(_ command: RemoteCommand) -> Bool {
+        switch command {
+        case .power, .volumeUp, .volumeDown, .mute:
+            false
+        case .up, .down, .left, .right, .select, .back, .home, .playPause, .fastForward, .rewind, .menu, .channelUp,
+             .channelDown, .powerMenu:
+            true
+        }
+    }
+
     /// M7c L26: no stream while the screen saver runs. M7m L20: from now on a press only ends it.
     func screenSaverDidStart() {
         isScreenSaverRunning = true
@@ -513,7 +540,9 @@ final class AppRouter {
     /// and the caller swallows the input (it never reaches the app in front). Also the first press within the grace
     /// window after a screen saver no press ended (it wakes, without ending anything). False otherwise.
     @discardableResult
-    func endScreenSaverIfShowing(by reason: String) -> Bool {
+    /// `command`: the remote command (M15 step 6b: it counts as input since Power-off when swallowed here); nil for
+    /// phone text and Return.
+    func endScreenSaverIfShowing(by reason: String, command: RemoteCommand? = nil) -> Bool {
         // QA step 7 (minor): the engine is gone but `didstop` hasn't come yet, and no press ended it (macOS did, on a
         // touch): stopped now, so this press opens the grace window and is swallowed once.
         // Pre-build review (security medium): only for a session whose engine was seen.
@@ -523,6 +552,7 @@ final class AppRouter {
             screenSaverDidStop()
         }
         if isScreenSaverShowing {
+            if let command { noteInputSincePowerOff(command) }
             swallowsRepeatsAfterWake = true
             wakeFromIdle(by: reason)
             return true
@@ -532,6 +562,7 @@ final class AppRouter {
             return false
         }
         screenSaverStoppedAt = nil
+        if let command { noteInputSincePowerOff(command) }
         swallowsRepeatsAfterWake = true
         feedIdleActivity(reason: "by \(reason)")
         noteActivity()
@@ -837,13 +868,15 @@ final class AppRouter {
     /// Returns true if the command was consumed. `isRepeat`: a held key's or button's auto-repeat (M7g: Settings
     /// changes page only on a fresh Left or Right).
     func handle(_ command: RemoteCommand, isRepeat: Bool = false) -> Bool {
+        // M15 step 6b: every command that reaches MMTVL passes here, also the ones a wake swallows.
+        noteInputSincePowerOff(command)
         // M7m pre-build review (QA minor): a held key that woke the screen keeps doing nothing until a fresh press.
         if isRepeat, swallowsRepeatsAfterWake { return true }
         if !isRepeat { swallowsRepeatsAfterWake = false }
         // M7m L19: a press while dimmed only wakes the screen; Power and Power Menu wake it and still act. L20: the
         // same while the screen saver shows (a global binding while MMTVL is behind it; it's ended) and for the first
         // press just after a screen saver no press ended (QA step 7, major 1).
-        let swallowedForScreenSaver = endScreenSaverIfShowing(by: "\(command)")
+        let swallowedForScreenSaver = endScreenSaverIfShowing(by: "\(command)", command: command)
         if swallowedForScreenSaver || idlePhase != .awake {
             if !swallowedForScreenSaver { wakeFromIdle(by: "\(command)") }
             swallowsRepeatsAfterWake = true

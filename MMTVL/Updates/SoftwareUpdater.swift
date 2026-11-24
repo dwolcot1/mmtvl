@@ -130,7 +130,8 @@ final class SoftwareUpdater: UpdateEventSink {
     /// A snapshot in which nothing allows an install.
     static let notIdle = UpdateIdleSnapshot(mmtvlFrontmost: false, exitedToDesktop: false, mirroring: false,
                                             poweredOffByMMTVL: false, screenSaverOurs: false, stillPhase: .awake,
-                                            videoPlaying: false, hour: 12)
+                                            videoPlaying: false, receiverOn: false, inputSincePowerOff: false,
+                                            hour: 12)
 
     private(set) var status: UpdateStatus
     /// Step 8: Settings' status refresh and the home label.
