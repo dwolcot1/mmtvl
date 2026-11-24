@@ -9,7 +9,7 @@
 
 ## Next session starts here
 
-- **In progress on branch `m15-software-updates`** (from 2026-11-23). Steps 1 (`945a77a`), 2 (`82c8af6`), 3 (`b6ddbb2`) and 6 (`82c91f5`) done. Next: step 4 (the user makes the EdDSA keys at this Mac), then step 5; steps 6a (a probe on the TV, needs the user and the SSH key) and 6b (the receiver power watch) were added for the TV-on/off gap (*Deviations*); step 7 waits for 6b. The user decided the step 3 security notes (*Deviations*, 2026-11-23): N1 → step 7/8/14, N2 and N5 → step 5, N3 accepted; step 4 needs the user at this Mac (EdDSA keys) before step 5.
+- **In progress on branch `m15-software-updates`** (from 2026-11-23). Steps 1 (`945a77a`), 2 (`82c8af6`), 3 (`b6ddbb2`), 6 (`82c91f5`) and 9 (`28ad09d`) done. Next: step 4 (the user makes the EdDSA keys at this Mac), then step 5; steps 6a (a probe on the TV, needs the user and the SSH key) and 6b (the receiver power watch) were added for the TV-on/off gap (*Deviations*); step 7 waits for 6b. The user decided the step 3 security notes (*Deviations*, 2026-11-23): N1 → step 7/8/14, N2 and N5 → step 5, N3 accepted; step 4 needs the user at this Mac (EdDSA keys) before step 5.
 - Human checks gathered so far (on this Mac, `-windowed YES`): Settings → System → Restart Mac mini sits between Relaunch and Exit, its band says "Restarts the Mac mini. Asks first.", and its page shows Cancel first (**press only Back there**). Neither the implementer nor QA drove the running app to that page.
 - Read: this plan's *Design*, then the files each step names. Build: `/build-plan docs/plans/M15-software-updates.md`.
 - The TV session (step 14) needs two notarized builds (A and B, step 13); both releases need the user's yes.
@@ -702,12 +702,17 @@ Also `StatusParts.updates`, `SettingKey.updateChecks`, and actions `.restartMac`
     - `copyDoesntRepeatDescriptions` still passes (`:118`).
   - Done when: the full suite passes. Screenshots of `-windowed YES -updatePreview available`, `… ready` and `… upToDate` show the home capsule under the clock ("Update Available: …" for the first two) and the Software Update page with the rows above. Attach the screenshots to the QA report.
 
-- [ ] **9. `deploy-mm.sh` and staged updates** `[implementer]`, files: `scripts/deploy-mm.sh`
+- [x] **9. `deploy-mm.sh` and staged updates** `[implementer]`, files: `scripts/deploy-mm.sh`
   - Before `stop_mmtvl` in `install_zip` (`:93-105`) and on `--rollback`, remove Sparkle's jobs on the mini so a staged update can't install over the deployed build:
     `launchctl bootout gui/$(id -u)/dev.mmtvl.launcher-sparkle-updater 2>/dev/null; launchctl bootout gui/$(id -u)/dev.mmtvl.launcher-sparkle-progress 2>/dev/null; true`.
     - If step 14 G shows the jobs live in `user/<uid>`, use that domain (recorded as a deviation).
   - After `start_mmtvl`, read the installed `CFBundleVersion` back and fail with one line if it isn't the expected build.
   - Done when: `zsh -n scripts/deploy-mm.sh` is clean and the diff is reviewed. It runs for real in step 14.
+  - **Done 2026-11-23** (`28ad09d`). QA round 1 FAILED: a single read-back right after `start_mmtvl` can't catch Autoupdate's swap, which lands ~0.3 s after MMTVL exits, concurrently with the script's swap; and "removed (if any)" printed whatever happened. Fixed, QA round 2 PASS, then two minors fixed. As built, all in the remote heredoc, in `install_zip` (so `--rollback` too):
+    - `remove_sparkle_jobs` (before the stop): for both labels in `gui/<uid>` and `user/<uid>`, boot out a loaded job and fail if it's still loaded 2 s later; fail if `system/dev.mmtvl.launcher-sparkle-updater` exists (check-only; only installs needing authorization use it, `SUInstallerLauncher.m:258`); print "Sparkle jobs: none" / "removed <labels>"; fail while MMTVL's own Autoupdate (`/Autoupdate dev\.mmtvl\.launcher `, argv from `SUInstallerLauncher.m:129`; it runs in place from the framework, `:483`) or Updater (`/Updater\.app/Contents/MacOS/Updater /Applications/MMTVL\.app `, `:55`; copied to a cache path) runs. Patterns don't match another app's Sparkle (Proton Drive's runs on the dev Mac). Failures end "MMTVL wasn't stopped".
+    - `sparkle_still_gone` (after the stop, before `rm -rf`): the same check, check-only; failure leaves MMTVL stopped with the old app ("the app wasn't replaced, MMTVL is stopped").
+    - `check_build_holds` (after the start): reads `CFBundleVersion` every 0.5 s for 5 s; a different or unreadable build fails ("MMTVL is running, check /Applications/MMTVL.app").
+    - Labels verified in Sparkle 2.10.1: `-sparkle-updater` (`:259`), `-sparkle-progress` (`:60`). Autoupdate exits on SIGTERM without installing (`Autoupdate/main.m:30-36`). Tested with a scratchpad harness (13 cases, fake labels and processes, `set -euo pipefail`); never run against the mini. **Unverified, for 14 G:** `launchctl bootout` over SSH, the real domain, SIGTERM-installs, the swap timing, and whether `launchctl print system/…` is readable as a normal user (if denied, that check passes silently).
 
 - [ ] **10. Visual check** `[designer]`, files: none, or only `HomeView.swift` / the Settings rows if something is off
   - With the step 8 screenshots and `-windowed YES -updatePreview …`, check:
