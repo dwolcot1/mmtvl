@@ -9,7 +9,7 @@
 
 ## Next session starts here
 
-- **In progress on branch `m15-software-updates`** (from 2026-11-23). Steps 1 (`945a77a`), 2 (`82c8af6`), 3 (`b6ddbb2`), 6 (`82c91f5`) and 9 (`28ad09d`) done; 4 and 5 (`6584f79`, key `7a47dbe`) done. 6a, 7 (`d6c503f`) and 6b (`cfc667a`) and 8 (`8d4d4af`) done. Next: 10 (needs this Mac's screen unlocked: the step 8 screenshots are off-screen renders), 10, 11, 12, 13 (needs the user's yes); 6a done (the Pioneer reports its power changes unsolicited); 6b (the receiver power watch) follows step 7. The user decided the step 3 security notes (*Deviations*, 2026-11-23): N1 → step 7/8/14, N2 and N5 → step 5, N3 accepted; step 4 needs the user at this Mac (EdDSA keys) before step 5.
+- **In progress on branch `m15-software-updates`** (from 2026-11-23). Steps 1 (`945a77a`), 2 (`82c8af6`), 3 (`b6ddbb2`), 6 (`82c91f5`) and 9 (`28ad09d`) done; 4 and 5 (`6584f79`, key `7a47dbe`) done. 6a, 7 (`d6c503f`) and 6b (`cfc667a`) and 8 (`8d4d4af`) done. 11 done. Next: 10 (needs this Mac's screen unlocked: the step 8 screenshots are off-screen renders), 10, 11, 12, 13 (needs the user's yes); 6a done (the Pioneer reports its power changes unsolicited); 6b (the receiver power watch) follows step 7. The user decided the step 3 security notes (*Deviations*, 2026-11-23): N1 → step 7/8/14, N2 and N5 → step 5, N3 accepted; step 4 needs the user at this Mac (EdDSA keys) before step 5.
 - Human checks gathered so far (on this Mac, `-windowed YES`): Settings → System → Restart Mac mini sits between Relaunch and Exit, its band says "Restarts the Mac mini. Asks first.", and its page shows Cancel first (**press only Back there**). Neither the implementer nor QA drove the running app to that page.
 - Read: this plan's *Design*, then the files each step names. Build: `/build-plan docs/plans/M15-software-updates.md`.
 - The TV session (step 14) needs two notarized builds (A and B, step 13); both releases need the user's yes.
@@ -752,7 +752,7 @@ Also `StatusParts.updates`, `SettingKey.updateChecks`, and actions `.restartMac`
     - the Restart confirm page matches Scan for Channels.
   - Done when: the designer reports PASS with screenshots, or a list of fixes that an implementer pass applies.
 
-- [ ] **11. Docs** `[doc]`, files: `CLAUDE.md`, `README.md`, `docs/plans/MASTER_PLAN.md`, `MMTVL/Licenses/THIRD_PARTY_NOTICES.md` (if step 3 missed anything), this plan
+- [x] **11. Docs** `[doc]`, files: `CLAUDE.md`, `README.md`, `docs/plans/MASTER_PLAN.md`, `MMTVL/Licenses/THIRD_PARTY_NOTICES.md` (if step 3 missed anything), this plan
   - **CLAUDE.md, Project setup notes:**
     - "No Info.plist file" → the generated plist plus `Config/Updater-Info.plist` (Sparkle's keys only, merged by `INFOPLIST_FILE`).
     - Swift packages: **Sparkle 2.10.1** (exact, app target).
@@ -775,6 +775,7 @@ Also `StatusParts.updates`, `SettingKey.updateChecks`, and actions `.restartMac`
   - **README:** replace `:29` with automatic updates from 1.4.0 (Settings → System → Software Update), and a one-time manual install for 1.3.x.
   - **Master plan:** M15 row → In progress/Done as appropriate; Q35 answered from step 14.
   - Done when: `git diff --stat` shows the files above and the gitleaks dir scans of `docs` and `scripts` are clean.
+  - **Done 2026-11-24** (orchestrator): CLAUDE.md (Commands: the Updater log line; Info.plist and `Config/Updater-Info.plist`; Sparkle 2.10.1 among the packages; the release checklist with the appcast and its `sign_update --verify`, security note 1 of step 5; `release.sh`'s M15 checks and the EdDSA key's home and backup; `deploy-mm.sh`'s bootout and build watch; `updateChecks`/`automaticUpdates`; `update-relaunch.json`, Sparkle's `SU*` defaults and the test `SUFeedURL`; Power-off goes home, the receiver power watch, Restart in Settings), README (Updates, and the one-time manual install from 1.3.x), MASTER_PLAN D58 (as built, incl. the 20-day failed-feed mode, L-g). `THIRD_PARTY_NOTICES.md` needed nothing beyond step 3. gitleaks on `docs` and `scripts`: no leaks. **Left for step 14:** Q35's answer in the master plan.
 
 - [ ] **12. Security review** `[security]` (`security-reviewer`, threshold: medium and above blocks; stop when every finding is fixed or accepted by the user)
   - Scope: the diffs of steps 3, 5, 7 and 9: the new package and its helpers, `Config/Updater-Info.plist` (feed integrity, signed feed, `SUVerifyUpdateBeforeExtraction`), the `SUFeedURL` user-defaults override, `release.sh`'s signature and entitlement checks, the quit-permission lift and revoke (kiosk lock, D36), the relaunch marker, logs without URLs, and `deploy-mm.sh`.
