@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		AA0000000000000000000050 /* MPVKit in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000052 /* MPVKit */; };
 		AA0000000000000000000051 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000053 /* GRDB */; };
+		AA0000000000000000000056 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000057 /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -46,6 +47,7 @@
 			files = (
 				AA0000000000000000000050 /* MPVKit in Frameworks */,
 				AA0000000000000000000051 /* GRDB in Frameworks */,
+				AA0000000000000000000056 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -99,6 +101,7 @@
 			packageProductDependencies = (
 				AA0000000000000000000052 /* MPVKit */,
 				AA0000000000000000000053 /* GRDB */,
+				AA0000000000000000000057 /* Sparkle */,
 			);
 			productName = MMTVL;
 			productReference = AA0000000000000000000006 /* MMTVL.app */;
@@ -158,6 +161,7 @@
 			packageReferences = (
 				AA0000000000000000000054 /* XCRemoteSwiftPackageReference "MPVKit" */,
 				AA0000000000000000000055 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
+				AA0000000000000000000058 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AA0000000000000000000003 /* Products */;
@@ -271,6 +275,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Config/Updater-Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = MMTVL;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "MMTVL asks macOS to sleep or restart the Mac mini from its power menu.";
@@ -306,6 +311,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Config/Updater-Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = MMTVL;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "MMTVL asks macOS to sleep or restart the Mac mini from its power menu.";
@@ -413,6 +419,14 @@
 				minimumVersion = 7.11.1;
 			};
 		};
+		AA0000000000000000000058 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = exactVersion;
+				version = 2.10.1;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -425,6 +439,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = AA0000000000000000000055 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
 			productName = GRDB;
+		};
+		AA0000000000000000000057 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA0000000000000000000058 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
