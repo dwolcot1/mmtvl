@@ -441,4 +441,40 @@ struct AppSettingsTests {
             #expect(settings.launchAtLogin, "\(value)")
         }
     }
+
+    /// M15 L5: Check for Updates (default true) and Automatic Updates (default off); an unknown mode or a value of
+    /// another type reads as the default, and the rest of the file is kept.
+    @Test func updateSettingsDefaultAndDecode() throws {
+        let missing = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
+        #expect(missing.updateChecks)
+        #expect(missing.automaticUpdates == .off)
+        #expect(AppSettings().updateChecks)
+        #expect(AppSettings().automaticUpdates == .off)
+        let whenIdle = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"automaticUpdates": "whenIdle"}"#.utf8))
+        #expect(whenIdle.automaticUpdates == .whenIdle)
+        let atNight = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"automaticUpdates": "atNight"}"#.utf8))
+        #expect(atNight.automaticUpdates == .atNight)
+        let checksOff = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"updateChecks": false}"#.utf8))
+        #expect(!checksOff.updateChecks)
+        #expect(checksOff.automaticUpdates == .off)
+        var both = AppSettings()
+        both.updateChecks = false
+        both.automaticUpdates = .atNight
+        #expect(try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(both)) == both)
+        let encoded = try String(decoding: JSONEncoder().encode(both), as: UTF8.self)
+        #expect(encoded.contains(#""updateChecks":false"#))
+        #expect(encoded.contains(#""automaticUpdates":"atNight""#))
+        for value in [#""weekly""#, #""WhenIdle""#, "12", "true", "null", #"["atNight"]"#] {
+            let json = #"{"automaticUpdates": \#(value), "launchAtLogin": true}"#
+            let settings = try JSONDecoder().decode(AppSettings.self, from: Data(json.utf8))
+            #expect(settings.automaticUpdates == .off, "\(value)")
+            #expect(settings.launchAtLogin, "\(value)")
+        }
+        for value in ["0", #""false""#, "null", "[false]"] {
+            let json = #"{"updateChecks": \#(value), "launchAtLogin": true}"#
+            let settings = try JSONDecoder().decode(AppSettings.self, from: Data(json.utf8))
+            #expect(settings.updateChecks, "\(value)")
+            #expect(settings.launchAtLogin, "\(value)")
+        }
+    }
 }
