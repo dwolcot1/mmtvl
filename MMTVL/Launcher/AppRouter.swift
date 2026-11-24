@@ -430,6 +430,19 @@ final class AppRouter {
         updateLivePreview()
     }
 
+    /// M15 L16 (amends D45): Power-off, before the TV is told to turn off. Live TV (Multiview too) stops without
+    /// keeping a preview, YouTube pauses, and the home preview waits for the next command (as after the displays
+    /// sleep). AppDelegate then goes home (`goHomeFromAnywhere`): `goHome` leaves Live TV again, which keeps nothing
+    /// (its players are stopped), and `updateLivePreview` starts no preview while `isIdle`.
+    func stopPlaybackForPowerOff() {
+        switch screen {
+        case .liveTV: liveTV.leave(keepingPreview: false)
+        case .youtube: youtube.pause()
+        default: break
+        }
+        stopPreviewUntilInput()
+    }
+
     /// M7c L26: no stream while the screen saver runs. M7m L20: from now on a press only ends it.
     func screenSaverDidStart() {
         isScreenSaverRunning = true

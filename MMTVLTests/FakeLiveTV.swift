@@ -24,6 +24,8 @@ final class FakeLiveTV: LiveTVHosting {
         leaves += 1
         leavesKeepingPreview.append(keepingPreview)
         if keepingPreview, let playingChannelID { previewChannelID = playingChannelID }
+        // Like `LiveTVModel.leave`: a leave that keeps nothing stops the channel, so a later leave keeps nothing.
+        if !keepingPreview { playingChannelID = nil }
     }
 
     func handle(_ command: RemoteCommand) -> LiveTVOutcome {

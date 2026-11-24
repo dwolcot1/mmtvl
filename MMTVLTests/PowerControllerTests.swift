@@ -130,6 +130,34 @@ struct PowerControllerTests {
         #expect(log.events == ["tv.isOn", "tv.powerKey", "receiver.powerOff", "displays.sleep"])
     }
 
+    /// M15 L16: the app goes home first, before the TV, the receiver and the displays; the power menu's Turn Off TV &
+    /// Receiver too (the same `runOff`).
+    @Test func powerOffCallsOnPowerOffFirst() async {
+        let tv = FakePowerTV(log: log, on: true)
+        let power = makePower(tv: tv, receiver: FakePowerReceiver(log: log))
+        power.onPowerOff = { [log] in log.events.append("onPowerOff") }
+        await press(power)
+        #expect(log.events == ["tv.isOn", "onPowerOff", "tv.powerKey", "receiver.powerOff", "displays.sleep"])
+
+        log.events = []
+        tv.on = true
+        #expect(power.turnOff())
+        await power.task?.value
+        #expect(log.events == ["tv.isOn", "onPowerOff", "tv.powerKey", "receiver.powerOff", "displays.sleep"])
+    }
+
+    @Test func powerOnDoesntCallOnPowerOff() async {
+        let tv = FakePowerTV(log: log, on: false)
+        let power = makePower(tv: tv, receiver: FakePowerReceiver(log: log))
+        var offs = 0
+        power.onPowerOff = { offs += 1 }
+        power.onPowerOn = { [log] in log.events.append("onPowerOn") }
+        await press(power)
+        #expect(offs == 0)
+        #expect(log.events == ["tv.isOn", "displays.wake", "onPowerOn", "tv.wakeOnLAN", "receiver.powerOn",
+                               "outputDevice.log"])
+    }
+
     @Test func withoutATVOnlyTheReceiverAndDisplays() async {
         for tv in [nil, { let tv = FakePowerTV(log: log, on: true); tv.isConfigured = false; return tv }()] as [FakePowerTV?] {
             log.events = []

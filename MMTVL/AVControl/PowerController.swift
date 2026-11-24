@@ -194,6 +194,9 @@ final class PowerController {
     /// M7h L16 (D45): turning on, right after the displays wake. The app marks Plex to restart on its next open and
     /// shows its home screen like a Home press (user decision 2026-11-06, `PowerController.powerOnHandler`).
     var onPowerOn: () -> Void = {}
+    /// M15 L16 (amends D45): turning off, first, before the TV and receiver are sent off. The app stops its own
+    /// playback and shows its home screen like a Home press; other apps keep running behind it (D18).
+    var onPowerOff: () -> Void = {}
     /// QA minor (pre-build 2): "no MAC, can't turn the TV on" is logged once, not toasted at every power-on.
     private var loggedNoMAC = false
 
@@ -300,6 +303,7 @@ final class PowerController {
     private func runOff(tvAnswers: Bool?) async {
         Self.logger.notice("Power: turning off")
         phase = .off
+        onPowerOff()
         onToast("Turning Off…")
         poweredOffByMMTVL = true
         outputLogTask?.cancel()

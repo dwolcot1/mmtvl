@@ -680,6 +680,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         power.onPowerOn = PowerController.powerOnHandler(launcher: launcher, goHome: { [weak self] in
             self?.goHomeFromAnywhere(reason: "powerOn")
         })
+        // M15 L16: Power-off stops MMTVL's own playback and goes home before the TV is told to turn off (both the
+        // short press and the power menu's Turn Off TV & Receiver run `runOff`).
+        power.onPowerOff = { [weak self] in
+            self?.router?.stopPlaybackForPowerOff()
+            self?.goHomeFromAnywhere(reason: "powerOff")
+            PowerController.logger.notice("Power: stopped playback, home")
+        }
         self.power = power
         guard let router else { return }
         router.onPowerButton = { [weak power] in power?.powerButton() }

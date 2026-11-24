@@ -619,6 +619,43 @@ struct AppRouterTests {
         #expect(liveTV.calls == ["start id:nflnetwork.us", "open", "leave"])
     }
 
+    /// M15 L16: Power-off (`stopPlaybackForPowerOff`, then AppDelegate's `goHomeFromAnywhere`) leaves Live TV without
+    /// a preview, and none starts until the next command.
+    @Test func powerOffLeavesLiveTVWithoutPreview() {
+        let (router, liveTV) = previewRouter()
+        focusLiveTV(router)
+        _ = router.handle(.select)
+        #expect(router.screen == .liveTV)
+        liveTV.previewChannelID = nil   // adopted by Live TV
+        liveTV.playingChannelID = "id:nflnetwork.us"
+        liveTV.calls = []
+        router.stopPlaybackForPowerOff()
+        router.goHomeToStartTile()
+        #expect(router.screen == .home)
+        #expect(liveTV.leavesKeepingPreview.first == false)
+        #expect(liveTV.previewChannelID == nil)
+        #expect(!liveTV.isPreviewPlaying)
+        #expect(!liveTV.calls.contains { $0.hasPrefix("start") })
+        // The next command (Power-on's first press) brings the preview back.
+        router.noteActivity()
+        _ = router.handle(.right)
+        _ = router.handle(.right)
+        #expect(liveTV.previewChannelID != nil)
+    }
+
+    /// M15 L16: Power-off on YouTube pauses it and goes home.
+    @Test func powerOffPausesYouTube() {
+        let youtube = FakeYouTube()
+        let router = makeRouter(youtube: youtube)
+        openYouTubeFromTile(router)
+        #expect(router.screen == .youtube)
+        router.stopPlaybackForPowerOff()
+        #expect(youtube.pauses >= 1)
+        router.goHomeToStartTile()
+        #expect(router.screen == .home)
+        #expect(youtube.sent.isEmpty)
+    }
+
     @Test func withThePreviewOffLeavingLiveTVStopsIt() {
         let (router, liveTV) = previewRouter()
         router.livePreviewEnabled = false
