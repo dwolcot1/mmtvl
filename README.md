@@ -30,7 +30,7 @@ Download the MMTVL zip from the [latest release](https://github.com/dwolcot1/mmt
 
 ## Updates
 
-From 1.4.0, MMTVL updates itself from this repository's releases. When a new version is out, the home screen says **Update Available** under the clock; **Settings → System → Software Update** shows the installed and available versions, checks on demand and installs (MMTVL quits and opens again in about half a minute). **Automatic Updates** can install on its own: *When Idle* (after Power has turned the TV off, or during the screen saver) or *At Night* (about 4 a.m. when nothing is playing); it's *Off* by default. Turn **Check for Updates** off to stop the daily check. Every update is checked twice before it's installed: its EdDSA signature (Sparkle) and the new app's Developer ID signature. Settings are kept.
+From 1.4.0, MMTVL updates itself from this repository's releases. When a new version is out, the home screen says **Update Available** under the clock; **Settings → System → Software Update** shows the installed and available versions, checks on demand and installs (MMTVL quits and opens again in about half a minute). **Automatic Updates** can install on its own: *When Idle* (after Power has turned the TV off, or during the screen saver) or *At Night* (about 4 a.m. when nothing is playing); it's *Off* by default. Turn **Check for Updates** off to stop the daily check. Before an update is installed, Sparkle checks that the download carries the maintainer's EdDSA signature and that the new app is code-signed; older versions are never installed over newer ones. Settings are kept.
 
 **From 1.3.x:** those versions have no updater, so install 1.4.0 once by hand: quit MMTVL, then replace the app the same way as above.
 
