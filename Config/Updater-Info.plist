@@ -10,6 +10,8 @@
 	<true/>
 	<key>SUFeedURL</key>
 	<string>https://github.com/dwolcot1/mmtvl/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>1nOFlV00C3l8kXV5DlcuekUfuaPimfLN0v+I9gtCRUc=</string>
 	<key>SURequireSignedFeed</key>
 	<true/>
 	<key>SUScheduledCheckInterval</key>
