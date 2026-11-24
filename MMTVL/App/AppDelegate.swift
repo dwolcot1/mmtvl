@@ -1469,6 +1469,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await InstalledApps.scanInBackground(excludingBundleIDs: [Bundle.main.bundleIdentifier ?? ""])
             },
             relaunch: { [weak self] in AppRelauncher.relaunch(allowTermination: { self?.allowsTermination = true }) },
+            restartMac: { [weak self] in self?.power?.restartMac() },
             exitToDesktop: { [weak self] in
                 self?.router?.goHome()
                 self?.windowController?.exitToDesktop()

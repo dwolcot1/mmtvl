@@ -8,6 +8,8 @@ final class SettingsRecorder {
     var accessibilityRequests = 0
     var loginItemsOpened = 0
     var relaunches = 0
+    /// M15 step 1: Restart Mac mini.
+    var restarts = 0
     var exits = 0
     var trusted: Bool
     var loginStatus: LoginItemStatus
@@ -141,6 +143,7 @@ func makeSettingsModel(
         openLoginItemsSettings: { recorder.loginItemsOpened += 1 },
         scanInstalledApps: { recorder.installedApps },
         relaunch: { recorder.relaunches += 1 },
+        restartMac: { recorder.restarts += 1 },
         exitToDesktop: { recorder.exits += 1 },
         tileTitle: { $0.title },
         isInstalled: { _ in true },

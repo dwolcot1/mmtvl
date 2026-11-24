@@ -33,6 +33,8 @@ nonisolated enum SettingsPage: Hashable, Sendable {
     case antenna, antennaChannels
     /// M7j L18: Antenna → Scan for Channels' confirm page.
     case confirmAntennaScan
+    /// M15 step 1: System → Restart Mac mini's confirm page.
+    case confirmRestartMac
     /// MR step 4: Settings → Licenses (every shipped component), and one component's page with its QR code.
     case licenses, license(id: String)
 }
@@ -330,6 +332,8 @@ nonisolated enum SettingsAction: Hashable, Sendable {
     case openLoginItemsSettings
     case push(SettingsPage)
     case relaunch
+    /// M15 step 1: the confirm page's Restart (`PowerController.restartMac()`).
+    case restartMac
     case exitToDesktop
     case toggleTileVisible(id: String)
     case toggleTileFullScreen(id: String)

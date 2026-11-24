@@ -407,6 +407,10 @@ final class SettingsModel {
             pop()
         case .relaunch:
             environment.relaunch()
+        case .restartMac:
+            // M15 step 1: `PowerController.restartMac()` toasts when loginwindow refuses.
+            environment.restartMac()
+            pop()
         case .exitToDesktop:
             environment.exitToDesktop()
         case .toggleTileVisible(let id):

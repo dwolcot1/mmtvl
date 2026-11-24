@@ -150,6 +150,47 @@ struct SettingsModelTests {
         #expect(recorder.exits == 1)
     }
 
+    /// M15 step 1: Restart Mac mini sits between Relaunch and Exit to Desktop, and opens its confirm page.
+    @Test func systemHasRestartRow() {
+        let (model, recorder) = makeSettingsModel()
+        model.open(.system)
+        let ids = model.sections.first { $0.id == "mmtvl" }?.rows.map(\.id)
+        #expect(ids == ["relaunch", "restartMac", "exit"])
+        let row = model.row(id: "restartMac")
+        #expect(row?.title == "Restart Mac mini")
+        #expect(row?.showsDisclosure == true)
+        #expect(row?.action == .push(.confirmRestartMac))
+        #expect(row?.description == "Restarts the Mac mini. Asks first.")
+        model.activate(rowID: "restartMac")
+        #expect(model.page == .confirmRestartMac)
+        #expect(model.title(for: .confirmRestartMac) == "Restart Mac mini?")
+        #expect(model.actionRowIDs == ["confirm.cancel", "confirm.restartMac"])
+        #expect(model.focusedRowID == "confirm.cancel")
+        #expect(model.row(id: "confirm.restartMac")?.title == "Restart Mac mini")
+        #expect(model.sections.first?.footer == "Other apps are asked to quit first. With Launch at Login on, MMTVL opens again after the restart.")
+        #expect(recorder.restarts == 0)
+    }
+
+    @Test func restartConfirmCancelPops() {
+        let (model, recorder) = makeSettingsModel()
+        model.open(.system)
+        model.activate(rowID: "restartMac")
+        model.press(.select)
+        #expect(model.page == .system)
+        #expect(model.focusedRowID == "restartMac")
+        #expect(recorder.restarts == 0)
+    }
+
+    @Test func restartConfirmRestarts() {
+        let (model, recorder) = makeSettingsModel()
+        model.open(.system)
+        model.activate(rowID: "restartMac")
+        model.press(.down, .select)
+        #expect(recorder.restarts == 1)
+        #expect(model.page == .system)
+        #expect(model.focusedRowID == "restartMac")
+    }
+
     /// M7l step 2 (L3): System → Glass shows the step, its page lists the five, and a choice saves at once.
     @Test func glassRowChoosesTheGlassStyle() {
         let (model, recorder) = makeSettingsModel()

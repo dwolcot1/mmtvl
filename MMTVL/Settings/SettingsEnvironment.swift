@@ -15,6 +15,8 @@ struct SettingsEnvironment {
     var openLoginItemsSettings: () -> Void
     var scanInstalledApps: () async -> [InstalledApp]
     var relaunch: () -> Void
+    /// M15 step 1: `PowerController.restartMac()` (Settings → System → Restart Mac mini).
+    var restartMac: () -> Void
     var exitToDesktop: () -> Void
     /// `AppLauncher.title(for:)`.
     var tileTitle: (LaunchItem) -> String

@@ -60,6 +60,7 @@ extension SettingsModel {
         case .antenna: antennaSections
         case .antennaChannels: antennaChannelsSections
         case .confirmAntennaScan: confirmAntennaScanSections
+        case .confirmRestartMac: confirmRestartMacSections
         case .licenses: licensesSections
         case .license(let id): licenseSections(id: id)
         }
@@ -117,6 +118,7 @@ extension SettingsModel {
         case .antenna: "Antenna"
         case .antennaChannels: "Channels"
         case .confirmAntennaScan: "Scan for Channels?"
+        case .confirmRestartMac: "Restart Mac mini?"
         case .licenses: "Licenses"
         case .license(let id): ThirdPartyLicenses.component(id: id)?.name ?? "License"
         }
@@ -186,7 +188,7 @@ extension SettingsModel {
                             showsDisclosure: true, action: .push(.restrictions),
                             description: "The PIN, and keeping other apps from taking over the TV."),
                 SettingsRow(id: "system", title: "System", showsDisclosure: true, action: .push(.system),
-                            description: "Accessibility access, starting at login, relaunching MMTVL and leaving to the desktop."),
+                            description: "Accessibility access, starting at login, glass, relaunching MMTVL, restarting the Mac and leaving to the desktop."),
                 SettingsRow(id: "about", title: "About", value: environment.version.version, showsDisclosure: true,
                             action: .push(.about), description: "The version and build of MMTVL."),
                 SettingsRow(id: "licenses", title: "Licenses", showsDisclosure: true, action: .push(.licenses),
@@ -291,6 +293,10 @@ extension SettingsModel {
             SettingsSection(id: "mmtvl", title: "MMTVL", rows: [
                 SettingsRow(id: "relaunch", title: "Relaunch MMTVL", action: .relaunch,
                             description: "Quits and reopens MMTVL. Picks up changes made by hand to its settings files."),
+                // M15 L17: worded like the power menu's, whatever the Mac is.
+                SettingsRow(id: "restartMac", title: "Restart Mac mini", showsDisclosure: true,
+                            action: .push(.confirmRestartMac),
+                            description: "Restarts the Mac mini. Asks first."),
                 SettingsRow(id: "exit", title: "Exit to Desktop", action: .exitToDesktop,
                             description: "Leaves MMTVL for the macOS desktop. Home brings MMTVL back."),
             ]),
@@ -758,6 +764,16 @@ extension SettingsModel {
                 SettingsRow(id: "confirm.cancel", title: "Cancel", action: .pop),
                 SettingsRow(id: "confirm.scan", title: "Scan", action: .startAntennaScan),
             ], footer: "The tuner looks for channels for a few minutes. Antenna channels can't play meanwhile, here or on other devices. Channels it doesn't find are removed from the tuner's lineup."),
+        ]
+    }
+
+    /// M15 step 1: like Scan for Channels, Cancel first. No second PIN: Settings is already behind it.
+    private var confirmRestartMacSections: [SettingsSection] {
+        [
+            SettingsSection(id: "confirm", rows: [
+                SettingsRow(id: "confirm.cancel", title: "Cancel", action: .pop),
+                SettingsRow(id: "confirm.restartMac", title: "Restart Mac mini", action: .restartMac),
+            ], footer: "Other apps are asked to quit first. With Launch at Login on, MMTVL opens again after the restart."),
         ]
     }
 
