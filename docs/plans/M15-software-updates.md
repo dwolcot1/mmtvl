@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Planned |
+| Status | In progress |
 | Depends on | MR (Developer ID, notarized zips on GitHub Releases), M7h (Power, D45), M7m (still screens, screen saver, D51) |
 | Master plan decisions used | D20, D33, D34, D35, D36, D45, D51, D57; new D58 (amended here), D45 amended |
 | Planned | 2026-11-23 |
