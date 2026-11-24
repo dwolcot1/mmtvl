@@ -71,6 +71,90 @@ stop_mmtvl() {
     sleep 0.5
 }
 
+# M15 step 9: Sparkle installs a staged update whenever MMTVL exits, SIGTERM included, which could replace the build
+# being deployed. So before MMTVL is stopped, its jobs are booted out and the deploy stops if any of them, or its
+# installer, is still there. From Sparkle 2.10.1's InstallerLauncher/SUInstallerLauncher.m:
+#   jobs: "<bundle id>-sparkle-updater" (:259, Autoupdate) and "<bundle id>-sparkle-progress" (:60, Updater.app),
+#         submitted to kSMDomainUserLaunchd (:258, :59), so both gui/<uid> and user/<uid> are tried;
+#   processes: Autoupdate runs from the app's own Sparkle.framework (:483, not copied) with the arguments
+#         <bundle id> <home> <user> (:129, Autoupdate/main.m:11-18); Updater.app with <host bundle path> <0|1> (:55).
+sparkle_jobs=(dev.mmtvl.launcher-sparkle-updater dev.mmtvl.launcher-sparkle-progress)
+# The updater job goes to the system domain only for installs that need authorization (:258), which the silent path
+# never uses. A user can't boot it out, so it is only checked: if it's there, the deploy stops.
+sparkle_system_job=dev.mmtvl.launcher-sparkle-updater
+# Extended regexes for pgrep -f: MMTVL's own copies only, never another app's Sparkle.
+sparkle_procs=('/Autoupdate dev\.mmtvl\.launcher ' '/Updater\.app/Contents/MacOS/Updater /Applications/MMTVL\.app ')
+
+# job_loaded <domain/label>: true while launchd still has the job, waiting up to 2 s for a bootout to finish.
+job_loaded() {
+    for _ in {1..10}; do
+        launchctl print "$1" >/dev/null 2>&1 || return 1
+        sleep 0.2
+    done
+    return 0
+}
+
+remove_sparkle_jobs() {
+    local uid domain label
+    local -a removed
+    uid=$(id -u)
+    for label in "${sparkle_jobs[@]}"; do
+        for domain in gui user; do
+            launchctl print "$domain/$uid/$label" >/dev/null 2>&1 || continue
+            launchctl bootout "$domain/$uid/$label" >/dev/null 2>&1 || true
+            if job_loaded "$domain/$uid/$label"; then
+                echo "Sparkle job ${label} (${domain} domain) is still loaded after bootout; not deploying; MMTVL wasn't stopped"
+                exit 1
+            fi
+            removed+=("$label")
+        done
+    done
+    if launchctl print "system/$sparkle_system_job" >/dev/null 2>&1; then
+        echo "Sparkle job ${sparkle_system_job} is in the system domain (needs an admin to remove); not deploying; MMTVL wasn't stopped"
+        exit 1
+    fi
+    if (( ${#removed} )); then echo "Sparkle jobs: removed ${(@u)removed}"; else echo "Sparkle jobs: none"; fi
+    sparkle_procs_gone "is still running; not deploying; MMTVL wasn't stopped"
+}
+
+# sparkle_procs_gone <rest of the message>: fails the deploy while MMTVL's Sparkle installer runs (waits up to 2 s).
+sparkle_procs_gone() {
+    local pattern
+    for pattern in "${sparkle_procs[@]}"; do
+        for _ in {1..10}; do pgrep -f "$pattern" >/dev/null || continue 2; sleep 0.2; done
+        echo "A Sparkle installer for MMTVL $1"
+        exit 1
+    done
+}
+
+# sparkle_still_gone: after MMTVL has stopped, only checks (never removes, never reports) that no Sparkle job or
+# installer appeared between remove_sparkle_jobs and the stop, e.g. from a check that finished just then.
+sparkle_still_gone() {
+    local uid domain label
+    local -a where
+    uid=$(id -u)
+    for label in "${sparkle_jobs[@]}"; do where+=("gui/$uid/$label" "user/$uid/$label"); done
+    where+=("system/$sparkle_system_job")
+    for domain in "${where[@]}"; do
+        if launchctl print "$domain" >/dev/null 2>&1; then
+            label=${domain:t}
+            echo "Sparkle job ${label} (${domain%%/*} domain) appeared after MMTVL stopped; the app wasn't replaced, MMTVL is stopped"
+            exit 1
+        fi
+    done
+    sparkle_procs_gone "started after MMTVL stopped; the app wasn't replaced, MMTVL is stopped"
+}
+
+# check_build_holds <build>: reads the installed build every 0.5 s for 5 s; a late Sparkle swap would change it.
+check_build_holds() {
+    local now
+    for _ in {1..10}; do
+        now=$(installed_build 2>/dev/null) || now=unreadable
+        [[ "$now" == "$1" ]] || { echo "The installed app is build ${now}, expected $1; MMTVL is running, check /Applications/MMTVL.app"; exit 1; }
+        sleep 0.5
+    done
+}
+
 start_mmtvl() {
     # Right after the swap, LaunchServices can refuse the new bundle (error -600, build 34); a second open works.
     local try
@@ -99,10 +183,13 @@ install_zip() {
     codesign --verify --deep --strict "$stage/MMTVL.app"
     built=$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$stage/MMTVL.app/Contents/Info.plist")
     [[ "$built" == "$expected" ]] || { echo "The unzipped app is build ${built}, expected ${expected}"; exit 1; }
+    remove_sparkle_jobs
     stop_mmtvl
+    sparkle_still_gone
     rm -rf "$app"
     mv "$stage/MMTVL.app" "$app"
     start_mmtvl
+    check_build_holds "$expected"
 }
 
 current=$(installed_build)
