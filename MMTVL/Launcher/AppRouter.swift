@@ -67,6 +67,9 @@ final class AppRouter {
     @ObservationIgnored var carouselInterval: Duration = Theme.carouselInterval
     /// M7c L28: "Version 1.1.0 Build 2" under the home clock; nil = hidden. Set live by AppDelegate.
     var homeVersionLabel: String?
+    /// M15 L11: "Update Available: 1.5.0" under the version (shown whether or not the version is); nil = hidden.
+    /// Set by AppDelegate from `SoftwareUpdater.homeLabel`.
+    var homeUpdateLabel: String?
     /// M7f L8: the lowest Siri Remote battery percent beside the home clock; nil = hidden. Set by AppDelegate.
     var remoteBatteryLevel: Int?
     /// M7f L8: AppDelegate reads the battery again (the home screen appeared or its minute ticked).
@@ -1750,6 +1753,7 @@ struct LauncherRootView: View {
                 revealsLivePreview: router.revealsLivePreview,
                 isLeaving: router.isLeavingHome,
                 versionLabel: router.homeVersionLabel,
+                updateLabel: router.homeUpdateLabel,
                 remoteBatteryLevel: router.remoteBatteryLevel,
                 movingTileID: router.movingTileID,
                 entryGeneration: router.homeEntryGeneration,

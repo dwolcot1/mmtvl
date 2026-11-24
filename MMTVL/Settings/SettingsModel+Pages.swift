@@ -61,6 +61,8 @@ extension SettingsModel {
         case .antennaChannels: antennaChannelsSections
         case .confirmAntennaScan: confirmAntennaScanSections
         case .confirmRestartMac: confirmRestartMacSections
+        case .softwareUpdate: softwareUpdateSections
+        case .automaticUpdates: automaticUpdatesSections
         case .licenses: licensesSections
         case .license(let id): licenseSections(id: id)
         }
@@ -119,6 +121,8 @@ extension SettingsModel {
         case .antennaChannels: "Channels"
         case .confirmAntennaScan: "Scan for Channels?"
         case .confirmRestartMac: "Restart Mac mini?"
+        case .softwareUpdate: "Software Update"
+        case .automaticUpdates: "Automatic Updates"
         case .licenses: "Licenses"
         case .license(let id): ThirdPartyLicenses.component(id: id)?.name ?? "License"
         }
@@ -188,7 +192,7 @@ extension SettingsModel {
                             showsDisclosure: true, action: .push(.restrictions),
                             description: "The PIN, and keeping other apps from taking over the TV."),
                 SettingsRow(id: "system", title: "System", showsDisclosure: true, action: .push(.system),
-                            description: "Accessibility access, starting at login, glass, relaunching MMTVL, restarting the Mac and leaving to the desktop."),
+                            description: "Accessibility access, starting at login, glass, software updates, relaunching MMTVL, restarting the Mac and leaving to the desktop."),
                 SettingsRow(id: "about", title: "About", value: environment.version.version, showsDisclosure: true,
                             action: .push(.about), description: "The version and build of MMTVL."),
                 SettingsRow(id: "licenses", title: "Licenses", showsDisclosure: true, action: .push(.licenses),
@@ -290,6 +294,12 @@ extension SettingsModel {
                             action: .push(.glassStyle),
                             description: "How see-through MMTVL's glass panels are."),
             ]),
+            // M15 step 8.
+            SettingsSection(id: "software", title: "Software", rows: [
+                SettingsRow(id: "softwareUpdate", title: "Software Update", value: Self.systemUpdateValue(updates),
+                            showsDisclosure: true, action: .push(.softwareUpdate),
+                            description: "Checks GitHub for new versions of MMTVL and installs them."),
+            ]),
             SettingsSection(id: "mmtvl", title: "MMTVL", rows: [
                 SettingsRow(id: "relaunch", title: "Relaunch MMTVL", action: .relaunch,
                             description: "Quits and reopens MMTVL. Picks up changes made by hand to its settings files."),
@@ -301,6 +311,132 @@ extension SettingsModel {
                             description: "Leaves MMTVL for the macOS desktop. Home brings MMTVL back."),
             ]),
         ]
+    }
+
+    // MARK: - Software Update (M15 step 8)
+
+    /// The System row's value: *Design*'s, plus the user's for checking, failed and idle (2026-11-23).
+    static func systemUpdateValue(_ status: UpdateStatus) -> String? {
+        switch status {
+        case .off: "Off"
+        case .idle: nil
+        case .checking: "Checking…"
+        case .upToDate: "Up to Date"
+        case .available(let update): "\(update.version) Available"
+        case .downloading: "Downloading"
+        case .installing: "Installing"
+        case .ready: "Ready to Install"
+        case .failed(.checkFailed): "Couldn't Check"
+        case .failed(.installFailed): "Couldn't Install"
+        }
+    }
+
+    /// The user's (step 8 QA).
+    private static let checkNowDescription = "Asks GitHub now whether there's a newer MMTVL."
+
+    /// "Checked 2 hours ago" (relative to `now`; a date ahead of the clock reads as now).
+    func checkedLine(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: "en_US")
+        formatter.unitsStyle = .full
+        let reference = now()
+        return "Checked \(formatter.localizedString(for: min(date, reference), relativeTo: reference))"
+    }
+
+    private var softwareUpdateStatusRow: SettingsRow {
+        let row = { (title: String, detail: String?) in
+            SettingsRow(id: "update.status", title: title, detail: detail)
+        }
+        switch updates {
+        case .off(let reason):
+            return row("Updates Are Off", reason.detail)
+        case .idle(let lastChecked):
+            // Not in *Design*: nothing known yet (at launch, or with checks off), so only when it last checked.
+            return row((lastUpdateCheck ?? lastChecked).map(checkedLine) ?? "Not Checked Yet", nil)
+        case .checking:
+            return row("Checking…", nil)
+        case .upToDate(let lastChecked):
+            return row("Up to Date", checkedLine(lastUpdateCheck ?? lastChecked))
+        case .available(let update):
+            return row("\(update.version) Available", nil)
+        case .downloading:
+            return row("Downloading", nil)
+        case .installing:
+            return row("Installing", nil)
+        case .ready:
+            return row("Ready to Install", nil)
+        case .failed(let failure):
+            return row(failure.title, failure.detail)
+        }
+    }
+
+    /// The install row while an update is available, downloading, installing or ready; nil otherwise.
+    private var softwareUpdateInstallRow: SettingsRow? {
+        let id = "update.install"
+        switch updates {
+        case .available(let update):
+            return SettingsRow(id: id, title: "Install MMTVL \(update.version)",
+                               detail: "MMTVL quits and opens again in about half a minute.", action: .installUpdate)
+        case .downloading(let update, let fraction):
+            let percent = fraction.map { "\(Int(($0 * 100).rounded())) %" } ?? "Downloading…"
+            return SettingsRow(id: id, title: "Install MMTVL \(update.version)", value: percent)
+        case .installing(let update):
+            return SettingsRow(id: id, title: "Install MMTVL \(update.version)", value: "Installing…")
+        case .ready(let update):
+            let mode = settings.automaticUpdates
+            let detail = mode == .off ? "Downloaded. Installs the next time MMTVL quits."
+                : "Downloaded. Installs on its own \(mode.title), or the next time MMTVL quits."
+            return SettingsRow(id: id, title: "Install MMTVL \(update.version) Now", detail: detail,
+                               action: .installUpdate)
+        case .off, .idle, .checking, .upToDate, .failed:
+            return nil
+        }
+    }
+
+    private var softwareUpdateSections: [SettingsSection] {
+        var rows = [
+            SettingsRow(id: "update.installed", title: "Installed",
+                        value: "\(environment.version.version) Build \(environment.version.build)"),
+        ]
+        // N1: a feed set by `defaults write` or `-SUFeedURL`; the host only, never the URL.
+        if let host = updateTestFeedHost {
+            rows.append(SettingsRow(id: "update.testFeed", title: "Test Feed", value: host))
+        }
+        rows.append(softwareUpdateStatusRow)
+        if let install = softwareUpdateInstallRow { rows.append(install) }
+        switch updates {
+        case .off, .ready, .downloading, .installing:
+            break
+        case .checking:
+            rows.append(SettingsRow(id: "update.checkNow", title: "Check Now", isDimmed: true,
+                                    description: Self.checkNowDescription))
+        case .idle, .upToDate, .available, .failed:
+            rows.append(SettingsRow(id: "update.checkNow", title: "Check Now", action: .checkForUpdates,
+                                    description: Self.checkNowDescription))
+        }
+
+        let checks = settings.updateChecks
+        return [
+            SettingsSection(id: "update", rows: rows),
+            SettingsSection(id: "automatic", title: "Automatic", rows: [
+                SettingsRow(id: "update.checks", title: "Check for Updates", value: Self.onOff(checks),
+                            action: .toggle(.updateChecks),
+                            description: "Checks github.com once a day and shows a notice on the home screen when there's a new version. Check Now works either way."),
+                SettingsRow(id: "update.mode", title: "Automatic Updates", value: settings.automaticUpdates.title,
+                            detail: checks ? nil : "Needs Check for Updates", showsDisclosure: checks,
+                            isDimmed: !checks, action: checks ? .push(.automaticUpdates) : nil),
+            ], footer: "Updates come from github.com/dwolcot1/mmtvl. Each one is checked for MMTVL's signatures before it's installed."),
+        ]
+    }
+
+    /// Like Glass: one row per mode, the current one Selected.
+    private var automaticUpdatesSections: [SettingsSection] {
+        let current = settings.automaticUpdates
+        let rows = AutomaticUpdates.allCases.map { mode in
+            SettingsRow(id: "automatic.\(mode.rawValue)", title: mode.title, value: mode == current ? "Selected" : nil,
+                        action: .setAutomaticUpdates(mode), description: mode.description)
+        }
+        return [SettingsSection(id: "automatic", rows: rows, footer: "MMTVL relaunches to install an update.")]
     }
 
     /// M7c L28.

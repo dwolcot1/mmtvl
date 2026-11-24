@@ -372,6 +372,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "tvAddress": .addressEntry(.tv)
         case "system": .system
         case "glassStyle": .glassStyle
+        // M15 step 8: `-settingsDemo "system/softwareUpdate"`, with `-updatePreview <state>`.
+        case "softwareUpdate": .softwareUpdate
+        case "automaticUpdates": .automaticUpdates
         // M7j step 9: `-settingsDemo "liveTV/antenna/antennaChannels"`.
         case "liveTV": .liveTV
         case "antenna": .antenna
@@ -402,9 +405,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard let updater = made else { return }
         self.updater = updater
-        // TODO(M15 step 8): `updater.onStatusChange` → `router?.settings.refreshStatus(.updates)` and
-        // `router?.homeUpdateLabel = updater.homeLabel` (neither `StatusParts.updates` nor `homeUpdateLabel` exists yet).
+        // Step 8: Settings' Software Update rows and the home notice follow the status.
+        updater.onStatusChange = { [weak self, weak updater] _ in
+            guard let router = self?.router else { return }
+            router.settings.refreshStatus(.updates)
+            router.homeUpdateLabel = updater?.homeLabel
+        }
         updater.start(checks: settings.updateChecks, mode: mode)
+        router?.homeUpdateLabel = updater.homeLabel
     }
 
     private func updaterHooks() -> SoftwareUpdater.Hooks {
@@ -1607,6 +1615,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             relaunch: { [weak self] in self?.relaunch() },
             restartMac: { [weak self] in self?.power?.restartMac() },
+            // M15 step 8: before `setUpUpdater` nothing is known yet; Settings re-reads it when it opens.
+            updateStatus: { [weak self] in self?.updater?.status ?? .idle(lastChecked: nil) },
+            lastUpdateCheck: { [weak self] in self?.updater?.lastUpdateCheckDate },
+            updateTestFeedHost: { [weak self] in
+                guard let updater = self?.updater, updater.isTestFeed else { return nil }
+                return updater.feedHost
+            },
+            checkForUpdates: { [weak self] in self?.updater?.checkNow() },
+            installUpdate: { [weak self] in self?.updater?.install() },
             exitToDesktop: { [weak self] in
                 self?.router?.goHome()
                 self?.windowController?.exitToDesktop()

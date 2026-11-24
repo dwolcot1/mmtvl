@@ -21,6 +21,8 @@ struct HomeView: View {
     var isLeaving = false
     /// M7c L28: "Version 1.1.0 Build 2" under the clock; nil = hidden.
     var versionLabel: String? = nil
+    /// M15 L11: "Update Available: 1.5.0" under the version capsule (or the clock); nil = hidden.
+    var updateLabel: String? = nil
     /// M7f L8: the lowest Siri Remote battery percent, right of the clock; nil = hidden.
     var remoteBatteryLevel: Int? = nil
     /// M7m L8: the tile being moved (lifted and wiggling, with a hint at the bottom); nil = no move.
@@ -112,6 +114,7 @@ struct HomeView: View {
                     if let remoteBatteryLevel { RemoteBatteryCapsule(level: remoteBatteryLevel) }
                 }
                 if let versionLabel { capsule(Text(versionLabel)) }
+                if let updateLabel { capsule(Text(updateLabel)) }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.top, Theme.homeClockTop)
