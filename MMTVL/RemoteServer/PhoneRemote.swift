@@ -34,8 +34,9 @@ struct PhoneRemoteEnvironment {
     /// and returns true, so the command goes to MMTVL instead of out as a synthetic key.
     var repairForeground: () -> Bool = { false }
     /// M7m L19, L20: `AppRouter.endScreenSaverIfShowing(by:)`: true when the screen saver showed and this input (a
-    /// command, text or Return; the argument names it for the log) ended it, so it's swallowed.
-    var endsScreenSaver: (String) -> Bool = { _ in false }
+    /// command, text or Return; the first argument names it for the log) ended it, so it's swallowed. M15 step 6b: the
+    /// second is the command (nil for text and Return).
+    var endsScreenSaver: (String, RemoteCommand?) -> Bool = { _, _ in false }
     /// Security (pre-release review, medium): `KioskGuard.pointerGate` for the app in front, like the Siri Remote's
     /// trackpad: while the kiosk lock is in force, the phone's pointer, text, Return and keys act only in an app the
     /// guard allows.
@@ -145,14 +146,14 @@ final class PhoneRemote {
         case .text(let value):
             guard state.phoneID != nil, value.count <= Self.maxTextLength else { return }
             // M7m L20: text while the screen saver shows only ends it; `lastText` stays, so the next edit types it all.
-            guard !environment.endsScreenSaver("phone text") else { return }
+            guard !environment.endsScreenSaver("phone text", nil) else { return }
             let edit = TextEdit.between(state.lastText, value)
             state.lastText = value
             guard !edit.isEmpty, canType(session: session) else { return }
             environment.typeEdit(edit)
         case .submit:
             guard state.phoneID != nil else { return }
-            guard !environment.endsScreenSaver("phone return") else { return }
+            guard !environment.endsScreenSaver("phone return", nil) else { return }
             state.lastText = ""
             guard canType(session: session) else { return }
             environment.postReturn()
@@ -362,7 +363,7 @@ final class PhoneRemote {
                 }
                 environment.postExternal(key)
             },
-            endsScreenSaver: { [environment] in environment.endsScreenSaver("phone \($0.rawValue)") }
+            endsScreenSaver: { [environment] in environment.endsScreenSaver("phone \($0.rawValue)", $0) }
         )
         if router.route(command) == .needsAccessibility {
             transport.send(.toast(Self.accessibilityMessage), to: session)

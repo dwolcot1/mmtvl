@@ -619,6 +619,99 @@ struct AppRouterTests {
         #expect(liveTV.calls == ["start id:nflnetwork.us", "open", "leave"])
     }
 
+    /// M15 L16: Power-off (`stopPlaybackForPowerOff`, then AppDelegate's `goHomeFromAnywhere`) leaves Live TV without
+    /// a preview, and none starts until the next command.
+    @Test func powerOffLeavesLiveTVWithoutPreview() {
+        let (router, liveTV) = previewRouter()
+        focusLiveTV(router)
+        _ = router.handle(.select)
+        #expect(router.screen == .liveTV)
+        liveTV.previewChannelID = nil   // adopted by Live TV
+        liveTV.playingChannelID = "id:nflnetwork.us"
+        liveTV.calls = []
+        router.stopPlaybackForPowerOff()
+        router.goHomeToStartTile()
+        #expect(router.screen == .home)
+        #expect(liveTV.leavesKeepingPreview.first == false)
+        #expect(liveTV.previewChannelID == nil)
+        #expect(!liveTV.isPreviewPlaying)
+        #expect(!liveTV.calls.contains { $0.hasPrefix("start") })
+        // The next command (Power-on's first press) brings the preview back.
+        router.noteActivity()
+        _ = router.handle(.right)
+        _ = router.handle(.right)
+        #expect(liveTV.previewChannelID != nil)
+    }
+
+    /// M15 L16: Power-off on YouTube pauses it and goes home.
+    @Test func powerOffPausesYouTube() {
+        let youtube = FakeYouTube()
+        let router = makeRouter(youtube: youtube)
+        openYouTubeFromTile(router)
+        #expect(router.screen == .youtube)
+        router.stopPlaybackForPowerOff()
+        #expect(youtube.pauses >= 1)
+        router.goHomeToStartTile()
+        #expect(router.screen == .home)
+        #expect(youtube.sent.isEmpty)
+    }
+
+    /// M15 step 6b: the receiver turning off by itself (the TV's own remote) runs Power-off's first half: Live TV stops
+    /// without a preview and MMTVL goes home (AppDelegate's `goHomeFromAnywhere`, here its router part); YouTube pauses.
+    @Test func receiverOffStopsPlaybackAndGoesHome() {
+        let (router, liveTV) = previewRouter()
+        focusLiveTV(router)
+        _ = router.handle(.select)
+        #expect(router.screen == .liveTV)
+        liveTV.previewChannelID = nil   // adopted by Live TV
+        liveTV.playingChannelID = "id:nflnetwork.us"
+        liveTV.calls = []
+        let watch = ReceiverPowerWatch()
+        watch.onTurnedOff = ReceiverPowerWatch.turnedOffHandler(stopPlayback: { router.stopPlaybackForPowerOff() },
+                                                                goHome: { router.goHomeToStartTile() })
+        watch.update(.on)
+        #expect(router.screen == .liveTV)
+        watch.update(.off)
+        #expect(router.screen == .home)
+        #expect(liveTV.leavesKeepingPreview.first == false)
+        #expect(liveTV.previewChannelID == nil)
+        #expect(!liveTV.isPreviewPlaying)
+        #expect(!liveTV.calls.contains { $0.hasPrefix("start") })
+
+        let youtube = FakeYouTube()
+        let other = makeRouter(youtube: youtube)
+        openYouTubeFromTile(other)
+        let youtubeWatch = ReceiverPowerWatch()
+        youtubeWatch.onTurnedOff = ReceiverPowerWatch.turnedOffHandler(
+            stopPlayback: { other.stopPlaybackForPowerOff() }, goHome: { other.goHomeToStartTile() })
+        youtubeWatch.update(.on)
+        youtubeWatch.update(.off)
+        #expect(youtube.pauses >= 1)
+        #expect(other.screen == .home)
+    }
+
+    /// M15 step 6b: any command but Power and volume after MMTVL's Power-off means someone is using it; the next
+    /// Power-off clears it.
+    @Test func inputSincePowerOffFollowsCommands() {
+        let router = makeRouter()
+        #expect(!router.inputSincePowerOff)
+        router.notePowerOff()
+        for command in [RemoteCommand.power, .volumeUp, .volumeDown, .mute] {
+            _ = router.handle(command)
+            #expect(!router.inputSincePowerOff, "\(command)")
+        }
+        _ = router.handle(.right)
+        #expect(router.inputSincePowerOff)
+        router.notePowerOff()
+        #expect(!router.inputSincePowerOff)
+        _ = router.handle(.home)
+        #expect(router.inputSincePowerOff)
+        for command in RemoteCommand.allCases {
+            let counts = ![.power, .volumeUp, .volumeDown, .mute].contains(command)
+            #expect(AppRouter.countsAsInputSincePowerOff(command) == counts, "\(command)")
+        }
+    }
+
     @Test func withThePreviewOffLeavingLiveTVStopsIt() {
         let (router, liveTV) = previewRouter()
         router.livePreviewEnabled = false
@@ -1411,6 +1504,79 @@ struct AppRouterTests {
         #expect(posted.count == 1)
         router.screenSaverDidStop()
         #expect(!router.isScreenSaverShowing)
+    }
+
+    /// M15 step 6b (QA major): the Siri Remote's and the phone's press that only ends the screen saver
+    /// (`ExternalRouter`, never `handle`) counts as input since Power-off; a volume press that ends it doesn't. As
+    /// AppDelegate wires it (the command passed along).
+    @Test func externalPressEndingTheScreenSaverCountsAsInputSincePowerOff() {
+        let router = makeRouter()
+        router.endScreenSaver = {}
+        let external = ExternalRouter(
+            isLauncherInFront: { router.isAppActive },
+            dispatch: { _, _, _ in },
+            canPostEvents: { true },
+            postExternal: { _ in },
+            endsScreenSaver: { router.endScreenSaverIfShowing(by: "Siri Remote \($0.rawValue)", command: $0) }
+        )
+        let clock = useIdleClock(router)
+        startScreenSaver(router, clock)
+        router.notePowerOff()
+        #expect(external.route(.volumeUp) == .endedScreenSaver)
+        #expect(!router.inputSincePowerOff)
+        #expect(external.route(.down) == .endedScreenSaver)
+        #expect(router.inputSincePowerOff)
+
+        // The first press within the wake grace after a stop no press caused (macOS ended it, MMTVL in front again) is
+        // swallowed too, and counts; a volume press there doesn't.
+        func stoppedByMacOS() {
+            router.isAppActive = false
+            router.screenSaverDidStart()
+            router.screenSaverDidStop()
+            router.isAppActive = true
+            clock.advance(milliseconds: 500)
+            #expect(!router.isScreenSaverShowing)
+        }
+        router.screenSaverDidStop()
+        router.notePowerOff()
+        stoppedByMacOS()
+        #expect(external.route(.mute) == .endedScreenSaver)
+        #expect(!router.inputSincePowerOff)
+        stoppedByMacOS()
+        #expect(external.route(.select) == .endedScreenSaver)
+        #expect(router.inputSincePowerOff)
+        // Past the grace window, nothing is swallowed (the press goes to `handle` as usual).
+        #expect(router.endScreenSaverIfShowing(by: "Siri Remote select", command: .select) == false)
+        // Phone text and Return (no command) don't count.
+        router.notePowerOff()
+        router.isAppActive = false
+        router.screenSaverDidStart()
+        #expect(router.endScreenSaverIfShowing(by: "phone text") == true)
+        #expect(!router.inputSincePowerOff)
+    }
+
+    /// M15 step 6b (QA minor): a press that only wakes a dimmed still screen, or only ends the screen saver through
+    /// `handle`, counts as input since Power-off.
+    @Test func swallowedWakePressesCountAsInputSincePowerOff() {
+        let router = makeRouter()
+        router.endScreenSaver = {}
+        let clock = useIdleClock(router)
+        dim(router, clock)
+        router.notePowerOff()
+        #expect(press(.select, router))
+        #expect(router.idlePhase == .awake)
+        #expect(router.screen == .home)
+        #expect(router.inputSincePowerOff)
+
+        let saverRouter = makeRouter()
+        saverRouter.endScreenSaver = {}
+        let saverClock = useIdleClock(saverRouter)
+        startScreenSaver(saverRouter, saverClock)
+        saverRouter.notePowerOff()
+        #expect(press(.volumeDown, saverRouter))
+        #expect(!saverRouter.inputSincePowerOff)
+        #expect(press(.select, saverRouter))
+        #expect(saverRouter.inputSincePowerOff)
     }
 
     /// QA step 7, major 1: macOS ends the screen saver on the Siri Remote's touch, so `didstop` can come before the

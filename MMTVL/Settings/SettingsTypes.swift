@@ -33,6 +33,10 @@ nonisolated enum SettingsPage: Hashable, Sendable {
     case antenna, antennaChannels
     /// M7j L18: Antenna → Scan for Channels' confirm page.
     case confirmAntennaScan
+    /// M15 step 1: System → Restart Mac mini's confirm page.
+    case confirmRestartMac
+    /// M15 step 8: System → Software Update, and its Automatic Updates choice.
+    case softwareUpdate, automaticUpdates
     /// MR step 4: Settings → Licenses (every shipped component), and one component's page with its QR code.
     case licenses, license(id: String)
 }
@@ -296,6 +300,8 @@ nonisolated enum SettingKey: String, CaseIterable, Sendable {
     case teamMatchInitials, teamMatchNicknames
     /// M7j L14: Settings → Live TV → Antenna.
     case antennaEnabled, antennaGuide
+    /// M15 step 8: Settings → System → Software Update → Check for Updates.
+    case updateChecks
 
     var keyPath: WritableKeyPath<AppSettings, Bool> {
         switch self {
@@ -319,6 +325,7 @@ nonisolated enum SettingKey: String, CaseIterable, Sendable {
         case .teamMatchNicknames: \.teamMatchNicknames
         case .antennaEnabled: \.antennaEnabled
         case .antennaGuide: \.antennaGuide
+        case .updateChecks: \.updateChecks
         }
     }
 }
@@ -330,6 +337,12 @@ nonisolated enum SettingsAction: Hashable, Sendable {
     case openLoginItemsSettings
     case push(SettingsPage)
     case relaunch
+    /// M15 step 1: the confirm page's Restart (`PowerController.restartMac()`).
+    case restartMac
+    /// M15 step 8: Settings → System → Software Update's Check Now and Install (`SoftwareUpdater`).
+    case checkForUpdates, installUpdate
+    /// M15 step 8: Software Update → Automatic Updates (`settings.json` `automaticUpdates`).
+    case setAutomaticUpdates(AutomaticUpdates)
     case exitToDesktop
     case toggleTileVisible(id: String)
     case toggleTileFullScreen(id: String)

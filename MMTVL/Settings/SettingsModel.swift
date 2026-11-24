@@ -81,6 +81,11 @@ final class SettingsModel {
     private(set) var isKeyboardFocused = true
     /// M7h: the address page's error ("Use a LAN address…") until the next push/pop.
     private(set) var addressMessage: String?
+    /// M15 step 8: Settings → System → Software Update (`SoftwareUpdater`).
+    private(set) var updates: UpdateStatus
+    private(set) var lastUpdateCheck: Date?
+    /// N1: the test feed's host; nil when the feed is Info.plist's.
+    private(set) var updateTestFeedHost: String?
     /// How long `.learnButton` waits for a press (L8).
     @ObservationIgnored var learnTimeout: Duration = .seconds(10)
     /// Injectable clock (the confirm page's Select delay, the column click guard).
@@ -125,6 +130,9 @@ final class SettingsModel {
         receiver = environment.receiverStatus()
         cec = environment.cecAvailability()
         cecReceiver = environment.cecReceiverStatus()
+        updates = environment.updateStatus()
+        lastUpdateCheck = environment.lastUpdateCheck()
+        updateTestFeedHost = environment.updateTestFeedHost()
     }
 
     var page: SettingsPage { stack[stack.count - 1].page }
@@ -231,6 +239,7 @@ final class SettingsModel {
         receiver = environment.receiverStatus()
         cec = environment.cecAvailability()
         cecReceiver = environment.cecReceiverStatus()
+        refreshUpdates()
         followPlexSignIn()
     }
 
@@ -251,6 +260,8 @@ final class SettingsModel {
         static let plex = StatusParts(rawValue: 1 << 5)
         /// Casting: YouTube, AirPlay, Reflector, Plex HTPC (`castingStatus`).
         static let casting = StatusParts(rawValue: 1 << 6)
+        /// M15 step 8: the updater's status, last check and feed (`updateStatus`, `lastUpdateCheck`).
+        static let updates = StatusParts(rawValue: 1 << 7)
     }
 
     /// M7h step 13e: whether the Settings screen shows (`AppRouter` sets it). Off screen, the status refreshes below
@@ -271,6 +282,7 @@ final class SettingsModel {
         if parts.contains(.phoneRemote) { phoneRemote = environment.phoneRemoteStatus() }
         if parts.contains(.iptv) { iptv = environment.iptvStatus() }
         if parts.contains(.casting) { casting = environment.castingStatus() }
+        if parts.contains(.updates) { refreshUpdates() }
         if parts.contains(.plex) {
             plex = environment.plexStatus()
             followPlexSignIn()
@@ -281,6 +293,13 @@ final class SettingsModel {
     func refreshStatusIfShowing() {
         guard isShowing() else { return }
         refreshStatus()
+    }
+
+    /// M15 step 8: unchanged values aren't assigned (a download's progress redraws only when it moves).
+    private func refreshUpdates() {
+        update(\.updates, to: environment.updateStatus())
+        update(\.lastUpdateCheck, to: environment.lastUpdateCheck())
+        update(\.updateTestFeedHost, to: environment.updateTestFeedHost())
     }
 
     private func update<Value: Equatable>(_ keyPath: ReferenceWritableKeyPath<SettingsModel, Value>, to value: Value) {
@@ -407,6 +426,25 @@ final class SettingsModel {
             pop()
         case .relaunch:
             environment.relaunch()
+        case .restartMac:
+            // M15 step 1: `PowerController.restartMac()` toasts when loginwindow refuses.
+            environment.restartMac()
+            pop()
+        case .checkForUpdates:
+            environment.checkForUpdates()
+            refreshStatus(.updates)
+        case .installUpdate:
+            environment.installUpdate()
+            refreshStatus(.updates)
+        case .setAutomaticUpdates(let mode):
+            // Like Glass: saved and applied at once (`SoftwareUpdater.apply(checks:mode:)`), then back.
+            if settings.automaticUpdates != mode {
+                var new = settings
+                new.automaticUpdates = mode
+                settings = new
+                environment.applySettings(new)
+            }
+            if page == .automaticUpdates { pop() }
         case .exitToDesktop:
             environment.exitToDesktop()
         case .toggleTileVisible(let id):

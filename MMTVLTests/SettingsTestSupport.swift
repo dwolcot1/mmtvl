@@ -8,6 +8,14 @@ final class SettingsRecorder {
     var accessibilityRequests = 0
     var loginItemsOpened = 0
     var relaunches = 0
+    /// M15 step 1: Restart Mac mini.
+    var restarts = 0
+    /// M15 step 8: Software Update.
+    var updateStatus = UpdateStatus.idle(lastChecked: nil)
+    var lastUpdateCheck: Date?
+    var updateTestFeedHost: String?
+    var updateChecks = 0
+    var updateInstalls = 0
     var exits = 0
     var trusted: Bool
     var loginStatus: LoginItemStatus
@@ -141,6 +149,16 @@ func makeSettingsModel(
         openLoginItemsSettings: { recorder.loginItemsOpened += 1 },
         scanInstalledApps: { recorder.installedApps },
         relaunch: { recorder.relaunches += 1 },
+        restartMac: { recorder.restarts += 1 },
+        updateStatus: { recorder.updateStatus },
+        lastUpdateCheck: { recorder.lastUpdateCheck },
+        updateTestFeedHost: { recorder.updateTestFeedHost },
+        // Like `SoftwareUpdater.checkNow()`: the status goes to checking.
+        checkForUpdates: {
+            recorder.updateChecks += 1
+            recorder.updateStatus = .checking
+        },
+        installUpdate: { recorder.updateInstalls += 1 },
         exitToDesktop: { recorder.exits += 1 },
         tileTitle: { $0.title },
         isInstalled: { _ in true },

@@ -26,7 +26,13 @@ The Siri Remote's touch surface is read through a private macOS framework, so it
 
 ## Install
 
-Download the MMTVL zip from the [latest release](https://github.com/dwolcot1/mmtvl/releases/latest), unzip it, move `MMTVL.app` to Applications and open it. To update, quit MMTVL and replace the app the same way; settings are kept.
+Download the MMTVL zip from the [latest release](https://github.com/dwolcot1/mmtvl/releases/latest), unzip it, move `MMTVL.app` to Applications and open it.
+
+## Updates
+
+From 1.4.0, MMTVL updates itself from this repository's releases. When a new version is out, the home screen says **Update Available** under the clock; **Settings → System → Software Update** shows the installed and available versions, checks on demand and installs (MMTVL quits and opens again in about half a minute). **Automatic Updates** can install on its own: *When Idle* (after Power has turned the TV off, or during the screen saver) or *At Night* (about 4 a.m. when nothing is playing); it's *Off* by default. Turn **Check for Updates** off to stop the daily check. Before an update is installed, Sparkle checks that the download carries the maintainer's EdDSA signature and that the new app is code-signed; older versions are never installed over newer ones. Settings are kept.
+
+**From 1.3.x:** those versions have no updater, so install 1.4.0 once by hand: quit MMTVL, then replace the app the same way as above.
 
 ## First run
 

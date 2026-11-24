@@ -139,6 +139,18 @@ struct SettingsModelTests {
         model.open(.restrictions)
         let kioskLock = model.row(id: "kioskLock")?.description
         #expect(kioskLock == "⌘Tab, Force Quit and other apps can't take over the TV, and ⌘Q asks for the PIN when one is set. Exit to Desktop is the way out.")
+
+        // M15 step 8: Software Update and Automatic Updates.
+        for page in [SettingsPage.softwareUpdate, .automaticUpdates] {
+            model.reset()
+            model.open(page)
+            for row in model.sections.flatMap(\.rows) where row.description != nil {
+                #expect(row.detail != row.description)
+            }
+            #expect(model.sections.allSatisfy { section in
+                section.footer == nil || !section.rows.contains { $0.description == section.footer }
+            })
+        }
     }
 
     @Test func systemActions() {
@@ -148,6 +160,344 @@ struct SettingsModelTests {
         model.activate(rowID: "exit")
         #expect(recorder.relaunches == 1)
         #expect(recorder.exits == 1)
+    }
+
+    /// M15 step 1: Restart Mac mini sits between Relaunch and Exit to Desktop, and opens its confirm page.
+    @Test func systemHasRestartRow() {
+        let (model, recorder) = makeSettingsModel()
+        model.open(.system)
+        let ids = model.sections.first { $0.id == "mmtvl" }?.rows.map(\.id)
+        #expect(ids == ["relaunch", "restartMac", "exit"])
+        let row = model.row(id: "restartMac")
+        #expect(row?.title == "Restart Mac mini")
+        #expect(row?.showsDisclosure == true)
+        #expect(row?.action == .push(.confirmRestartMac))
+        #expect(row?.description == "Restarts the Mac mini. Asks first.")
+        model.activate(rowID: "restartMac")
+        #expect(model.page == .confirmRestartMac)
+        #expect(model.title(for: .confirmRestartMac) == "Restart Mac mini?")
+        #expect(model.actionRowIDs == ["confirm.cancel", "confirm.restartMac"])
+        #expect(model.focusedRowID == "confirm.cancel")
+        #expect(model.row(id: "confirm.restartMac")?.title == "Restart Mac mini")
+        #expect(model.sections.first?.footer == "Other apps are asked to quit first. With Launch at Login on, MMTVL opens again after the restart.")
+        #expect(recorder.restarts == 0)
+    }
+
+    @Test func restartConfirmCancelPops() {
+        let (model, recorder) = makeSettingsModel()
+        model.open(.system)
+        model.activate(rowID: "restartMac")
+        model.press(.select)
+        #expect(model.page == .system)
+        #expect(model.focusedRowID == "restartMac")
+        #expect(recorder.restarts == 0)
+    }
+
+    @Test func restartConfirmRestarts() {
+        let (model, recorder) = makeSettingsModel()
+        model.open(.system)
+        model.activate(rowID: "restartMac")
+        model.press(.down, .select)
+        #expect(recorder.restarts == 1)
+        #expect(model.page == .system)
+        #expect(model.focusedRowID == "restartMac")
+    }
+
+    // MARK: Software Update (M15 step 8)
+
+    private static let update = AvailableUpdate(version: "1.5.0", build: "60")
+
+    /// A model on Settings → System → Software Update with this status.
+    private func onSoftwareUpdate(_ status: UpdateStatus, settings: AppSettings = AppSettings())
+        -> (SettingsModel, SettingsRecorder) {
+        let (model, recorder) = makeSettingsModel(settings: settings)
+        recorder.updateStatus = status
+        model.refreshStatus()
+        model.open(.system)
+        model.activate(rowID: "softwareUpdate")
+        return (model, recorder)
+    }
+
+    /// *Design*: the System row's value follows the status, in a Software section above MMTVL's.
+    @Test func softwareUpdateRowOnSystem() {
+        let (model, recorder) = makeSettingsModel()
+        model.open(.system)
+        #expect(model.sections.map(\.id) == ["permissions", "startup", "appearance", "software", "mmtvl"])
+        let row = model.row(id: "softwareUpdate")
+        #expect(row?.title == "Software Update")
+        #expect(row?.showsDisclosure == true)
+        #expect(row?.action == .push(.softwareUpdate))
+        #expect(row?.description == "Checks GitHub for new versions of MMTVL and installs them.")
+        let cases: [(UpdateStatus, String?)] = [
+            (.upToDate(lastChecked: Date()), "Up to Date"),
+            (.available(Self.update), "1.5.0 Available"),
+            (.downloading(Self.update, fraction: 0.3), "Downloading"),
+            (.ready(Self.update), "Ready to Install"),
+            (.off(.developmentBuild), "Off"),
+            (.off(.windowed), "Off"),
+        ]
+        for (status, value) in cases {
+            recorder.updateStatus = status
+            model.refreshStatus(.updates)
+            #expect(model.row(id: "softwareUpdate")?.value == value)
+        }
+    }
+
+    /// The user's values for the states *Design* left out (2026-11-23).
+    @Test func softwareUpdateRowCheckingFailedIdle() {
+        let (model, recorder) = makeSettingsModel()
+        model.open(.system)
+        let cases: [(UpdateStatus, String?)] = [
+            (.checking, "Checking…"),
+            (.failed(.checkFailed), "Couldn't Check"),
+            (.failed(.installFailed), "Couldn't Install"),
+            (.idle(lastChecked: nil), nil),
+            (.idle(lastChecked: Date()), nil),
+        ]
+        for (status, value) in cases {
+            recorder.updateStatus = status
+            model.refreshStatus(.updates)
+            #expect(model.row(id: "softwareUpdate")?.value == value)
+        }
+    }
+
+    /// The root's System description names software updates.
+    @Test func systemDescriptionNamesSoftwareUpdates() {
+        let (model, _) = makeSettingsModel()
+        #expect(model.row(id: "system")?.description == "Accessibility access, starting at login, glass, software updates, relaunching MMTVL, restarting the Mac and leaving to the desktop.")
+    }
+
+    @Test func softwareUpdatePageUpToDate() {
+        let checked = Date(timeIntervalSinceReferenceDate: 100_000)
+        let (model, recorder) = makeSettingsModel()
+        model.now = { checked + 2 * 3600 }
+        recorder.updateStatus = .upToDate(lastChecked: checked)
+        recorder.lastUpdateCheck = checked
+        model.refreshStatus()
+        model.open(.system)
+        model.activate(rowID: "softwareUpdate")
+        #expect(model.page == .softwareUpdate)
+        #expect(model.title(for: .softwareUpdate) == "Software Update")
+        #expect(model.sections.map(\.id) == ["update", "automatic"])
+        #expect(model.sections[0].title == nil)
+        #expect(model.sections[0].rows.map(\.id) == ["update.installed", "update.status", "update.checkNow"])
+        let installed = model.row(id: "update.installed")
+        #expect(installed?.title == "Installed")
+        #expect(installed?.value == "1.1.0 Build 7")
+        #expect(installed?.action == nil)
+        let status = model.row(id: "update.status")
+        #expect(status?.title == "Up to Date")
+        #expect(status?.detail == "Checked 2 hours ago")
+        #expect(status?.action == nil)
+        #expect(model.row(id: "update.checkNow")?.title == "Check Now")
+        #expect(model.row(id: "update.checkNow")?.action == .checkForUpdates)
+        #expect(model.focusedRowID == "update.checkNow")
+
+        #expect(model.sections[1].title == "Automatic")
+        #expect(model.sections[1].rows.map(\.id) == ["update.checks", "update.mode"])
+        let checks = model.row(id: "update.checks")
+        #expect(checks?.title == "Check for Updates")
+        #expect(checks?.value == "On")
+        #expect(checks?.action == .toggle(.updateChecks))
+        #expect(checks?.description == "Checks github.com once a day and shows a notice on the home screen when there's a new version. Check Now works either way.")
+        let mode = model.row(id: "update.mode")
+        #expect(mode?.title == "Automatic Updates")
+        #expect(mode?.value == "Off")
+        #expect(mode?.action == .push(.automaticUpdates))
+        #expect(mode?.isDimmed == false)
+        #expect(mode?.detail == nil)
+        #expect(model.sections.last?.footer == "Updates come from github.com/dwolcot1/mmtvl. Each one is checked for MMTVL's signatures before it's installed.")
+
+        // The last check, relative to the clock.
+        model.now = { checked + 5 * 60 }
+        #expect(model.row(id: "update.status")?.detail == "Checked 5 minutes ago")
+    }
+
+    @Test func softwareUpdatePageAvailableOffersInstall() {
+        let (model, _) = onSoftwareUpdate(.available(Self.update))
+        #expect(model.sections[0].rows.map(\.id) == ["update.installed", "update.status", "update.install", "update.checkNow"])
+        let install = model.row(id: "update.install")
+        #expect(install?.title == "Install MMTVL 1.5.0")
+        #expect(install?.detail == "MMTVL quits and opens again in about half a minute.")
+        #expect(install?.action == .installUpdate)
+        #expect(model.focusedRowID == "update.install")
+    }
+
+    @Test func softwareUpdatePageDownloadingShowsPercent() {
+        let (model, recorder) = onSoftwareUpdate(.downloading(Self.update, fraction: 0.45))
+        #expect(model.sections[0].rows.map(\.id) == ["update.installed", "update.status", "update.install"])
+        let install = model.row(id: "update.install")
+        #expect(install?.title == "Install MMTVL 1.5.0")
+        #expect(install?.value == "45 %")
+        #expect(install?.action == nil)
+        // An automatic download Sparkle doesn't report progress for.
+        recorder.updateStatus = .downloading(Self.update, fraction: nil)
+        model.refreshStatus(.updates)
+        #expect(model.row(id: "update.install")?.value == "Downloading…")
+        recorder.updateStatus = .installing(Self.update)
+        model.refreshStatus(.updates)
+        #expect(model.row(id: "update.install")?.value == "Installing…")
+        #expect(model.row(id: "update.install")?.action == nil)
+        #expect(model.row(id: "update.checkNow") == nil)
+    }
+
+    @Test func softwareUpdatePageReadyInstallNow() {
+        var settings = AppSettings()
+        settings.automaticUpdates = .whenIdle
+        let (model, recorder) = onSoftwareUpdate(.ready(Self.update), settings: settings)
+        #expect(model.sections[0].rows.map(\.id) == ["update.installed", "update.status", "update.install"])
+        let install = model.row(id: "update.install")
+        #expect(install?.title == "Install MMTVL 1.5.0 Now")
+        #expect(install?.detail == "Downloaded. Installs on its own When Idle, or the next time MMTVL quits.")
+        #expect(install?.action == .installUpdate)
+        model.activate(rowID: "update.mode")
+        model.activate(rowID: "automatic.atNight")
+        #expect(model.row(id: "update.install")?.detail == "Downloaded. Installs on its own At Night, or the next time MMTVL quits.")
+        #expect(recorder.updateInstalls == 0)
+    }
+
+    /// QA minor: staged, then Automatic Updates switched to Off.
+    @Test func softwareUpdatePageReadyWithModeOff() {
+        let (model, _) = onSoftwareUpdate(.ready(Self.update))
+        #expect(model.settings.automaticUpdates == .off)
+        let install = model.row(id: "update.install")
+        #expect(install?.title == "Install MMTVL 1.5.0 Now")
+        #expect(install?.detail == "Downloaded. Installs the next time MMTVL quits.")
+        #expect(install?.action == .installUpdate)
+    }
+
+    @Test func softwareUpdatePageOff() {
+        let (model, recorder) = onSoftwareUpdate(.off(.developmentBuild))
+        #expect(model.sections[0].rows.map(\.id) == ["update.installed", "update.status"])
+        #expect(model.row(id: "update.status")?.title == "Updates Are Off")
+        #expect(model.row(id: "update.status")?.detail == "Development builds don't update.")
+        recorder.updateStatus = .off(.windowed)
+        model.refreshStatus(.updates)
+        #expect(model.row(id: "update.status")?.detail == "MMTVL is in a window.")
+        #expect(model.row(id: "update.checkNow") == nil)
+    }
+
+    /// Checking dims Check Now; a failed check says why and offers it again.
+    @Test func softwareUpdatePageCheckingAndFailed() {
+        let (model, recorder) = onSoftwareUpdate(.checking)
+        #expect(model.row(id: "update.status")?.title == "Checking…")
+        #expect(model.row(id: "update.checkNow")?.isDimmed == true)
+        #expect(model.row(id: "update.checkNow")?.action == nil)
+        recorder.updateStatus = .failed(.checkFailed)
+        model.refreshStatus(.updates)
+        #expect(model.row(id: "update.status")?.title == "Couldn't Check")
+        #expect(model.row(id: "update.status")?.detail == "Check your network connection and try again.")
+        #expect(model.row(id: "update.checkNow")?.action == .checkForUpdates)
+        recorder.updateStatus = .idle(lastChecked: nil)
+        model.refreshStatus(.updates)
+        #expect(model.row(id: "update.status")?.title == "Not Checked Yet")
+    }
+
+    /// N1: a test feed shows its host right after Installed; the real feed shows nothing.
+    @Test func softwareUpdatePageShowsTestFeed() {
+        let (model, recorder) = onSoftwareUpdate(.upToDate(lastChecked: Date()))
+        #expect(model.row(id: "update.testFeed") == nil)
+        recorder.updateTestFeedHost = "feed.example"
+        model.refreshStatus(.updates)
+        #expect(model.sections[0].rows.map(\.id).prefix(2) == ["update.installed", "update.testFeed"])
+        let row = model.row(id: "update.testFeed")
+        #expect(row?.title == "Test Feed")
+        #expect(row?.value == "feed.example")
+        #expect(row?.action == nil)
+        recorder.updateTestFeedHost = nil
+        model.refreshStatus(.updates)
+        #expect(model.row(id: "update.testFeed") == nil)
+    }
+
+    @Test func checkNowCallsEnvironment() {
+        let (model, recorder) = onSoftwareUpdate(.upToDate(lastChecked: Date()))
+        let checkNow = model.row(id: "update.checkNow")
+        #expect(checkNow?.description == "Asks GitHub now whether there's a newer MMTVL.")
+        #expect(checkNow?.isDimmed == false)
+        #expect(model.row(id: "update.status")?.title == "Up to Date")
+        model.activate(rowID: "update.checkNow")
+        #expect(recorder.updateChecks == 1)
+        #expect(model.page == .softwareUpdate)
+        // The page re-read the status the press changed.
+        #expect(model.row(id: "update.status")?.title == "Checking…")
+        #expect(model.row(id: "update.checkNow")?.isDimmed == true)
+        #expect(model.row(id: "update.checkNow")?.action == nil)
+        #expect(model.row(id: "update.checkNow")?.description == "Asks GitHub now whether there's a newer MMTVL.")
+    }
+
+    @Test func installCallsEnvironment() {
+        let (model, recorder) = onSoftwareUpdate(.available(Self.update))
+        model.activate(rowID: "update.install")
+        #expect(recorder.updateInstalls == 1)
+        #expect(model.page == .softwareUpdate)
+    }
+
+    @Test func checksToggleSavesUpdateChecks() {
+        let (model, recorder) = onSoftwareUpdate(.idle(lastChecked: nil))
+        model.activate(rowID: "update.checks")
+        #expect(recorder.appliedSettings.last?.updateChecks == false)
+        #expect(!model.settings.updateChecks)
+        #expect(model.row(id: "update.checks")?.value == "Off")
+        model.activate(rowID: "update.checks")
+        #expect(recorder.appliedSettings.last?.updateChecks == true)
+        #expect(recorder.appliedSettings.count == 2)
+    }
+
+    @Test func automaticUpdatesChoiceSetsAndPops() {
+        let (model, recorder) = onSoftwareUpdate(.idle(lastChecked: nil))
+        model.activate(rowID: "update.mode")
+        #expect(model.page == .automaticUpdates)
+        #expect(model.title(for: .automaticUpdates) == "Automatic Updates")
+        #expect(model.actionRowIDs == ["automatic.off", "automatic.whenIdle", "automatic.atNight"])
+        #expect(model.row(id: "automatic.off")?.value == "Selected")
+        #expect(model.row(id: "automatic.whenIdle")?.value == nil)
+        #expect(model.row(id: "automatic.off")?.description == "Shows a notice when there's an update. You install it here.")
+        #expect(model.row(id: "automatic.whenIdle")?.description == "Downloads updates and installs them when Power has turned the TV off, or while the screen saver is on.")
+        #expect(model.row(id: "automatic.atNight")?.description == "Downloads updates and installs them at about 4 a.m. when nothing is playing.")
+        #expect(model.sections.first?.footer == "MMTVL relaunches to install an update.")
+
+        model.activate(rowID: "automatic.whenIdle")
+        #expect(recorder.appliedSettings.count == 1)
+        #expect(recorder.appliedSettings.last?.automaticUpdates == .whenIdle)
+        #expect(model.settings.automaticUpdates == .whenIdle)
+        #expect(model.page == .softwareUpdate)
+        #expect(model.focusedRowID == "update.mode")
+        #expect(model.row(id: "update.mode")?.value == "When Idle")
+
+        // The same choice again saves nothing.
+        model.activate(rowID: "update.mode")
+        model.activate(rowID: "automatic.whenIdle")
+        #expect(recorder.appliedSettings.count == 1)
+        #expect(model.page == .softwareUpdate)
+    }
+
+    @Test func automaticUpdatesDimmedWhenChecksOff() {
+        var settings = AppSettings()
+        settings.updateChecks = false
+        let (model, _) = onSoftwareUpdate(.idle(lastChecked: nil), settings: settings)
+        let mode = model.row(id: "update.mode")
+        #expect(mode?.isDimmed == true)
+        #expect(mode?.detail == "Needs Check for Updates")
+        #expect(mode?.action == nil)
+        #expect(mode?.showsDisclosure == false)
+        model.activate(rowID: "update.mode")
+        #expect(model.page == .softwareUpdate)
+        model.activate(rowID: "update.checks")
+        #expect(model.row(id: "update.mode")?.isDimmed == false)
+        #expect(model.row(id: "update.mode")?.action == .push(.automaticUpdates))
+    }
+
+    /// The status follows the updater only while Settings shows (`refreshStatus(_:)`'s guard).
+    @Test func updateStatusRefreshOnlyWhileShowing() {
+        let (model, recorder) = makeSettingsModel()
+        model.open(.system)
+        model.isShowing = { false }
+        recorder.updateStatus = .available(Self.update)
+        model.refreshStatus(.updates)
+        #expect(model.row(id: "softwareUpdate")?.value == nil)
+        model.isShowing = { true }
+        model.refreshStatus(.updates)
+        #expect(model.row(id: "softwareUpdate")?.value == "1.5.0 Available")
     }
 
     /// M7l step 2 (L3): System → Glass shows the step, its page lists the five, and a choice saves at once.

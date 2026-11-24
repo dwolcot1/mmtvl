@@ -950,3 +950,242 @@ struct ReceiverControllerNetworkTests {
         await finish()
     }
 }
+
+/// M15 step 6b: the receiver's power from its own lines (step 6a: the Pioneer reports each change unsolicited), and
+/// the watch that notices it turning off without MMTVL's Power.
+struct ReceiverPowerTests {
+    private let clock = FakeReceiverClock()
+    private let ports: FakeReceiverPorts
+    private let controller: ReceiverController
+
+    init() {
+        let ports = FakeReceiverPorts(clock: clock)
+        self.ports = ports
+        controller = ReceiverController(clock: clock, makeTransport: { ports.make(link: $0, codec: $1) })
+    }
+
+    @Test func receiverPowerFromUnsolicitedLine() throws {
+        var changes = 0
+        controller.onPowerChange = { changes += 1 }
+        controller.configure(brand: .pioneer, serialPort: nil)
+        let port = try #require(ports.made.first)
+        // Nothing was asked: the receiver says so itself (the TV turned on or off with its own remote).
+        port.onLine?("PWR0")
+        #expect(controller.power == .on)
+        port.onLine?("PWR1")
+        #expect(controller.power == .off)
+        #expect(changes == 2)
+        // Other lines, and the same power again, aren't a power change.
+        port.onLine?("VOL61")
+        port.onLine?("MUT1")
+        port.onLine?("PWR1")
+        #expect(changes == 2)
+        #expect(controller.power == .off)
+        // Nothing was written for any of it (no query of its own).
+        #expect(port.writes.isEmpty)
+    }
+
+    @Test func receiverPowerUnknownUntilFirstStatus() throws {
+        #expect(controller.power == .unknown)
+        controller.configure(brand: .pioneer, serialPort: nil)
+        #expect(controller.power == .unknown)
+        let port = try #require(ports.made.first)
+        // The volume probe's reply when the link comes up says nothing about power.
+        port.onLine?("VOL61")
+        #expect(controller.power == .unknown)
+        port.onLine?("PWR0")
+        #expect(controller.power == .on)
+    }
+
+    @Test func receiverPowerUnknownAfterDisconnect() async throws {
+        var changes = 0
+        controller.onPowerChange = { changes += 1 }
+        controller.configure(brand: .pioneer, serialPort: nil)
+        let first = try #require(ports.made.first)
+        first.onLine?("PWR0")
+        #expect(controller.power == .on)
+        first.unplug()
+        #expect(controller.power == .unknown)
+        #expect(changes == 2)
+        // Reopened: still unknown until the receiver says.
+        for _ in 0..<2000 where ports.made.count < 2 { await Task.yield() }
+        let second = try #require(ports.made.last)
+        #expect(second !== first)
+        #expect(controller.power == .unknown)
+        second.onLine?("PWR1")
+        #expect(controller.power == .off)
+        // Set up again, or stopped: unknown.
+        controller.stop()
+        #expect(controller.power == .unknown)
+        #expect(changes == 4)
+    }
+
+    /// The user (2026-11-24): link-up asks the volume (the existing probe) and then the power, once per connection;
+    /// the reply seeds the state. As AppDelegate wires `onLinkUp`.
+    @Test func linkUpAsksVolumeThenPowerOnce() async throws {
+        ports.replies[.pioneer] = [.queryVolume: ["VOL61"], .queryPower: ["PWR0"]]
+        let volume = VolumeController(mode: { .auto }, isLauncherActive: { false }, applyAppVolume: { _ in },
+                                      receiver: controller, soundSourceRunning: { false }, systemSettable: { false },
+                                      now: { 0 }, sleep: { _ in await Task.yield() })
+        controller.onLinkUp = { [weak volume, weak controller] in
+            volume?.receiverLinkUp()
+            controller?.queryPowerOnLinkUp()
+        }
+        controller.configure(brand: .pioneer, serialPort: nil)
+        let port = try #require(ports.made.first)
+        let commands = { port.writes.map { String(decoding: $0.bytes, as: UTF8.self) }.filter { $0 != "\r" } }
+        for _ in 0..<2000 where commands().count < 2 || controller.power == .unknown { await Task.yield() }
+        await volume.probeTask?.value
+        #expect(commands() == ["?V\r", "?P\r"])
+        #expect(controller.power == .on)
+        #expect(volume.receiverReady)
+        // Never again on that connection, however long it stays up.
+        for _ in 0..<50 { await clock.sleep(for: .seconds(60)) }
+        #expect(commands() == ["?V\r", "?P\r"])
+    }
+
+    /// A network connection is asked when it becomes ready (not while it comes up), once for each connection, and
+    /// the query isn't activity (the idle close still comes 5 minutes after the last command).
+    @Test func networkLinkUpAsksPowerOncePerConnection() async throws {
+        let clock = ManualReceiverClock()
+        let ports = FakeReceiverPorts(clock: clock)
+        ports.startsReady = false
+        ports.replies[.onkyo] = [.queryPower: ["!1PWR00"]]
+        let controller = ReceiverController(clock: clock, makeTransport: { ports.make(link: $0, codec: $1) })
+        controller.onLinkUp = { [weak controller] in controller?.queryPowerOnLinkUp() }
+        controller.configure(brand: .onkyo, link: .network(host: "192.168.1.20", port: nil))
+        let first = try #require(ports.made.first)
+        let written = { (port: FakeReceiverTransport) in port.writes.map { String(decoding: $0.bytes, as: UTF8.self) } }
+        await clock.advance(by: .milliseconds(500))
+        #expect(first.writes.isEmpty)
+        first.becomeReady()
+        await clock.advance(by: .milliseconds(100))
+        #expect(written(first) == ["!1PWRQSTN\r"])
+        #expect(controller.power == .off)
+        // The connection drops and comes back (1 s later): unknown, then asked once more on the new one.
+        first.unplug()
+        #expect(controller.power == .unknown)
+        await clock.advance(by: .seconds(1))
+        let second = try #require(ports.made.last)
+        #expect(second !== first)
+        second.becomeReady()
+        await clock.advance(by: .milliseconds(100))
+        #expect(written(second) == ["!1PWRQSTN\r"])
+        #expect(written(first).count == 1)
+        #expect(controller.power == .off)
+        // Never again on that connection, and not activity: the idle close comes 300 s after configure (t = 0), not
+        // 300 s after this query (t = 1.7 s).
+        await clock.advance(by: ReceiverController.networkIdleTimeout - .seconds(1))
+        #expect(controller.closedForIdle)
+        #expect(written(second).count == 1)
+        controller.stop()
+        await clock.advance(by: .seconds(1000))
+    }
+
+    /// Security L-1: a receiver (or a host posing as one) flipping on and off pulls the screen home at most once a
+    /// minute.
+    @Test func receiverOffAtMostOncePerMinute() {
+        var time: TimeInterval = 1000
+        let watch = ReceiverPowerWatch(now: { time })
+        var offs = 0
+        watch.onTurnedOff = { offs += 1 }
+        watch.update(.on)
+        watch.update(.off)
+        #expect(offs == 1)
+        time += 10
+        watch.update(.on)
+        watch.update(.off)
+        time += 49
+        watch.update(.on)
+        watch.update(.off)
+        #expect(offs == 1)
+        // 61 s after the one that ran.
+        time += 2
+        watch.update(.on)
+        watch.update(.off)
+        #expect(offs == 2)
+        #expect(watch.power == .off)
+    }
+
+    @Test func receiverPowerFromCEC() {
+        #expect(ReceiverPower(cec: nil) == .unknown)
+        #expect(ReceiverPower(cec: .on) == .on)
+        #expect(ReceiverPower(cec: .standbyToOn) == .on)
+        #expect(ReceiverPower(cec: .standby) == .off)
+        #expect(ReceiverPower(cec: .onToStandby) == .off)
+    }
+
+    /// An "off" within 30 s of MMTVL's own Power-off is that Power-off's; later ones aren't. Never from `unknown`.
+    @Test func receiverOffRightAfterOurPowerOffIgnored() async {
+        var time: TimeInterval = 100
+        let watch = ReceiverPowerWatch(now: { time })
+        var offs = 0
+        watch.onTurnedOff = { offs += 1 }
+        // Unknown → off (MMTVL launched with the receiver off, or it reconnected): nothing to stop.
+        watch.update(.off)
+        #expect(offs == 0)
+        watch.update(.on)
+        // MMTVL's Power-off as AppDelegate wires it: noted first (onPowerOff), then the receiver's own reply.
+        let log = PowerLog()
+        let receiver = ReplyingPowerReceiver { command in
+            if command == .powerOff { watch.update(.off) }
+        }
+        let power = PowerController(tv: nil, receiver: receiver, effects: log.effects)
+        power.onPowerOff = { watch.noteOwnPowerOff() }
+        #expect(power.powerButton())
+        await power.task?.value
+        #expect(watch.power == .off)
+        #expect(offs == 0)
+        // The TV on, then off with its own remote, 29 s after MMTVL's Power-off: still counted as that one.
+        time += 20
+        watch.update(.on)
+        time += 9
+        watch.update(.off)
+        #expect(offs == 0)
+        // And once more, 31 s after: the receiver turned off by itself.
+        time += 1
+        watch.update(.on)
+        time += 1
+        watch.update(.off)
+        #expect(offs == 1)
+        // On → unknown (the connection closed) isn't off.
+        watch.update(.on)
+        watch.update(.unknown)
+        #expect(offs == 1)
+    }
+
+    /// The receiver turning off by itself runs only the app's first half: nothing is sent, and the Power button still
+    /// turns things off on its next press (no `poweredOffByMMTVL`).
+    @Test func receiverOffDoesntChangePowerButton() async {
+        let log = PowerLog()
+        let power = PowerController(tv: nil, receiver: FakePowerReceiver(log: log), effects: log.effects)
+        let watch = ReceiverPowerWatch()
+        var calls: [String] = []
+        watch.onTurnedOff = ReceiverPowerWatch.turnedOffHandler(stopPlayback: { calls.append("stop") },
+                                                                goHome: { calls.append("home") })
+        watch.update(.on)
+        watch.update(.off)
+        #expect(calls == ["stop", "home"])
+        #expect(!power.poweredOffByMMTVL)
+        #expect(log.events.isEmpty)
+        #expect(log.keepAwake.isEmpty)
+        #expect(PowerController.direction(poweredOffByMMTVL: power.poweredOffByMMTVL, tvAnswers: nil) == .off)
+        #expect(power.powerButton())
+        await power.task?.value
+        #expect(log.events == ["receiver.powerOff", "displays.sleep"])
+        #expect(power.poweredOffByMMTVL)
+    }
+}
+
+/// A receiver for the power button that runs `onSend` for each command (its reply line, for instance).
+private final class ReplyingPowerReceiver: PowerReceiver {
+    let isSetUp = true
+    private let onSend: (ReceiverCommand) -> Void
+
+    init(onSend: @escaping (ReceiverCommand) -> Void) { self.onSend = onSend }
+
+    func send(_ command: ReceiverCommand) async -> Bool {
+        onSend(command)
+        return true
+    }
+}

@@ -19,13 +19,14 @@ nonisolated struct ThirdPartyComponent: Identifiable, Hashable, Sendable {
     var frameworks: [String]
 }
 
-/// Every component MMTVL ships: MMTVL itself, GRDB, and what MPVKit 1.0.0 (the LGPL product) bundles.
+/// Every component MMTVL ships: MMTVL itself, GRDB, Sparkle, and what MPVKit 1.0.0 (the LGPL product) bundles.
 ///
 /// Versions and licenses were read on 2026-11-16 from MPVKit's build script at tag 1.0.0, each
 /// `mpvkit/<lib>-build` repo's build script at the release MPVKit names, and the upstream project's
-/// license files at that version (see THIRD_PARTY_NOTICES.md). All of MPVKit's libraries are static
-/// archives linked into MMTVL's executable; the `.framework` folders Xcode embeds in
-/// `Contents/Frameworks` are empty placeholders, which `frameworks` maps back to their component.
+/// license files at that version (see THIRD_PARTY_NOTICES.md); Sparkle's on 2026-11-23 from its `LICENSE`
+/// at tag 2.10.1. All of MPVKit's libraries are static archives linked into MMTVL's executable; their
+/// `.framework` folders Xcode embeds in `Contents/Frameworks` are empty placeholders, which `frameworks`
+/// maps back to their component. `Sparkle.framework` is the one real dynamic framework there (M15).
 nonisolated enum ThirdPartyLicenses {
     /// Bundled notices file (Contents/Resources/THIRD_PARTY_NOTICES.md).
     static let noticesResource = "THIRD_PARTY_NOTICES"
@@ -57,6 +58,14 @@ nonisolated enum ThirdPartyLicenses {
             copyright: "Copyright © 2015–2025 Gwendal Roué",
             url: "https://github.com/groue/GRDB.swift",
             frameworks: []
+        ),
+        // A dynamic framework (with its Autoupdate, Updater.app and XPC helpers). Its LICENSE also carries
+        // bsdiff 4.3 (BSD-2-Clause), sais-lite (MIT), orlp/ed25519 (Zlib) and SUSignatureVerifier.m (BSD-2-Clause).
+        ThirdPartyComponent(
+            id: "sparkle", name: "Sparkle", version: "2.10.1", license: "MIT",
+            copyright: "Copyright © 2006–2017 Andy Matuschak and others",
+            url: "https://github.com/sparkle-project/Sparkle",
+            frameworks: ["Sparkle"]
         ),
         // MPVKit's README: "MPVKit source alone is licensed under the LGPL v3.0" (no "or later"). Its
         // LICENSE file carries no copyright line, hence the generic holder.

@@ -90,6 +90,12 @@ nonisolated struct AppSettings: Codable, Equatable, Sendable {
     /// M7j L10, L11: antenna channels' guide from SiliconDust (Settings → Live TV → Antenna → Guide from SiliconDust).
     /// Off: they're matched against the pasted guides.
     var antennaGuide = true
+    /// M15 L5: check GitHub for new versions once a day and show a notice on the home screen (Settings → System →
+    /// Software Update → Check for Updates). Check Now works either way.
+    var updateChecks = true
+    /// M15 L5, L7: `off` | `whenIdle` | `atNight` (Settings → System → Software Update → Automatic Updates). Unknown
+    /// values read as `off`.
+    var automaticUpdates = AutomaticUpdates.off
 
     /// M7m L29: the matcher's options from the two switches (`IPTVLibrary.teamMatchOptions`).
     var teamMatchOptions: TeamMatchOptions { TeamMatchOptions(initials: teamMatchInitials, nicknames: teamMatchNicknames) }
@@ -176,5 +182,11 @@ nonisolated struct AppSettings: Codable, Equatable, Sendable {
             ?? defaults.antennaEnabled
         antennaGuide = ((try? container.decodeIfPresent(Bool.self, forKey: .antennaGuide)) ?? nil)
             ?? defaults.antennaGuide
+        // M15 L5: like `antennaGuide` and `glassStyle`, a value of another type, or an unknown mode, reads as the
+        // default (S6).
+        updateChecks = ((try? container.decodeIfPresent(Bool.self, forKey: .updateChecks)) ?? nil)
+            ?? defaults.updateChecks
+        automaticUpdates = ((try? container.decodeIfPresent(String.self, forKey: .automaticUpdates)) ?? nil)
+            .flatMap(AutomaticUpdates.init(rawValue:)) ?? defaults.automaticUpdates
     }
 }

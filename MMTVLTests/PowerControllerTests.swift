@@ -130,6 +130,34 @@ struct PowerControllerTests {
         #expect(log.events == ["tv.isOn", "tv.powerKey", "receiver.powerOff", "displays.sleep"])
     }
 
+    /// M15 L16: the app goes home first, before the TV, the receiver and the displays; the power menu's Turn Off TV &
+    /// Receiver too (the same `runOff`).
+    @Test func powerOffCallsOnPowerOffFirst() async {
+        let tv = FakePowerTV(log: log, on: true)
+        let power = makePower(tv: tv, receiver: FakePowerReceiver(log: log))
+        power.onPowerOff = { [log] in log.events.append("onPowerOff") }
+        await press(power)
+        #expect(log.events == ["tv.isOn", "onPowerOff", "tv.powerKey", "receiver.powerOff", "displays.sleep"])
+
+        log.events = []
+        tv.on = true
+        #expect(power.turnOff())
+        await power.task?.value
+        #expect(log.events == ["tv.isOn", "onPowerOff", "tv.powerKey", "receiver.powerOff", "displays.sleep"])
+    }
+
+    @Test func powerOnDoesntCallOnPowerOff() async {
+        let tv = FakePowerTV(log: log, on: false)
+        let power = makePower(tv: tv, receiver: FakePowerReceiver(log: log))
+        var offs = 0
+        power.onPowerOff = { offs += 1 }
+        power.onPowerOn = { [log] in log.events.append("onPowerOn") }
+        await press(power)
+        #expect(offs == 0)
+        #expect(log.events == ["tv.isOn", "displays.wake", "onPowerOn", "tv.wakeOnLAN", "receiver.powerOn",
+                               "outputDevice.log"])
+    }
+
     @Test func withoutATVOnlyTheReceiverAndDisplays() async {
         for tv in [nil, { let tv = FakePowerTV(log: log, on: true); tv.isConfigured = false; return tv }()] as [FakePowerTV?] {
             log.events = []
@@ -307,6 +335,23 @@ struct PowerControllerTests {
         power.relaunch()
         #expect(log.events == ["mac.sleep", "mac.restart", "relaunch"])
         #expect(log.toasts.isEmpty)
+    }
+
+    /// M15 L8: after an update's relaunch during Power-off, nothing is sent to the TV, the receiver or the displays,
+    /// the Mac is kept awake again, and the next press (no TV set up) turns things on.
+    @Test func restorePoweredOffNeverSendsCommands() async {
+        let power = makePower(tv: nil, receiver: FakePowerReceiver(log: log))
+        power.restorePoweredOff()
+        #expect(log.events.isEmpty)
+        #expect(log.toasts.isEmpty)
+        #expect(log.keepAwake == [true])
+        #expect(power.poweredOffByMMTVL)
+        #expect(!power.isRunning)
+
+        await press(power)
+        #expect(log.events == ["displays.wake", "receiver.powerOn", "outputDevice.log"])
+        #expect(!power.poweredOffByMMTVL)
+        #expect(log.keepAwake == [true, false])
     }
 
     /// M7m L23: the off holds the Mac awake, and does so before the displays sleep.

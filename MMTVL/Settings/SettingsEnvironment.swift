@@ -15,6 +15,17 @@ struct SettingsEnvironment {
     var openLoginItemsSettings: () -> Void
     var scanInstalledApps: () async -> [InstalledApp]
     var relaunch: () -> Void
+    /// M15 step 1: `PowerController.restartMac()` (Settings → System → Restart Mac mini).
+    var restartMac: () -> Void
+    /// M15 step 8: `SoftwareUpdater.status` (Settings → System → Software Update).
+    var updateStatus: () -> UpdateStatus
+    /// `SoftwareUpdater.lastUpdateCheckDate`: the status row's "Checked 2 hours ago".
+    var lastUpdateCheck: () -> Date?
+    /// N1: the feed's host when it isn't Info.plist's (`SoftwareUpdater.isTestFeed`); nil otherwise. Never a URL.
+    var updateTestFeedHost: () -> String?
+    /// `SoftwareUpdater.checkNow()` and `install()`.
+    var checkForUpdates: () -> Void
+    var installUpdate: () -> Void
     var exitToDesktop: () -> Void
     /// `AppLauncher.title(for:)`.
     var tileTitle: (LaunchItem) -> String
