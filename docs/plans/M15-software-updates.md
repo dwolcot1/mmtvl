@@ -9,7 +9,7 @@
 
 ## Next session starts here
 
-- **In progress on branch `m15-software-updates`** (from 2026-11-23). Step 1 done (`945a77a`). Next: step 2 (Power-off goes home), then step 3 (Sparkle); step 4 needs the user at this Mac (EdDSA keys) before step 5.
+- **In progress on branch `m15-software-updates`** (from 2026-11-23). Steps 1 (`945a77a`) and 2 (`82c8af6`) done. Next: step 3 (Sparkle); step 4 needs the user at this Mac (EdDSA keys) before step 5.
 - Human checks gathered so far (on this Mac, `-windowed YES`): Settings → System → Restart Mac mini sits between Relaunch and Exit, its band says "Restarts the Mac mini. Asks first.", and its page shows Cancel first (**press only Back there**). Neither the implementer nor QA drove the running app to that page.
 - Read: this plan's *Design*, then the files each step names. Build: `/build-plan docs/plans/M15-software-updates.md`.
 - The TV session (step 14) needs two notarized builds (A and B, step 13); both releases need the user's yes.
@@ -556,7 +556,7 @@ Also `StatusParts.updates`, `SettingKey.updateChecks`, and actions `.restartMac`
   - Done when: `xcodebuild -project MMTVL.xcodeproj -scheme MMTVL -derivedDataPath build test` passes (quote the result line). In `open build/Build/Products/Debug/MMTVL.app --args -windowed YES`, Settings → System shows Restart Mac mini, and its page shows Cancel first. **Don't select Restart on the dev Mac.**
   - **Done 2026-11-23** (`945a77a`). Full suite: "✔ Test run with 2112 tests in 186 suites passed after 14.654 seconds." QA PASS: the model tests check the row order, the disclosure, the page with Cancel focused first, and the footer; nobody looked at the running app (driving it near Restart was judged unsafe), so that look is a human check. The QA minor (no description) was fixed by the user's choice: the row's description is "Restarts the Mac mini. Asks first." (see *Deviations*).
 
-- [ ] **2. Power-off stops playback and goes home** `[implementer]`, files: `MMTVL/AVControl/PowerController.swift`, `MMTVL/App/AppDelegate.swift` (`setUpPower`, `:670-700`), `MMTVL/Launcher/AppRouter.swift`, `MMTVLTests/PowerControllerTests.swift` (or the suite that tests `PowerController` today), `MMTVLTests/AppRouter…Tests.swift` (the suite that tests `goHome`)
+- [x] **2. Power-off stops playback and goes home** `[implementer]`, files: `MMTVL/AVControl/PowerController.swift`, `MMTVL/App/AppDelegate.swift` (`setUpPower`, `:670-700`), `MMTVL/Launcher/AppRouter.swift`, `MMTVLTests/PowerControllerTests.swift` (or the suite that tests `PowerController` today), `MMTVLTests/AppRouter…Tests.swift` (the suite that tests `goHome`)
   - Add `var onPowerOff: () -> Void = {}` to `PowerController` and call it at the top of `runOff` (`:300`), before the TV/receiver commands.
   - Add `AppRouter.stopPlaybackForPowerOff()`: Live TV or Multiview → `liveTV.leave(keepingPreview: false)`; YouTube → `youtube.pause()`; then stop the preview until input (`stopPreviewUntilInput()`, `:426`).
   - In `setUpPower`: `power.onPowerOff = { [weak self] in self?.router?.stopPlaybackForPowerOff(); self?.goHomeFromAnywhere(reason: "powerOff") }`.
@@ -566,6 +566,7 @@ Also `StatusParts.updates`, `SettingKey.updateChecks`, and actions `.restartMac`
     - `powerOnDoesntCallOnPowerOff`.
     - Router: `powerOffLeavesLiveTVWithoutPreview` (screen `.home`, the preview not playing) and `powerOffPausesYouTube`.
   - Done when: the full suite passes. Code review shows Turn Off TV & Receiver (power menu) goes through the same `runOff`.
+  - **Done 2026-11-23** (`82c8af6`). Full suite: "Test run with 2116 tests in 186 suites passed after 14.610 seconds." QA PASS, no findings. `runOff` has two callers, `powerButton()` (`.off`) and `turnOff()` (the power menu's Turn Off TV & Receiver, `performPowerAction` `.turnOff`); `powerOffCallsOnPowerOffFirst` checks the order on both. Going home doesn't restart the preview: `stopPreviewUntilInput()` sets `isIdle`, which only the next command clears (not Power-on, display wake or system wake). Also changed: `MMTVLTests/FakeLiveTV.swift` (a non-keeping leave clears `playingChannelID`, like the real model). `onPowerOff` runs before the "Turning Off…" toast, so the toast shows over the home screen.
 
 - [ ] **3. Sparkle package, partial Info.plist, licenses** `[implementer]` `[security]`, files: `MMTVL.xcodeproj/project.pbxproj`, `MMTVL.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`, `Config/Updater-Info.plist` (new), `MMTVL/Settings/ThirdPartyLicenses.swift`, `MMTVL/Licenses/THIRD_PARTY_NOTICES.md`
   - Add `https://github.com/sparkle-project/Sparkle`, **exactVersion 2.10.1**, product `Sparkle`, to the **app target only**, the way MPVKit is referenced (`project.pbxproj:400-428`, `:99-102`, `:43-51`). It must be embedded (Embed & Sign); Xcode does this for a binary framework added to the app.
