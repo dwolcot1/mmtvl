@@ -57,6 +57,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var power: PowerController?
     /// M7h L15, U1: Power and Power Menu from any app; Cancel hands the screen back.
     private var powerMenuPresenter: PowerMenuPresenter?
+    /// M15: Sparkle updates (off in Debug and `-windowed`, L4).
+    private var updater: SoftwareUpdater?
     /// Step 11: `scheduleSettingsRefresh` coalesces.
     private var settingsRefreshScheduled = false
     /// Step 13e: what the scheduled refresh re-reads.
@@ -72,6 +74,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var airPlayState: AirPlayReceiverState = .unknown
     /// M7c L9: set by the PIN-checked quit, Relaunch and a logout/shutdown; otherwise the kiosk lock cancels a quit.
     private var allowsTermination = false
+    /// M15 L14 (security L-b): the updater's own permission for Sparkle's quit, set and taken back only by it, so its
+    /// 60-s revoke never undoes `allowsTermination` (a logout, ⌘Q with the PIN, Relaunch).
+    private var updateQuitAllowed = false
     /// M7c L8b: takes the screen back from apps MMTVL didn't open.
     private let kioskGuard = KioskGuard()
     private var powerOffObserver: NSObjectProtocol?
@@ -263,6 +268,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         startIPTVRefreshTimer()
         startRemoteBatteryPolling()
+        setUpUpdater(kiosk: kiosk)
         #if DEBUG
         showToastDemo()
         showSettingsDemo()
@@ -373,6 +379,76 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     #endif
 
+    /// M15: the updater, after the battery polling. Release builds in kiosk mode run Sparkle (L4); Debug builds
+    /// and `-windowed` are off, with no request; `-updatePreview <state>` (Debug, L13) runs a fake in that state.
+    private func setUpUpdater(kiosk: Bool) {
+        var mode = settings.automaticUpdates
+        var made: SoftwareUpdater?
+        #if DEBUG
+        if let preview = UpdatePreview.requested {
+            made = SoftwareUpdater(engine: FakeUpdaterEngine(preview: preview), feed: .current, hooks: updaterHooks())
+            // A staged update is held only in the automatic modes.
+            if preview == .ready && mode == .off { mode = .whenIdle }
+        }
+        #endif
+        if made == nil {
+            if let reason = SoftwareUpdater.offReason(debugBuild: SoftwareUpdater.isDebugBuild, windowed: !kiosk) {
+                made = SoftwareUpdater(off: reason)
+            } else {
+                made = SoftwareUpdater(engine: SparkleEngine(), feed: .current, hooks: updaterHooks())
+            }
+        }
+        guard let updater = made else { return }
+        self.updater = updater
+        // TODO(M15 step 8): `updater.onStatusChange` → `router?.settings.refreshStatus(.updates)` and
+        // `router?.homeUpdateLabel = updater.homeLabel` (neither `StatusParts.updates` nor `homeUpdateLabel` exists yet).
+        updater.start(checks: settings.updateChecks, mode: mode)
+    }
+
+    private func updaterHooks() -> SoftwareUpdater.Hooks {
+        SoftwareUpdater.Hooks(
+            allowQuit: { [weak self] in self?.updateQuitAllowed = true },
+            revokeQuit: { [weak self] in self?.updateQuitAllowed = false },
+            snapshot: { [weak self] in self?.updateIdleSnapshot() ?? SoftwareUpdater.notIdle },
+            writeMarker: { Self.writeUpdateRelaunchMarker() },
+            deleteMarker: { UpdateRelaunchMarker.delete(from: LaunchItemStore.defaultDirectory) },
+            showToast: { OverlayToast.shared.show($0, symbol: "arrow.down.circle") }
+        )
+    }
+
+    /// M15: what the idle loop sees (the one place that builds it; step 6b adds the receiver and input since Power-off).
+    private func updateIdleSnapshot() -> UpdateIdleSnapshot {
+        let screen = router?.screen
+        return UpdateIdleSnapshot(
+            mmtvlFrontmost: NSWorkspace.shared.frontmostApplication?.bundleIdentifier == Bundle.main.bundleIdentifier,
+            exitedToDesktop: windowController?.isExitedToDesktop == true,
+            mirroring: reflector?.isMirroring == true,
+            poweredOffByMMTVL: power?.poweredOffByMMTVL == true,
+            screenSaverOurs: screenSaver.isRunning && screenSaver.startedByMMTVL,
+            stillPhase: router?.idlePhase ?? .awake,
+            videoPlaying: screen == .youtube || (screen == .liveTV && liveTV?.isShowingVideo == true),
+            hour: Calendar.current.component(.hour, from: Date())
+        )
+    }
+
+    /// M15 L8: before an idle install's block, with the TV off.
+    private static func writeUpdateRelaunchMarker() {
+        do {
+            try UpdateRelaunchMarker(poweredOff: true, written: Date()).write(to: LaunchItemStore.defaultDirectory)
+        } catch {
+            // The domain and code only: the error's text names the file's path.
+            let error = error as NSError
+            powerLogger.error("Power: couldn't save the update relaunch marker: \(error.domain, privacy: .public) \(error.code, privacy: .public)")
+        }
+    }
+
+    /// Settings → System → Relaunch MMTVL and the power menu's Relaunch (L15): a staged update installs (Sparkle
+    /// relaunches MMTVL after it); otherwise `AppRelauncher` with the kiosk lock's quit guard lifted.
+    private func relaunch() {
+        if updater?.installStagedForRelaunch() == true { return }
+        AppRelauncher.relaunch(allowTermination: { [weak self] in self?.allowsTermination = true })
+    }
+
     /// M7f L8: at launch, every 5 minutes, and when the home screen appears (`AppRouter.onRefreshRemoteBattery`).
     private func startRemoteBatteryPolling() {
         router?.onRefreshRemoteBattery = { [weak self] in self?.refreshRemoteBattery() }
@@ -418,6 +494,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         iptvRefreshTask?.cancel()
         teamsRefreshTask?.cancel()
         remoteBatteryTask?.cancel()
+        updater?.cancelIdleLoop()
         siriRemote?.stop()   // closes the seized interfaces
         receiver?.stop()
     }
@@ -672,7 +749,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let powerReceiver = PowerReceiverSelector(receiver: receiver, cec: cecReceiver,
                                                   tvUsesCEC: { [weak self] in self?.cec?.isConfigured == true })
         let power = PowerController(tv: PowerTVSelector(network: tv, cec: cec), receiver: powerReceiver, effects: .system(relaunch: { [weak self] in
-            AppRelauncher.relaunch(allowTermination: { self?.allowsTermination = true })
+            self?.relaunch()
         }))
         power.onToast = { OverlayToast.shared.show($0, symbol: "power") }
         // L16 and the user decision of 2026-11-06: Plex is marked (frontmost or not), then MMTVL's home screen comes
@@ -688,6 +765,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             PowerController.logger.notice("Power: stopped playback, home")
         }
         self.power = power
+        // M15 L8: an update installed during Power-off left "the TV is off" behind; read once, deleted.
+        if UpdateRelaunchMarker.take(from: LaunchItemStore.defaultDirectory, now: Date()) != nil {
+            power.restorePoweredOff()
+            PowerController.logger.notice("Power: still off after an update")
+        }
         guard let router else { return }
         router.onPowerButton = { [weak power] in power?.powerButton() }
         router.onPowerAction = { [weak self] action in self?.performPowerAction(action) }
@@ -1267,9 +1349,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// L9: a quit goes through without the PIN when it's allowed (logout, ⌘Q with the PIN, Relaunch), when the updater
+    /// allowed it for an install (M15 L14, its own flag, security L-b), or without the kiosk lock. Pure.
+    nonisolated static func quitSkipsPIN(allowsTermination: Bool, updateQuitAllowed: Bool, lockEffective: Bool) -> Bool {
+        allowsTermination || updateQuitAllowed || !lockEffective
+    }
+
     /// L9: ⌘Q and the Dock's Quit ask for the PIN while the kiosk lock is on.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard !allowsTermination, isLockEffective, let router else { return .terminateNow }
+        guard !Self.quitSkipsPIN(allowsTermination: allowsTermination, updateQuitAllowed: updateQuitAllowed,
+                                 lockEffective: isLockEffective), let router else { return .terminateNow }
         Self.logger.info("Quit needs the PIN (kiosk lock)")
         router.requestQuit()
         if case .pin(.quit) = router.screen {
@@ -1359,6 +1448,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if new.antennaGuide != old.antennaGuide, let iptvLibrary {
             Task { await iptvLibrary.applyAntennaGuide(new.antennaGuide) }
+        }
+        if new.updateChecks != old.updateChecks || new.automaticUpdates != old.automaticUpdates {
+            updater?.apply(checks: new.updateChecks, mode: new.automaticUpdates)
         }
         updateKioskLock()
         if kiosk && new.launchAtLogin != old.launchAtLogin {
@@ -1475,7 +1567,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             scanInstalledApps: {
                 await InstalledApps.scanInBackground(excludingBundleIDs: [Bundle.main.bundleIdentifier ?? ""])
             },
-            relaunch: { [weak self] in AppRelauncher.relaunch(allowTermination: { self?.allowsTermination = true }) },
+            relaunch: { [weak self] in self?.relaunch() },
             restartMac: { [weak self] in self?.power?.restartMac() },
             exitToDesktop: { [weak self] in
                 self?.router?.goHome()

@@ -259,6 +259,15 @@ final class PowerController {
         effects.relaunch()
     }
 
+    /// M15 L8: MMTVL relaunched after an update installed during Power-off (`update-relaunch.json`), so the next press
+    /// turns things on, as it would have before the relaunch. Keeps the Mac awake again (the assertion died with the
+    /// old process). Sends nothing to the TV, the receiver or the displays.
+    func restorePoweredOff() {
+        poweredOffByMMTVL = true
+        phase = .off
+        effects.keepMacAwake(true)
+    }
+
     /// L14's choice (amended 2026-11-06). Pure. `tvAnswers`: nil without a TV set up. A set-up TV decides: it answers
     /// → off (even after MMTVL turned things off and the TV was turned on by its own remote), it doesn't → on. Without
     /// a TV, `poweredOffByMMTVL` decides.

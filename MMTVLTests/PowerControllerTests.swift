@@ -337,6 +337,23 @@ struct PowerControllerTests {
         #expect(log.toasts.isEmpty)
     }
 
+    /// M15 L8: after an update's relaunch during Power-off, nothing is sent to the TV, the receiver or the displays,
+    /// the Mac is kept awake again, and the next press (no TV set up) turns things on.
+    @Test func restorePoweredOffNeverSendsCommands() async {
+        let power = makePower(tv: nil, receiver: FakePowerReceiver(log: log))
+        power.restorePoweredOff()
+        #expect(log.events.isEmpty)
+        #expect(log.toasts.isEmpty)
+        #expect(log.keepAwake == [true])
+        #expect(power.poweredOffByMMTVL)
+        #expect(!power.isRunning)
+
+        await press(power)
+        #expect(log.events == ["displays.wake", "receiver.powerOn", "outputDevice.log"])
+        #expect(!power.poweredOffByMMTVL)
+        #expect(log.keepAwake == [true, false])
+    }
+
     /// M7m L23: the off holds the Mac awake, and does so before the displays sleep.
     @Test func offKeepsTheMacAwakeBeforeTheDisplaysSleep() async {
         var effects = log.effects
