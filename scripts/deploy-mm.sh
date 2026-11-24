@@ -145,6 +145,16 @@ sparkle_still_gone() {
     sparkle_procs_gone "started after MMTVL stopped; the app wasn't replaced, MMTVL is stopped"
 }
 
+# remove_relaunch_marker: M15 L8's update-relaunch.json ("the TV is off", written just before an idle install during
+# Power-off, read and deleted at the next launch) is deleted once MMTVL has stopped (M15 step 12, L-2): a deploy's
+# SIGTERM right after it was written would otherwise make the deployed build start "off".
+remove_relaunch_marker() {
+    local marker="$HOME/Library/Application Support/MMTVL/update-relaunch.json"
+    [[ -e "$marker" || -L "$marker" ]] || return 0
+    rm -f -- "$marker"
+    echo "Removed a pending update's relaunch marker"
+}
+
 # check_build_holds <build>: reads the installed build every 0.5 s for 5 s; a late Sparkle swap would change it.
 check_build_holds() {
     local now
@@ -186,6 +196,7 @@ install_zip() {
     remove_sparkle_jobs
     stop_mmtvl
     sparkle_still_gone
+    remove_relaunch_marker
     rm -rf "$app"
     mv "$stage/MMTVL.app" "$app"
     start_mmtvl
